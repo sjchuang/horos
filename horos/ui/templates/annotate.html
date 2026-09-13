@@ -384,6 +384,22 @@ const Loop = {
     window.addEventListener("message", (e) => {
       if (e.data && e.data.type === "horos-round") this.onRoundProgress(e.data);
     });
+    // shortcuts work wherever the focus is: keystrokes on this page are
+    // forwarded to the embedded canvas (unless typing into a field here)
+    window.addEventListener("keydown", (e) => {
+      const frame = $("annotator");
+      if (!frame || !frame.contentWindow || !$("panel-label").classList.contains("on")) return;
+      const tag = (e.target.tagName || "").toUpperCase();
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.isComposing) return;
+      frame.contentWindow.postMessage({
+        type: "horos-key", code: e.code, key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey,
+        shiftKey: e.shiftKey, altKey: e.altKey,
+      }, "*");
+      if ((e.ctrlKey || e.metaKey) && ["KeyS", "KeyZ"].includes(e.code)) e.preventDefault();
+      if (["KeyA", "KeyD", "KeyS", "Space", "Backspace"].includes(e.code)) e.preventDefault();
+    });
+    $("annotator").addEventListener("load", () => { try { $("annotator").contentWindow.focus(); } catch (err) {} });
+    $("annotator").addEventListener("mouseenter", () => { try { $("annotator").contentWindow.focus(); } catch (err) {} });
     window.addEventListener("resize", () => { if (this.status) { this.drawChart(); this.drawSpark(); } });
     await this.refresh();
   },

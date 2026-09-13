@@ -306,16 +306,12 @@
       <div class="card">
         <h4>Tools</h4>
         <div class="tools">
-          <button class="tool-btn active" data-tool="select"
-            title="Select & edit — click a shape to select, drag to move, drag a vertex to reshape, Delete to remove. (shortcut 1)">✎</button>
-          <button class="tool-btn" data-tool="rect"
-            title="Rectangle — drag from one corner to the opposite corner. (shortcut 2)">▭</button>
-          <button class="tool-btn" data-tool="poly"
-            title="Polygon — click to add each vertex; double-click or click the first point to finish. (shortcut 3)">⬠</button>
+          <button class="tool-btn ai active" data-tool="sam"
+            title="Draw — click the object; right-click (or Shift+click) what is not it, or drag a rough box. Enter accepts, Space starts the next object. (1)">✦</button>
+          <button class="tool-btn" data-tool="select"
+            title="Edit — click a shape to select, drag to move, drag a point to reshape, click an edge to add a point, drop a point onto another to merge them. (2)">✎</button>
           <button class="tool-btn ai" data-tool="ai-text"
-            title="AI text prompt — type object names (e.g. helmet, vest), then Apply. OWLv2 pre-labels them on this image. (shortcut 4)">T</button>
-          <button class="tool-btn ai" data-tool="sam"
-            title="SAM — left-click an object, right-click (or Shift+click) what is NOT it, or drag a rough box; a mask preview appears. Space keeps it and starts the next object, Enter accepts them all. Right-drag still pans. (shortcut 5)">✦</button>
+            title="Prompt — type object names, OWLv2 pseudo-labels them on this image. (3)">T</button>
         </div>
         <div id="sam-panel" style="display:none;margin-top:10px">
           <div style="font-size:11px;color:var(--dim);line-height:1.5">
@@ -538,7 +534,9 @@
   <div class="card">
     <h4>Keyboard shortcuts</h4>
     <table>
-      <tr><td>1 / 2 / 3 / 4 / 5</td><td>Select ✎ / Rectangle ▭ / Polygon ⬠ / AI prompt T / SAM ✦ tool</td></tr>
+      <tr><td>1 / 2 / 3</td><td>Draw ✦ (click the object) / Edit ✎ / Prompt T</td></tr>
+      <tr><td>Edit: click an edge</td><td>add a control point there</td></tr>
+      <tr><td>Edit: drop a point on another</td><td>merge them (points in between go too)</td></tr>
       <tr><td>Space / Enter</td><td>SAM: keep this mask and start the next object / accept all</td></tr>
       <tr><td>P</td><td>selected box → polygon (SAM uses the box as its prompt)</td></tr>
       <tr><td>A / D</td><td>previous / next image</td></tr>
@@ -548,7 +546,6 @@
       <tr><td>Ctrl+C / Ctrl+V</td><td>copy / paste selected shape</td></tr>
       <tr><td>Delete / Backspace</td><td>delete selected shape</td></tr>
       <tr><td>Esc</td><td>cancel drawing / deselect</td></tr>
-      <tr><td>double-click</td><td>finish polygon (or click its first point)</td></tr>
       <tr><td>wheel</td><td>zoom to cursor</td></tr>
       <tr><td>right-drag</td><td>pan a zoomed image</td></tr>
     </table>
@@ -620,7 +617,7 @@ const Page = {
   currentIdx: -1, version: 0,
   editorImage: null, editorShapes: [], selectedShapeIdx: -1, flashShapeIdx: -1,
   hoverShapeIdx: -1, hoverVertexIdx: -1, hoverVertexShapeIdx: -1,
-  activeTool: "select", isDrawing: false, currentPoints: [], mousePos: [0, 0],
+  activeTool: "sam", isDrawing: false, currentPoints: [], mousePos: [0, 0],
   dragMode: null, dragStart: null,
   panX: 0, panY: 0, zoom: 1, baseScale: 1,
   panDragging: false, panDragStart: null, panOrigin: null,
@@ -640,6 +637,13 @@ const Page = {
       document.querySelector(".site-header").style.display = "none";
     }
     if (ROUND) {
+      try {
+        const settings = await api("/loop/settings");
+        if (settings.shapes === "box" || settings.shapes === "polygon") {
+          const radio = document.querySelector(`input[name="sam-output"][value="${settings.shapes === "box" ? "bbox" : "polygon"}"]`);
+          if (radio) radio.checked = true;
+        }
+      } catch (e) {}
       // the round decides what is in the queue; the project-wide filters do not apply
       for (const id of ["queue-mode", "split-filter", "btn-autolabel", "btn-delete-selected", "btn-select-page"]) {
         $(id).style.display = "none";
@@ -723,6 +727,16 @@ const Page = {
     this._updateSaveButtonState();
     this._initCanvasEvents();
     this._bindClassInput();
+    // E10: embedded in the loop page, the iframe rarely has focus — the
+    // parent forwards its keystrokes and we replay them as keydown events
+    window.addEventListener("message", (e) => {
+      const d = e.data || {};
+      if (d.type !== "horos-key" || !d.code) return;
+      window.dispatchEvent(new KeyboardEvent("keydown", {
+        code: d.code, key: d.key || "", ctrlKey: !!d.ctrlKey, metaKey: !!d.metaKey,
+        shiftKey: !!d.shiftKey, altKey: !!d.altKey, bubbles: true, cancelable: true,
+      }));
+    });
     window.addEventListener("resize", () => {
       if ($("editor-view").style.display === "block") this._resizeCanvas();
     });
@@ -1286,14 +1300,12 @@ const Page = {
         case "KeyA": e.preventDefault(); this.prevImage(); break;
         case "KeyD": e.preventDefault(); this.nextImage(); break;
         case "KeyS": e.preventDefault(); this.openSkip(); break;
-        case "Digit1": case "Numpad1": this.setTool("select"); break;
-        case "Digit2": case "Numpad2": this.setTool("rect"); break;
-        case "Digit3": case "Numpad3": this.setTool("poly"); break;
-        case "Digit4": case "Numpad4":
-          e.preventDefault();  // focus moves into the prompt — don't type the "4"
+        case "Digit1": case "Numpad1": this.setTool("sam"); break;
+        case "Digit2": case "Numpad2": this.setTool("select"); break;
+        case "Digit3": case "Numpad3":
+          e.preventDefault();  // focus moves into the prompt — don't type the "3"
           this.setTool("ai-text", true);
           break;
-        case "Digit5": case "Numpad5": this.setTool("sam"); break;
         case "Enter": case "NumpadEnter":
           if (this.activeTool === "sam" && (this.sam.candidate || this.sam.queued.length)) {
             e.preventDefault(); this._samAccept();
@@ -1349,6 +1361,7 @@ const Page = {
     if (this.panDragging) canvas.style.cursor = "grabbing";
     else if (this.activeTool !== "select") canvas.style.cursor = "crosshair";
     else if (this.hoverVertexIdx !== -1) canvas.style.cursor = "pointer";
+    else if (this.hoverEdge) canvas.style.cursor = "copy";
     else if (this.hoverShapeIdx !== -1) canvas.style.cursor = "move";
     else canvas.style.cursor = "default";
   },
@@ -1470,6 +1483,46 @@ const Page = {
       if (v !== -1) return [i, v];
     }
     return null;
+  },
+  // the polygon edge under the cursor: {index, point} where `point` is the
+  // foot of the perpendicular on edge index → index+1 (wrapping)
+  _hitTestEdge(x, y, shape) {
+    const thresh = 6 / (this.baseScale * this.zoom);
+    const pts = shape.points;
+    let best = null;
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length];
+      const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+      if (len2 === 0) continue;
+      const t = Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2));
+      const px = ax + t * dx, py = ay + t * dy;
+      const d = Math.hypot(x - px, y - py);
+      if (d < thresh && (!best || d < best.d)) best = { index: i, point: [px, py], d };
+    }
+    return best;
+  },
+  // another vertex of `shape` under vertex `i` (the one being dragged)
+  _hitTestVertexExcept(shape, i) {
+    const thresh = 8 / (this.baseScale * this.zoom);
+    const [x, y] = shape.points[i];
+    for (let k = 0; k < shape.points.length; k++) {
+      if (k === i) continue;
+      if (Math.hypot(shape.points[k][0] - x, shape.points[k][1] - y) < thresh) return k;
+    }
+    return -1;
+  },
+  // merge vertex i into vertex j: the shorter arc between them (interior
+  // points included) disappears; a polygon keeps at least three points
+  _mergeVertices(shape, i, j) {
+    const n = shape.points.length;
+    const forward = (j - i + n) % n;   // steps from i to j going forward
+    const backward = (i - j + n) % n;  // steps from i to j going backward
+    const drop = new Set([i]);
+    if (forward <= backward) for (let k = 1; k < forward; k++) drop.add((i + k) % n);
+    else for (let k = 1; k < backward; k++) drop.add((i - k + n) % n);
+    if (n - drop.size < 3) return false;
+    shape.points = shape.points.filter((_, k) => !drop.has(k));
+    return true;
   },
   _hitTestShape(x, y) {
     for (let i = this.editorShapes.length - 1; i >= 0; i--) {
@@ -1609,31 +1662,6 @@ const Page = {
       }
       ctx.stroke(); ctx.setLineDash([]);
     }
-    if (this.isDrawing && this.currentPoints.length) {
-      const cls = $("class-input").value.trim();
-      ctx.strokeStyle = cls ? this._getColor(cls) : "#9aa0a6";
-      ctx.lineWidth = 2 * inv;
-      if (this.activeTool === "rect" && this.currentPoints.length === 2) {
-        const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
-        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-        // control points visible while drawing, not only after finishing
-        drawPoint(x1, y1, false, false);
-        drawPoint(x2, y2, true, false);
-      } else if (this.activeTool === "poly") {
-        ctx.beginPath();
-        this.currentPoints.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-        const [mx, my] = this._clampPoint([
-          (this.mousePos[0] - this.panX) / scale, (this.mousePos[1] - this.panY) / scale]);
-        ctx.lineTo(mx, my); ctx.stroke();
-        // every placed vertex stays visible; the first one lights up when the
-        // cursor is close enough to close the polygon
-        this.currentPoints.forEach(([px, py], j) => {
-          const closing = j === 0 && this.currentPoints.length > 2 &&
-            Math.hypot(mx - px, my - py) < 12 * inv;
-          drawPoint(px, py, closing, false);
-        });
-      }
-    }
     this.renderShapesList();
   },
 
@@ -1725,34 +1753,31 @@ const Page = {
           this.hoverVertexIdx = vIdx;
           return;
         }
+        // an edge of the selected polygon: insert a control point there and
+        // start dragging it right away
+        const selected = this.editorShapes[this.selectedShapeIdx];
+        if (selected && selected.shape_type === "polygon") {
+          const edge = this._hitTestEdge(x, y, selected);
+          if (edge) {
+            this._pushHistory();
+            selected.points.splice(edge.index + 1, 0, this._clampPoint(edge.point));
+            this.dragMode = "vertex";
+            this.hoverVertexShapeIdx = this.selectedShapeIdx;
+            this.hoverVertexIdx = edge.index + 1;
+            this._drawCanvas();
+            return;
+          }
+        }
         const sIdx = this._hitTestShape(x, y);
         this.selectShape(sIdx);
         if (sIdx !== -1) {
           this._pushHistory();
           this.dragMode = "shape"; this.dragStart = [x, y];
         }
-      } else if (this.activeTool === "rect") {
-        this.isDrawing = true;
-        const p = this._clampPoint([x, y]);
-        this.currentPoints = [p, p];
       } else if (this.activeTool === "sam") {
         this.sam.down = this._clampPoint([x, y]);
         this.sam.dragBox = null;
         this._samShift = e.shiftKey;
-      } else if (this.activeTool === "poly") {
-        if (!this.isDrawing) {
-          this.isDrawing = true;
-          this.currentPoints = [this._clampPoint([x, y])];
-        } else {
-          if (this.currentPoints.length > 2) {
-            const [fx, fy] = this.currentPoints[0];
-            if (Math.hypot(x - fx, y - fy) < 12 / (this.baseScale * this.zoom)) {
-              this._finishPolygon(); return;
-            }
-          }
-          this.currentPoints.push(this._clampPoint([x, y]));
-        }
-        this._drawCanvas();
       }
     };
 
@@ -1783,6 +1808,9 @@ const Page = {
         }
         let hoverVtx = -1, hoverVtxShape = -1, hoverShape = -1;
         const anyVtx = this._hitTestAnyVertex(x, y);
+        const sel = this.editorShapes[this.selectedShapeIdx];
+        this.hoverEdge = !anyVtx && sel && sel.shape_type === "polygon"
+          ? this._hitTestEdge(x, y, sel) : null;
         if (anyVtx) [hoverVtxShape, hoverVtx] = anyVtx;
         else hoverShape = this._hitTestShape(x, y);
         if (hoverShape !== this.hoverShapeIdx || hoverVtx !== this.hoverVertexIdx ||
@@ -1793,11 +1821,6 @@ const Page = {
           this._drawCanvas();
         }
         this._updateCursor();
-      } else if (this.activeTool === "rect" && this.isDrawing) {
-        this.currentPoints[1] = this._clampPoint([x, y]);
-        this._drawCanvas();
-      } else if (this.activeTool === "poly" && this.isDrawing) {
-        this._drawCanvas();
       } else if (this.activeTool === "sam" && this.sam.down) {
         const [dx, dy] = this.sam.down;
         const cur = this._clampPoint([x, y]);
@@ -1826,8 +1849,18 @@ const Page = {
       }
       if (this.activeTool === "select") {
         if (this.dragMode) {
-          if (this.selectedShapeIdx !== -1)
-            this._clampShapePoints(this.editorShapes[this.selectedShapeIdx]);
+          const shape = this.editorShapes[this.selectedShapeIdx];
+          if (shape) this._clampShapePoints(shape);
+          // a point dropped onto another point of the same polygon merges with
+          // it, taking the points in between along
+          if (this.dragMode === "vertex" && shape && shape.shape_type === "polygon") {
+            const i = this.hoverVertexIdx;
+            const j = this._hitTestVertexExcept(shape, i);
+            if (j !== -1 && this._mergeVertices(shape, i, j)) {
+              this.hoverVertexIdx = -1;
+              toast("Points merged", "ok", 900);
+            }
+          }
           this._triggerChange();
         }
         this.dragMode = null; this.dragStart = null;
@@ -1851,19 +1884,6 @@ const Page = {
         }
         this._samQuery();
         this._drawCanvas();
-      } else if (this.activeTool === "rect" && this.isDrawing) {
-        this.isDrawing = false;
-        const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
-        const min = 5 / (this.baseScale * this.zoom);
-        this.currentPoints = [];
-        if (Math.abs(x2 - x1) > min && Math.abs(y2 - y1) > min) {
-          this._addShape({
-            shape_type: "rectangle",
-            points: [[Math.min(x1, x2), Math.min(y1, y2)],
-                     [Math.max(x1, x2), Math.max(y1, y2)]],
-          });
-        }
-        this._drawCanvas();
       }
     };
 
@@ -1876,15 +1896,7 @@ const Page = {
     // Right-click is reserved for panning; just suppress the context menu.
     canvas.oncontextmenu = (e) => e.preventDefault();
     canvas.onauxclick = (e) => { if (e.button === 1) e.preventDefault(); };
-    // Finish a polygon with a double-click (each click added a vertex at ~the
-    // same spot; drop the duplicate before closing, keep at least 3 points).
-    canvas.ondblclick = (e) => {
-      if (this.activeTool === "poly" && this.isDrawing) {
-        e.preventDefault();
-        if (this.currentPoints.length > 3) this.currentPoints.pop();
-        this._finishPolygon();
-      }
-    };
+    canvas.ondblclick = (e) => e.preventDefault();
   },
 
   // ------------------------------------------------------------- SAM tool
@@ -2121,13 +2133,6 @@ const Page = {
     } catch (e) { /* the default key still works server-side */ }
   },
 
-  _finishPolygon() {
-    this.isDrawing = false;
-    const points = this.currentPoints.map((p) => this._clampPoint(p));
-    this.currentPoints = [];
-    if (points.length > 2) this._addShape({ shape_type: "polygon", points });
-    this._drawCanvas();
-  },
   // A finished shape is added WITHOUT switching to the select tool — the
   // annotator keeps drawing the next one — and never gets a made-up class:
   // with Object Class empty, the class is asked for (and remembered).
