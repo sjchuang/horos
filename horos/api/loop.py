@@ -262,9 +262,29 @@ def _in_pool(record, labeled: set[int]) -> bool:
     return not record.excluded and record.id not in labeled and record.split == "train"
 
 
-def _latest_completed_run(project: Project):
+def _latest_completed_run(project: Project, model: str | None = None):
+    """Newest completed run with weights; with `model`, the newest of THAT
+    model when one exists (the loop scores and pseudo-labels with the model
+    the user chose), else the newest of any model."""
     runs = [r for r in list_runs(project) if r.state == "completed" and r.checkpoint]
+    if model is not None:
+        same = [r for r in runs if r.model == model]
+        if same:
+            runs = same
     return max(runs, key=lambda r: r.created_at) if runs else None
+
+
+def _wants_polygons(project: Project, labeled: set[int]) -> bool:
+    """Shapes "auto" means polygons when the loop trains a segmentation model
+    — chosen in the settings or implied by polygon labels — so pseudo-labels
+    from a box scorer (a detection run, OWLv2) are refined with SAM instead of
+    landing as boxes in a segmentation project."""
+    settings = get_loop_settings(project)
+    model = settings.model or default_model_for(project, labeled)[0]
+    try:
+        return get_model_info(model).task == "instance_segmentation"
+    except HorosError:
+        return False
 
 
 def _auto_strategy(project: Project, labeled: set[int]) -> tuple[SelectionStrategy, str]:
@@ -451,7 +471,7 @@ def _pal_detections(
 def _scorer(project: Project, device: str | None):
     """(backend, label, name_of, kind) — the newest completed run's model
     ("run"), else OWLv2 prompted with the class names ("zero_shot")."""
-    run = _latest_completed_run(project)
+    run = _latest_completed_run(project, get_loop_settings(project).model)
     if run is not None:
         from horos.api.evaluate import _load_run_backend
 
@@ -568,6 +588,8 @@ def select_round_events(
         shapes = settings.shapes
     images = project.list_images()
     labeled = _labeled_ids(project)
+    if shapes == "auto" and _wants_polygons(project, labeled):
+        shapes = "polygon"
     pool = [r for r in images if _in_pool(r, labeled)]
     wanted = resolve_count(len(pool), count=count, percent=percent)
     if strategy == "auto":
@@ -1007,9 +1029,12 @@ def preannotate_events(
         else:
             backend, label, name_of, kind = _scorer(project, device)
         settings = get_loop_settings(project)
+        shapes = settings.shapes
+        if shapes == "auto" and _wants_polygons(project, _labeled_ids(project)):
+            shapes = "polygon"
         summary = yield from _preannotate_images(
             project, ids, backend, name_of, threshold=PRELABEL_THRESHOLD[kind], cancel=cancel,
-            shapes=settings.shapes, refiner_model=settings.refiner, device=device,
+            shapes=shapes, refiner_model=settings.refiner, device=device,
         )
         save_round(project, load_round(project, number).model_copy(
             update={"preannotation": {"scorer": label, **summary}}
@@ -1408,9 +1433,12 @@ def refill_round(
                     dict(enumerate(c.name for c in project.categories)), "run"
             else:
                 backend, label, name_of, kind = _scorer(project, device)
+            shapes = settings.shapes
+            if shapes == "auto" and _wants_polygons(project, labeled):
+                shapes = "polygon"
             gen = _preannotate_images(
                 project, [p.image_id for p in new_picks], backend, name_of,
-                threshold=PRELABEL_THRESHOLD[kind], shapes=settings.shapes,
+                threshold=PRELABEL_THRESHOLD[kind], shapes=shapes,
                 refiner_model=settings.refiner, device=device,
             )
             summary = None

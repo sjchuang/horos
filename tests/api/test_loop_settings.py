@@ -118,3 +118,44 @@ def test_training_uses_the_settings_model_before_the_automatic_choice(tmp_path):
     while training_status(project, trained.train_run_id).run.state in active:
         assert time.monotonic() < deadline
         time.sleep(0.2)
+
+
+def test_segmentation_model_setting_turns_box_suggestions_into_polygons(tmp_path):
+    """Segm chosen + Shapes auto: a box scorer's pseudo-labels are refined to
+    polygons — the user saw boxes from a detection run in a Segm loop."""
+    project = _project(tmp_path)
+    update_loop_settings(project, model="rfdetr-seg-nano")  # shapes stays "auto"
+    refiner = FakePromptableSegmenter()
+    record = select_round(project, count=4, refiner=refiner, **_fakes())
+    assert record.preannotation["shapes"] == "polygon"
+    suggested = [a for i in record.image_ids for a in _pending(project, i)]
+    assert suggested and all(a.segmentation for a in suggested)
+    # and a detection loop keeps boxes
+    from horos.api.loop import close_round
+
+    close_round(project, record.number)
+    update_loop_settings(project, model="rfdetr-nano")
+    record = select_round(project, count=4, **_fakes())
+    assert record.preannotation["shapes"] == "auto"
+    assert all(not a.segmentation for i in record.image_ids for a in _pending(project, i))
+
+
+def test_scorer_prefers_the_newest_run_of_the_configured_model(tmp_path):
+    from helpers.experiments import train_fake
+
+    from horos.api.loop import _latest_completed_run
+
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path)
+    project.update_image_splits({i: "valid" for i in range(1, 6)})  # a run needs a valid split
+    import time
+
+    det = train_fake(project, epochs=1, model="rfdetr-nano")
+    time.sleep(1.05)
+    seg = train_fake(project, epochs=1, model="rfdetr-seg-nano")
+    time.sleep(1.05)
+    det2 = train_fake(project, epochs=1, model="rfdetr-nano")
+    assert _latest_completed_run(project).run_id == det2.run_id
+    assert _latest_completed_run(project, "rfdetr-seg-nano").run_id == seg.run_id
+    assert _latest_completed_run(project, "rfdetr-seg-small").run_id == det2.run_id  # none → newest
+    assert det.run_id != seg.run_id
