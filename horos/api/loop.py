@@ -104,9 +104,14 @@ VALID_FRACTION = 0.2
 MIN_VALID_IMAGES = 2
 
 
-#: which of a run's best-checkpoint scores headlines a round, first match wins;
-#: for "loss" lower is better, for every mAP flavour higher is
-_METRIC_PREFERENCE = ("map_5095", "map50", "map_50", "map", "loss")
+#: which of a run's best-checkpoint scores headlines a round, first match wins:
+#: the validation mAP flavours RF-DETR reports (EMA first — the weights that
+#: are actually saved), then generic names, then loss. For "loss" lower is
+#: better, for every mAP flavour higher is
+_METRIC_PREFERENCE = (
+    "val/ema_mAP_50_95", "val/mAP_50_95", "map_5095", "val/ema_mAP_50", "val/mAP_50",
+    "map50", "map_50", "map", "loss",
+)
 
 
 class RoundSummary(BaseModel):

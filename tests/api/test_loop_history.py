@@ -88,3 +88,13 @@ def test_open_round_reports_labels_so_far(tmp_path):
     entry = loop_history(project)[0]
     assert entry.state == "labeling" and entry.labels_spent == 1 and entry.labeled == 1
     assert entry.metric is None and entry.delta is None
+
+
+def test_headline_prefers_validation_map_over_loss():
+    from horos.api.loop import _headline
+
+    rfdetr_like = {"loss": 6.8, "val/loss": 5.9, "val/mAP_50": 0.57, "val/ema_mAP_50_95": 0.59,
+                   "val/mAP_50_95": 0.54}
+    assert _headline(rfdetr_like) == ("val/ema_mAP_50_95", 0.59)
+    assert _headline({"loss": 1.0}) == ("loss", 1.0)
+    assert _headline({}) == (None, None)
