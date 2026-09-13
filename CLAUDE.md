@@ -608,9 +608,9 @@ Decisions confirmed on 2026-09-13:
 | E10-T10 | Per-round assignment of images to annotators | `tests/api/test_loop_assign.py` |
 | E10-T11 | Machine geometry always pending with score (boxes-to-polygons, autolabel, pre-annotation) | `tests/api/test_generated_pending.py` |
 | E10-T12 | Web API endpoints | `tests/web/test_loop_routes.py` |
-| E10-T13 | Canvas extracted as an embeddable component with no page-shell dependencies | Interface scenario |
+| E10-T13 | Canvas embeddable without its page shell: `/annotate?embed=1&round=<n>[&annotator=]` hides the site header, swaps the project queue for the round's picks and reports progress to the parent via `postMessage` (the engine itself is not split into a separate file) | Interface scenario (`tests/ui_scenarios/E10-T14.md`) |
 | E10-T14 | Loop page: four-step stepper, one primary action at a time, count slider, embedded canvas, live curves, round history | Interface scenario |
-| E10-T15 | CLI `horos loop` (select / train / status) | `tests/api/test_cli.py` |
+| E10-T15 | CLI `horos loop` (status / select / train / close) | `tests/api/test_cli.py` |
 
 #### How it is accepted
 

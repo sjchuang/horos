@@ -23,6 +23,11 @@ def index():
     return render_template("index.html")
 
 
+@bp.get("/loop")
+def loop():
+    return render_template("loop.html")
+
+
 @bp.get("/annotate")
 def annotate():
     return render_template("annotate.html")
