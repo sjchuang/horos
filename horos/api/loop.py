@@ -246,8 +246,11 @@ class RoundSummary(BaseModel):
     #: mAP@50 of this round's model on each split of its snapshot, from the
     #: post-training evaluation (E10-S5 learning curve); missing = not run
     curve: dict[str, float] = Field(default_factory=dict)
-    #: labeled photos when the round ended — the learning curve's x axis
+    #: labeled photos when the round ended
     labeled_total: int = 0
+    #: photos the round's model actually trained on (labeled minus the
+    #: held-out test and valid sets) — the learning curve's x axis
+    train_images: int | None = None
     #: the split evaluation is still running in the background
     evaluating: bool = False
     created_at: str
@@ -386,6 +389,7 @@ def _summary(
             for split in ("train", "valid", "test") if f"eval/{split}/map_50" in record.metrics
         },
         labeled_total=after,
+        train_images=(record.training.get("holdout") or {}).get("train_images"),
         evaluating=bool(record.training.get("evaluating")),
         created_at=record.created_at,
     )
