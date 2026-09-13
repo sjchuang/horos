@@ -13,6 +13,7 @@ from helpers.data import write_sample_coco_dir
 from helpers.fake_backend import FakePromptableSegmenter
 
 from horos.api import jobs
+from horos.api.annotate import get_annotations
 from horos.api.dataset import import_dataset
 from horos.api.project import create_project
 from horos.api.segment import (
@@ -81,6 +82,15 @@ def test_boxes_become_polygons_in_place_with_one_embedding(project):
     again = boxes_to_polygons(project, 1, backend=fake)
     assert again.converted == 0 and again.version == result.version
     assert fake.segment_calls == len(boxes)
+
+
+def test_boxes_to_polygons_honours_the_point_cap(project):
+    fake = FakePromptableSegmenter()
+    result = boxes_to_polygons(project, 1, backend=fake, max_points=3)
+    assert result.converted >= 1
+    polygons = [a.segmentation[0] for a in get_annotations(project, 1).annotations
+                if a.segmentation]
+    assert polygons and all(len(p) == 6 for p in polygons)  # triangles, not the 4-corner boxes
 
 
 def test_filters_by_category_ids_or_names_and_by_annotation_id(project):

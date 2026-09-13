@@ -33,6 +33,9 @@ horos ui <project>
 8. Enter(或按「Accept」):形狀以當前類別加入(polygon),工具維持在 SAM,狀態清空,
    可立刻點下一個物體;Auto Save 開著會在 0.5 s 後儲存,Ctrl+Z 可還原
 9. Output 切成 Box:預覽變成 mask 的外接矩形,Enter 加入的是 rectangle
+9b. 「Points ≤」步進器(預設空白 = 完整輪廓):填 16 後正在預覽的 mask 立刻重算成最多 16 個控制點,
+    右側顯示「n points」;數值會記住(localStorage),也套用到 ⬠ / P 與「Boxes to polygons」的轉換;
+    3 是下限,填低於 3 會被清空
 10. 右上 model 下拉可切 SAM 2.1 Tiny / Small / SAM ViT-B;切換後重新 prefetch,選擇會記住
 
 ### D. 多物體批次接受(SAM-T5)

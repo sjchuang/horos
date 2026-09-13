@@ -234,6 +234,52 @@ def mask_to_shape(mask, *, epsilon: float = 1.5, min_points: int = 3) -> MaskSha
     )
 
 
+def simplify_polygon(flat: list[float], max_points: int) -> list[float]:
+    """The same polygon with at most `max_points` vertices (never fewer than
+    3): Douglas-Peucker on the closed ring with the smallest tolerance that
+    gets under the cap, found by bisection. The ring is cut at the vertex
+    farthest from the first one so both halves keep their end points and a
+    huge tolerance still leaves a triangle, not a line. Annotators use this
+    when a mask's outline is more detailed than the label needs (SAM-T4)."""
+    max_points = max(3, int(max_points))
+    pts = [(flat[i], flat[i + 1]) for i in range(0, len(flat) - 1, 2)]
+    if len(pts) <= max_points:
+        return list(flat)
+    far = max(range(1, len(pts)), key=lambda i: _perpendicular_distance(pts[i], pts[0], pts[0]))
+    halves = (pts[: far + 1], [*pts[far:], pts[0]])
+
+    def reduced(epsilon: float) -> list[tuple[float, float]]:
+        a = _douglas_peucker(halves[0], epsilon)
+        b = _douglas_peucker(halves[1], epsilon)
+        return [*a[:-1], *b[:-1]]  # each half's last point opens the next half / the ring
+
+    lo, hi = 0.0, max(abs(x) + abs(y) for x, y in pts) + 1.0
+    best: list[tuple[float, float]] | None = None
+    for _ in range(40):
+        mid = (lo + hi) / 2
+        candidate = reduced(mid)
+        if len(candidate) > max_points:
+            lo = mid  # still too detailed: coarser
+        else:
+            hi = mid  # fits (or collapsed): finer next, remember it if it is a polygon
+            if len(candidate) >= 3:
+                best = candidate
+    if best is None:
+        # no tolerance yields a polygon under the cap (a rectangle capped at 3
+        # is the classic case): the triangle of the two cut points and the
+        # vertex farthest from the line between them
+        a, b = pts[0], pts[far]
+        third = max((q for q in pts if q not in (a, b)),
+                    key=lambda q: _perpendicular_distance(q, a, b), default=None)
+        best = [a, b] if third is None else sorted(
+            [a, b, third], key=lambda q: pts.index(q)
+        )
+    out: list[float] = []
+    for x, y in best:
+        out.extend((float(x), float(y)))
+    return out
+
+
 def mask_to_polygon(mask, *, epsilon: float = 1.5, min_points: int = 3) -> list[float] | None:
     """The polygon of `mask_to_shape`, or None."""
     shape = mask_to_shape(mask, epsilon=epsilon, min_points=min_points)

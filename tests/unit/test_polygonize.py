@@ -1,6 +1,6 @@
 """Mask -> polygon tracing/simplification (dependency-free, no ML needed)."""
 
-from horos.backends.sam.polygonize import mask_to_polygon
+from horos.backends.sam.polygonize import mask_to_polygon, simplify_polygon
 
 
 def _grid(text: str) -> list[list[int]]:
@@ -142,3 +142,32 @@ def test_only_specks_still_yields_the_biggest_one():
 
     _, area, box = largest_blob(_grid("#....\n...##\n....."))
     assert area == 2 and box == (3, 1, 5, 2)
+
+
+def _ring(n, r=100.0):
+    import math
+
+    flat = []
+    for k in range(n):
+        a = 2 * math.pi * k / n
+        flat.extend((200 + r * math.cos(a), 200 + r * math.sin(a)))
+    return flat
+
+
+def test_simplify_polygon_caps_the_vertex_count_with_a_subset_of_the_outline():
+    ring = _ring(64)
+    for cap in (48, 16, 8, 5, 3):
+        out = simplify_polygon(ring, cap)
+        assert 3 <= len(out) // 2 <= cap, cap
+        pts = {(ring[i], ring[i + 1]) for i in range(0, len(ring), 2)}
+        assert all((out[i], out[i + 1]) in pts for i in range(0, len(out), 2))
+    # close to the cap, not far below it: the smallest tolerance that fits
+    assert len(simplify_polygon(ring, 16)) // 2 >= 12
+
+
+def test_simplify_polygon_leaves_small_polygons_alone_and_never_drops_below_three():
+    square = [0.0, 0.0, 10.0, 0.0, 10.0, 10.0, 0.0, 10.0]
+    assert simplify_polygon(square, 4) == square
+    assert simplify_polygon(square, 100) == square
+    assert len(simplify_polygon(square, 3)) == 6
+    assert len(simplify_polygon(square, 1)) == 6  # a cap below 3 means 3

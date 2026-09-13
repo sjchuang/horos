@@ -81,6 +81,8 @@ def test_boxes_to_polygons_routes(client):
     assert response.status_code == 400
     response = client.post("/api/v1/images/1/segment/boxes", json={"categories": ["ghost"]})
     assert response.status_code == 400
+    response = client.post("/api/v1/images/1/segment/boxes", json={"max_points": 2})
+    assert response.status_code == 400
     response = client.post("/api/v1/images/1/segment/boxes", json={})
     assert response.status_code == 200
     body = response.get_json()

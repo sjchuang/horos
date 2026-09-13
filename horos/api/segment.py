@@ -64,6 +64,9 @@ class SegmentRequest(BaseModel):
     box: tuple[float, float, float, float] | None = None
     output: Literal["polygon", "bbox"] = "polygon"
     model: str = DEFAULT_SEGMENTER
+    #: cap on the polygon's control points (None = the mask's full outline);
+    #: SAM outlines can be far more detailed than a label needs
+    max_points: int | None = Field(default=None, ge=3)
 
 
 class SegmentCandidate(BaseModel):
@@ -268,12 +271,16 @@ def segment_image(
         shape_type: Literal["polygon", "rectangle"] = "rectangle"
     else:
         flat = result.polygon or []
+        if request.max_points is not None:
+            from horos.backends.sam.polygonize import simplify_polygon
+
+            flat = simplify_polygon(flat, request.max_points)
         points = [[flat[i], flat[i + 1]] for i in range(0, len(flat) - 1, 2)]
         shape_type = "polygon"
     return SegmentCandidate(
         image_id=image_id, model=request.model, shape_type=shape_type, points=points,
-        polygon=result.polygon, bbox=result.bbox, score=result.score, area=result.area,
-        embedding_cached=cached, elapsed_ms=elapsed,
+        polygon=flat if shape_type == "polygon" else result.polygon, bbox=result.bbox,
+        score=result.score, area=result.area, embedding_cached=cached, elapsed_ms=elapsed,
     )
 
 
@@ -357,6 +364,7 @@ def boxes_to_polygons(
     categories: list[int | str] | None = None,
     include_pending: bool = True,
     model: str = DEFAULT_SEGMENTER,
+    max_points: int | None = None,
     device: str | None = None,
     backend: PromptableSegmenter | None = None,
     expected_version: int | None = None,
@@ -397,6 +405,10 @@ def boxes_to_polygons(
             out.append(a)
             continue
         polygon = [float(v) for v in result.polygon]
+        if max_points is not None:
+            from horos.backends.sam.polygonize import simplify_polygon
+
+            polygon = simplify_polygon(polygon, max_points)
         # The polygon is machine-made, so the annotation stops counting as
         # human work: it becomes ("auto", "pending") carrying the segmenter's
         # predicted IoU as its score, and a person accepts it in review
@@ -430,6 +442,7 @@ def boxes_to_polygons_events(
     split: str | None = None,
     include_pending: bool = True,
     model: str = DEFAULT_SEGMENTER,
+    max_points: int | None = None,
     device: str | None = None,
     backend: PromptableSegmenter | None = None,
     cancel: threading.Event | None = None,
@@ -477,7 +490,8 @@ def boxes_to_polygons_events(
             result = boxes_to_polygons(
                 project, record.id,
                 categories=sorted(category_ids) if category_ids is not None else None,
-                include_pending=include_pending, model=model, device=device, backend=backend,
+                include_pending=include_pending, model=model, max_points=max_points,
+                device=device, backend=backend,
             )
             converted += result.converted
             skipped += result.skipped
@@ -508,6 +522,7 @@ def start_boxes_to_polygons(
     split: str | None = None,
     include_pending: bool = True,
     model: str = DEFAULT_SEGMENTER,
+    max_points: int | None = None,
     device: str | None = None,
     backend: PromptableSegmenter | None = None,
 ) -> str:
@@ -522,6 +537,6 @@ def start_boxes_to_polygons(
         "boxes-to-polygons",
         lambda cancel: boxes_to_polygons_events(
             project, categories=categories, split=split, include_pending=include_pending,
-            model=model, device=device, backend=backend, cancel=cancel,
+            model=model, max_points=max_points, device=device, backend=backend, cancel=cancel,
         ),
     )

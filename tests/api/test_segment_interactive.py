@@ -36,6 +36,27 @@ def test_click_yields_a_polygon_candidate_and_writes_nothing(project):
     assert after.version == before.version and after.annotations == before.annotations
 
 
+def test_max_points_caps_the_polygon_detail(project):
+    """SAM outlines can be far more detailed than a label needs: the request
+    caps the control points and the candidate comes back simplified."""
+    fake = FakePromptableSegmenter()
+    full = segment_image(project, 1, SegmentRequest(points=[(30, 20)], labels=[1]), backend=fake)
+    assert len(full.points) == 4
+    capped = segment_image(
+        project, 1, SegmentRequest(points=[(30, 20)], labels=[1], max_points=3), backend=fake
+    )
+    assert capped.shape_type == "polygon" and len(capped.points) == 3
+    assert len(capped.polygon) == 6 and capped.bbox == full.bbox
+    # boxes are boxes whatever the cap
+    box = segment_image(
+        project, 1, SegmentRequest(points=[(30, 20)], labels=[1], output="bbox", max_points=3),
+        backend=fake,
+    )
+    assert box.shape_type == "rectangle" and len(box.points) == 2
+    with pytest.raises(ValueError):
+        SegmentRequest(points=[(30, 20)], labels=[1], max_points=2)
+
+
 def test_negative_point_and_box_prompts(project):
     fake = FakePromptableSegmenter()
     boxed = segment_image(project, 1, SegmentRequest(box=(4, 4, 16, 12)), backend=fake)

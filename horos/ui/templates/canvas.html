@@ -331,6 +331,14 @@
             <select id="sam-model" style="margin-left:auto;font-size:11px;min-width:0;max-width:150px"
                     title="Which segmenter runs (all Apache 2.0)"></select>
           </div>
+          <div id="sam-detail-row" style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--dim)">
+            <span title="At most this many control points per polygon — the outline is simplified to fit. Empty = the mask's full outline. Changing it redraws the live mask.">Points ≤</span>
+            <span class="stepper narrow"><input type="number" id="sam-max-points" min="3" step="8" placeholder="all"
+                   title="at most this many control points; empty = full outline">
+              <span class="step-btns"><button type="button" data-step="1" title="+8"></button>
+                <button type="button" data-step="-1" title="−8"></button></span></span>
+            <span id="sam-points-now" style="margin-left:auto"></span>
+          </div>
           <div style="display:flex;gap:6px;margin-top:8px">
             <button class="btn primary" id="sam-accept" style="flex:1" disabled>Accept</button>
             <button class="btn" id="sam-clear" disabled
@@ -698,6 +706,18 @@ const Page = {
     document.querySelectorAll('input[name="sam-output"]').forEach((r) => {
       r.onchange = () => { if (this.sam.points.length || this.sam.box) this._samQuery(); };
     });
+    // polygon detail: persists, and a live mask is re-decoded at the new cap
+    (() => {
+      let saved = null;
+      try { saved = localStorage.getItem("horos_sam_max_points"); } catch (e) {}
+      if (saved && Number(saved) >= 3) $("sam-max-points").value = saved;
+    })();
+    $("sam-max-points").onchange = () => {
+      const v = this._samMaxPoints();
+      if (v === null) $("sam-max-points").value = "";
+      try { localStorage.setItem("horos_sam_max_points", v === null ? "" : String(v)); } catch (e) {}
+      if (this.sam.points.length || this.sam.box) this._samQuery();
+    };
     $("sam-model").onchange = () => {
       try { localStorage.setItem("horos_sam_model", $("sam-model").value); } catch (e) {}
       this._samReset(true);
@@ -1904,6 +1924,10 @@ const Page = {
          queued: [] },  // queued: masks kept when a new box is dragged over a live one, written together on Enter / Space (SAM-T5)
 
   _samModel() { return $("sam-model").value || "sam2.1-tiny"; },
+  _samMaxPoints() {
+    const v = Math.round(Number($("sam-max-points").value));
+    return Number.isFinite(v) && v >= 3 ? v : null;
+  },
   _samOutput() {
     const picked = document.querySelector('input[name="sam-output"]:checked');
     return picked ? picked.value : "polygon";
@@ -1973,10 +1997,11 @@ const Page = {
     try {
       const cand = await api(`/images/${image.id}/segment`, json("POST", {
         points: this.sam.points, labels: this.sam.labels, box: this.sam.box,
-        output: this._samOutput(), model: this._samModel(),
+        output: this._samOutput(), model: this._samModel(), max_points: this._samMaxPoints(),
       }));
       if (seq !== this.sam.seq) return;  // the user clicked again meanwhile
       this.sam.candidate = cand.points.length ? cand : null;
+      $("sam-points-now").textContent = cand.points.length && cand.shape_type === "polygon" ? `${cand.points.length} points` : "";
       this._samSetStatus(cand.points.length
         ? `mask ${Math.round(cand.area)} px² · confidence ${cand.score.toFixed(2)} · ${Math.round(cand.elapsed_ms)} ms${cand.embedding_cached ? "" : " (encoder)"}`
         : "no mask for this prompt — add a point inside the object", !cand.points.length);
@@ -2045,7 +2070,7 @@ const Page = {
       const box = [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
       try {
         const cand = await api(`/images/${image.id}/segment`,
-          json("POST", { box, output: "polygon", model }));
+          json("POST", { box, output: "polygon", model, max_points: this._samMaxPoints() }));
         if (!onImage()) return;
         const target = this.editorShapes[i];
         if (!target || target.shape_type !== "rectangle") continue;
@@ -2345,6 +2370,7 @@ const Page = {
         categories: cls ? [Number(cls)] : null,
         include_pending: $("b2p-pending").checked,
         model: $("b2p-model").value || "sam2.1-tiny",
+        max_points: this._samMaxPoints(),
       }));
       this._startJob(job_id, "boxes");
     } catch (e) { toast(e.message, "err", 4000); }

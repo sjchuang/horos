@@ -39,6 +39,15 @@ def _model(body: dict) -> str:
     return model
 
 
+def _max_points(body: dict) -> int | None:
+    value = body.get("max_points")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value < 3:
+        raise ProjectError("'max_points' must be an integer of at least 3")
+    return value
+
+
 def _categories(body: dict):
     categories = body.get("categories")
     if categories is None:
@@ -60,7 +69,7 @@ def boxes_to_polygons(image_id: int):
     result = api.boxes_to_polygons(
         _project(), image_id, annotation_ids=ids, categories=_categories(body),
         include_pending=bool(body.get("include_pending", True)), model=_model(body),
-        expected_version=version,
+        max_points=_max_points(body), expected_version=version,
     )
     return jsonify(result.model_dump())
 
@@ -71,5 +80,6 @@ def start_boxes_to_polygons():
     job_id = api.start_boxes_to_polygons(
         _project(), categories=_categories(body), split=body.get("split") or None,
         include_pending=bool(body.get("include_pending", True)), model=_model(body),
+        max_points=_max_points(body),
     )
     return jsonify({"job_id": job_id}), 202
