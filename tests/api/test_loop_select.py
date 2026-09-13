@@ -135,6 +135,28 @@ def test_labels_and_a_scorer_give_a_pal_round(tmp_path):
     assert all(i not in sel.image_ids for i in labeled)
 
 
+def test_big_pools_are_scored_on_a_seeded_sample(tmp_path):
+    """Scoring 10k photos one by one took 14 minutes; the scorer looks at a
+    seeded random sample of the pool (the Scan setting), says so, and the
+    round still fills — diversity tops up from the whole pool."""
+    layout = [("red", "train")] * 30
+    project = _project(tmp_path, layout, labeled={1: "box", 2: "box", 3: "box"})
+    detector = FakeDetector()
+    record = _select(project, count=4, detector=detector, score_limit=5)
+    scored_unlabeled = [p for p in detector.seen if not p.endswith(("/1.png", "/2.png", "/3.png"))]
+    assert len(scored_unlabeled) == 5
+    assert any("scored 5 of 27 unlabeled photos" in n for n in record.selection.notes)
+    assert len(record.image_ids) == 4
+    # 0 means no cap: every unlabeled photo is scored
+    from horos.api.loop import close_round
+
+    close_round(project, record.number)
+    detector.seen.clear()
+    record = _select(project, count=2, detector=detector, score_limit=0)
+    assert len(detector.seen) == 3 + 27  # labeled + the whole pool (round 1's picks stayed unlabeled)
+    assert not any("scored" in n and "of" in n for n in record.selection.notes)
+
+
 def test_pal_top_up_comes_from_diversity_when_the_scorer_sees_nothing(tmp_path):
     # only one unlabeled image has a detection; the rest are grey
     layout = [("red", "train"), ("green", "train")] + [("grey", "train")] * 6

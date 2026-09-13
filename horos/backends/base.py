@@ -232,6 +232,17 @@ class ModelBackend(ABC):
         """Batch inference as an event stream: ProgressUpdated + PredictionReady
         per image, terminated by RunCompleted/RunFailed."""
 
+    def infer_many(
+        self, images: Iterable[Path], *, threshold: float = 0.5, masks: bool = True
+    ) -> list[ImagePrediction]:
+        """Predictions for `images`, in order, synchronously — the same result
+        as `infer_one` per image, but a backend that can batch its forward
+        passes (and decode images ahead of the GPU) overrides this. With
+        `masks=False` a segmentation backend may skip the mask → polygon step:
+        scorers that only count boxes (E10-T5) do not pay for polygons.
+        The default loops over `infer_one`."""
+        return [self.infer_one(Path(p), threshold=threshold) for p in images]
+
     # -- export --------------------------------------------------------------
     def export_parity(
         self,

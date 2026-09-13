@@ -503,6 +503,12 @@ const Loop = {
             <span class="step-btns"><button type="button" data-step="1"></button>
               <button type="button" data-step="-1"></button></span></span>
         </div>
+        <div class="opt">
+          <span class="k">Scan</span>
+          <span class="stepper narrow"><input type="number" data-opt="score_limit" min="0" step="500" placeholder="all" title="unlabeled photos the model scores per round — a random sample when the pool is bigger; empty or 0 = all of them (slow on large pools)">
+            <span class="step-btns"><button type="button" data-step="1"></button>
+              <button type="button" data-step="-1"></button></span></span>
+        </div>
         <div class="opt" data-opt="shapes-wrap">
           <span class="k">Shapes</span>
           <div class="seg" data-opt="shapes">
@@ -544,6 +550,9 @@ const Loop = {
       const goal = root.querySelector('[data-opt="target"]');
       goal.value = st.target == null ? "" : st.target;
       goal.onchange = () => this.saveSettings({ target: goal.value === "" || Number(goal.value) <= 0 ? null : Number(goal.value) });
+      const scan = root.querySelector('[data-opt="score_limit"]');
+      scan.value = st.score_limit == null ? "" : st.score_limit;
+      scan.onchange = () => this.saveSettings({ score_limit: scan.value === "" || Number(scan.value) <= 0 ? null : Math.round(Number(scan.value)) });
       if (window.horosControls) horosControls.wire(root);
       seg("shapes").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ shapes: b.dataset.v }); });
     });

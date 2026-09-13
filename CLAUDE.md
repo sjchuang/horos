@@ -604,7 +604,7 @@ Decisions confirmed on 2026-09-13:
 | E10-T3 | Project embedding store: per model, incremental, invalidated when an image file changes, progress events (R4) | `tests/api/test_embedding_store.py` |
 | E10-T4 | Diversity selection (k-center greedy) with a reason per pick | `tests/unit/test_selection_diversity.py` |
 | E10-T5 | PAL acquisition (LIUS + GUIDE, class budgets) with a reason per pick; backends report raw candidates | `tests/unit/test_selection_uncertainty.py` |
-| E10-T6 | Round selection API: count or percent; strategy auto-chosen from model availability; pool = every unlabeled, unskipped photo (labeled photos are the ones in a set) | `tests/api/test_loop_select.py` |
+| E10-T6 | Round selection API: count or percent; strategy auto-chosen from model availability; pool = every unlabeled, unskipped photo (labeled photos are the ones in a set); the scorer runs batched (`infer_many`, boxes only) over a seeded sample of at most `score_limit` photos (default 2000, 0 = all) | `tests/api/test_loop_select.py`, `tests/api/test_infer_many.py` |
 | E10-T7 | Round pre-annotation: own model when a completed run exists, else OWLv2 from class names; written pending with score | `tests/api/test_loop_preannotate.py` |
 | E10-T8 | Round training: readiness threshold, quick derived config; the round trains on the project's train set and holds out its test (20 %) and valid (10 %) sets, which E1-T8 assigns per photo by stable hash as labels arrive | `tests/api/test_loop_train.py` |
 | E10-T9 | Round history: per-round metrics, labels spent, delta to the previous round | `tests/api/test_loop_history.py` |

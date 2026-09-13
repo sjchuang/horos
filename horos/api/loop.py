@@ -113,6 +113,12 @@ LOOP_JOB_KINDS = ("loop-select", "loop-preannotate", "embeddings")
 #: labeled images used to fit PAL's logistic classifiers per round — a cap
 #: so a large labeled set does not cost a full inference pass every round
 MAX_FIT_IMAGES = 300
+#: photos per batched scorer call while scoring (progress is reported per chunk)
+SCORE_CHUNK = 16
+#: unlabeled photos the scorer looks at per round when the pool is larger — a
+#: seeded random sample; scoring 10 000 photos one by one took ~14 min, and
+#: PAL ranks a few thousand candidates as well as it ranks them all
+DEFAULT_SCORE_LIMIT = 2000
 ZERO_SHOT_SCORER = "owlv2-base"
 #: pre-label confidence floor per scorer kind: a fine-tuned run is calibrated
 #: on the project's classes, zero-shot OWLv2 scores run low (autolabel's
@@ -147,6 +153,9 @@ class LoopSettings(BaseModel):
     shapes: Shapes = "auto"
     #: the segmenter used for shapes="polygon"
     refiner: str = "sam2.1-tiny"
+    #: unlabeled photos scored per round (random sample when the pool is
+    #: bigger); None = score the whole pool, however long it takes
+    score_limit: int | None = Field(default=DEFAULT_SCORE_LIMIT, ge=1)
     #: stop-when-reached value of the headline metric (mAP flavours are in
     #: [0, 1]); None = keep going until the pool is empty or gains flatten
     target: float | None = Field(default=None, gt=0.0)
@@ -192,6 +201,9 @@ def update_loop_settings(project: Project, **changes) -> LoopSettings:
         raise ProjectError(f"Unknown loop setting(s): {sorted(unknown)}")
     if "target" in changes and changes["target"] is not None and float(changes["target"]) <= 0:
         changes["target"] = None  # a goal of 0 would be met by any model: it means "no goal"
+    if "score_limit" in changes and changes["score_limit"] is not None \
+            and int(changes["score_limit"]) <= 0:
+        changes["score_limit"] = None  # 0 = no cap: score every unlabeled photo
     try:
         updated = current.model_copy(update=changes)
         updated = LoopSettings.model_validate(updated.model_dump())
@@ -625,6 +637,7 @@ def select_round_events(
     preannotate: bool | None = None,
     shapes: Shapes | None = None,
     refiner: PromptableSegmenter | None = None,
+    score_limit: int | None = None,
 ) -> Iterator[Event]:
     """Open the next round and choose its images, as an R4 event stream.
     `preannotate` / `shapes` default to the loop settings (E10-T19).
@@ -703,46 +716,70 @@ def select_round_events(
                     f"labeled images"
                 )
             labeled_dets: list[pal.Detection] = []
-            total_steps = len(fit_ids) + len(pool)
+            # the scorer looks at a seeded sample of a big pool: PAL ranks a few
+            # thousand candidates as well as all of them, in a fraction of the time
+            # per-call override: None = the settings, 0 = no cap
+            limit = (settings.score_limit if score_limit is None
+                     else (score_limit if score_limit > 0 else None))
+            scored = pool
+            if limit is not None and len(pool) > limit:
+                scored = sorted(random.Random(seed).sample(pool, limit), key=lambda r: r.id)
+                notes.append(
+                    f"scored {limit} of {len(pool)} unlabeled photos (random sample, seed "
+                    f"{seed}); raise the Scan setting to look at more"
+                )
+            total_steps = len(fit_ids) + len(scored)
             step = 0
             cats = {c.id: c.name for c in project.categories}
-            for image_id in fit_ids:
+            # boxes only: the scorer counts candidates, polygons come later for the picks
+            for start in range(0, len(fit_ids), SCORE_CHUNK):
                 if cancel is not None and cancel.is_set():
                     raise _Cancelled()
-                rec = by_id[image_id]
-                pred = backend.infer_one(project.image_path(rec), threshold=SCORE_THRESHOLD)
-                dets = _pal_detections(pred, image_id, name_of, threshold=SCORE_THRESHOLD)
-                final = [i for i in pred.instances if i.score >= SCORE_THRESHOLD]
-                boxes = [i.bbox for i in final if (i.category_name or name_of.get(i.category_id))]
-                gt = [a for a in project.load_annotations(image_id).annotations
-                      if a.status == "confirmed"]
-                flags = pal.match_true_positives(
-                    boxes, [d.category for d in dets], [d.confidence for d in dets],
-                    [a.bbox for a in gt], [cats.get(a.category_id, "") for a in gt],
+                chunk = fit_ids[start:start + SCORE_CHUNK]
+                preds = backend.infer_many(
+                    [project.image_path(by_id[i]) for i in chunk],
+                    threshold=SCORE_THRESHOLD, masks=False,
                 )
-                labeled_dets.extend(
-                    pal.Detection(
-                        image_id=d.image_id, category=d.category, confidence=d.confidence,
-                        support=d.support, class_probs=d.class_probs, true_positive=flag,
+                for image_id, pred in zip(chunk, preds, strict=True):
+                    dets = _pal_detections(pred, image_id, name_of, threshold=SCORE_THRESHOLD)
+                    final = [i for i in pred.instances if i.score >= SCORE_THRESHOLD]
+                    boxes = [i.bbox for i in final
+                             if (i.category_name or name_of.get(i.category_id))]
+                    gt = [a for a in project.load_annotations(image_id).annotations
+                          if a.status == "confirmed"]
+                    flags = pal.match_true_positives(
+                        boxes, [d.category for d in dets], [d.confidence for d in dets],
+                        [a.bbox for a in gt], [cats.get(a.category_id, "") for a in gt],
                     )
-                    for d, flag in zip(dets, flags, strict=True)
-                )
-                step += 1
+                    labeled_dets.extend(
+                        pal.Detection(
+                            image_id=d.image_id, category=d.category, confidence=d.confidence,
+                            support=d.support, class_probs=d.class_probs, true_positive=flag,
+                        )
+                        for d, flag in zip(dets, flags, strict=True)
+                    )
+                    step += 1
                 yield ProgressUpdated(current=step, total=total_steps, phase="scoring labeled",
-                                      message=f"{rec.file_name}: {len(dets)} detection(s)")
+                                      message=f"{step} of {len(fit_ids)} labeled photos")
             unlabeled_dets: dict[int, list[pal.Detection]] = {}
-            for rec in pool:
+            for start in range(0, len(scored), SCORE_CHUNK):
                 if cancel is not None and cancel.is_set():
                     raise _Cancelled()
-                pred = backend.infer_one(project.image_path(rec), threshold=SCORE_THRESHOLD)
-                pool_preds[rec.id] = pred
-                unlabeled_dets[rec.id] = _pal_detections(
-                    pred, rec.id, name_of, threshold=SCORE_THRESHOLD
+                chunk = scored[start:start + SCORE_CHUNK]
+                preds = backend.infer_many(
+                    [project.image_path(rec) for rec in chunk],
+                    threshold=SCORE_THRESHOLD, masks=False,
                 )
-                step += 1
+                for rec, pred in zip(chunk, preds, strict=True):
+                    pool_preds[rec.id] = pred
+                    unlabeled_dets[rec.id] = _pal_detections(
+                        pred, rec.id, name_of, threshold=SCORE_THRESHOLD
+                    )
+                    step += 1
+                found = sum(len(d) for d in unlabeled_dets.values())
                 yield ProgressUpdated(current=step, total=total_steps, phase="scoring unlabeled",
-                                      message=f"{rec.file_name}: "
-                                              f"{len(unlabeled_dets[rec.id])} detection(s)")
+                                      message=f"{step - len(fit_ids)} of {len(scored)} photos · "
+                                              f"{found} detection(s)")
             embeddings = (
                 {image_id: pool_vecs[n] for n, image_id in enumerate(pool_ids)}
                 if pool_vecs is not None else None
@@ -797,9 +834,12 @@ def select_round_events(
                 if backend is None:
                     backend, scorer_label, name_of, scorer_kind = _scorer(project, device)
                 threshold = PRELABEL_THRESHOLD[scorer_kind]
-                # a PAL pass already predicted at SCORE_THRESHOLD; only reuse
-                # those predictions when the pre-label floor is not lower
-                cached = pool_preds if threshold >= SCORE_THRESHOLD else None
+                # a PAL pass already predicted at SCORE_THRESHOLD; reuse those
+                # predictions when the pre-label floor is not lower — except for
+                # polygon rounds, which were scored boxes-only and want the
+                # segmentation model's own masks on the picks
+                cached = (pool_preds if threshold >= SCORE_THRESHOLD and shapes != "polygon"
+                          else None)
                 summary = yield from _preannotate_images(
                     project, [p.image_id for p in picks], backend, name_of,
                     threshold=threshold, cached=cached, cancel=cancel, shapes=shapes,

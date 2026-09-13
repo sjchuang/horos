@@ -525,6 +525,26 @@ class RFDETRBackend(ModelBackend):
         yield RunCompleted(result={"checkpoint": str(checkpoint)})
 
     # -------------------------------------------------------------- inference
+    #: images per forward pass in infer_many; halved on CUDA OOM, down to 1
+    INFER_BATCH = 16
+
+    def _to_prediction(
+        self, image: Path, size: tuple[int, int], detections: Any, class_names: list[str],
+        *, threshold: float, masks: bool,
+    ) -> ImagePrediction:
+        # segmentation models carry masks: polygonised for the final
+        # instances only; candidates stay boxes (the scorer needs counts)
+        converted = _detections_to_instances(
+            detections, class_names or None, masks=masks, min_score=threshold
+        )
+        return ImagePrediction(
+            image=str(image),
+            width=size[0],
+            height=size[1],
+            instances=[c for c in converted if c.score >= threshold],
+            candidates=[c.model_copy(update={"segmentation": None}) for c in converted],
+        )
+
     def infer_one(self, image: Path, *, threshold: float = 0.5) -> ImagePrediction:
         """One forward pass at a low floor: the boxes at or above `threshold`
         are the instances, everything the query set proposed down to
@@ -536,22 +556,67 @@ class RFDETRBackend(ModelBackend):
             from PIL import Image
 
             with Image.open(image) as im:
-                width, height = im.size
+                size = im.size
             floor = min(threshold, CANDIDATE_FLOOR)
             detections = model.predict(str(image), threshold=floor, include_source_image=False)
             class_names = list(getattr(model, "class_names", None) or [])
-            # segmentation models carry masks: polygonised for the final
-            # instances only; candidates stay boxes (the scorer needs counts)
-            with_masks = _detections_to_instances(
-                detections, class_names or None, masks=True, min_score=threshold
+            return self._to_prediction(
+                image, size, detections, class_names, threshold=threshold, masks=True
             )
-            return ImagePrediction(
-                image=str(image),
-                width=width,
-                height=height,
-                instances=[c for c in with_masks if c.score >= threshold],
-                candidates=[c.model_copy(update={"segmentation": None}) for c in with_masks],
-            )
+
+    def infer_many(
+        self, images: Iterable[Path], *, threshold: float = 0.5, masks: bool = True
+    ) -> list[ImagePrediction]:
+        """`infer_one` for many images, but batched: INFER_BATCH images per
+        forward pass while a thread pool decodes the next batch, so the GPU
+        is not idle between photos. Same floor, same candidates. The active-
+        learning scorer runs thousands of photos through here (E10-T5) —
+        one at a time it spent most of its time outside the model."""
+        paths = [Path(p) for p in images]
+        if not paths:
+            return []
+        model = self._load()
+        out: list[ImagePrediction] = []
+        with translate_backend_errors(self.family):
+            from concurrent.futures import ThreadPoolExecutor
+
+            from PIL import Image
+
+            def load(path: Path):
+                with Image.open(path) as im:
+                    return im.convert("RGB")
+
+            floor = min(threshold, CANDIDATE_FLOOR)
+            class_names = list(getattr(model, "class_names", None) or [])
+            batch = max(1, self.INFER_BATCH)
+            chunks = [paths[i:i + batch] for i in range(0, len(paths), batch)]
+
+            def predict(chunk, loaded):
+                # a chunk that does not fit is split in two; never a silent CPU fallback
+                try:
+                    dets = model.predict(loaded, threshold=floor, include_source_image=False)
+                except RuntimeError as exc:
+                    if "out of memory" not in str(exc).lower() or len(chunk) == 1:
+                        raise
+                    half = len(chunk) // 2
+                    return (predict(chunk[:half], loaded[:half])
+                            + predict(chunk[half:], loaded[half:]))
+                if not isinstance(dets, list):
+                    dets = [dets]
+                return [
+                    self._to_prediction(path, im.size, det, class_names,
+                                        threshold=threshold, masks=masks)
+                    for path, im, det in zip(chunk, loaded, dets, strict=True)
+                ]
+
+            with ThreadPoolExecutor(max_workers=4) as pool:
+                ahead = [pool.submit(load, p) for p in chunks[0]]
+                for k, chunk in enumerate(chunks):
+                    loaded = [f.result() for f in ahead]
+                    if k + 1 < len(chunks):
+                        ahead = [pool.submit(load, p) for p in chunks[k + 1]]
+                    out.extend(predict(chunk, loaded))
+        return out
 
     def infer_batch(
         self, images: Iterable[Path], *, threshold: float = 0.5

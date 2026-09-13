@@ -48,7 +48,10 @@ def test_defaults_persist_and_validate(tmp_path):
     project = _project(tmp_path)
     s = get_loop_settings(project)
     assert (s.model, s.preannotate, s.shapes, s.refiner) == (None, True, "auto", "sam2.1-tiny")
+    assert s.score_limit == 2000  # the scorer samples a big pool by default
     assert loop_status(project).settings == s
+    assert update_loop_settings(project, score_limit=0).score_limit is None  # 0 = no cap
+    assert update_loop_settings(project, score_limit=500).score_limit == 500
 
     updated = update_loop_settings(project, model="rfdetr-seg-small", shapes="polygon")
     assert updated.model == "rfdetr-seg-small" and updated.shapes == "polygon"

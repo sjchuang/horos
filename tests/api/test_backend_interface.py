@@ -48,6 +48,19 @@ def test_infer_batch_yields_prediction_per_image(backend):
     assert isinstance(events[-1], RunCompleted)
 
 
+def test_infer_many_defaults_to_one_prediction_per_image_in_order(backend, tmp_path):
+    """Batched inference is optional for a backend: the base implementation
+    loops over infer_one, so callers can always ask for many at once."""
+    from helpers.data import make_image
+
+    paths = [make_image(tmp_path / f"{n}.png", 32, 24) for n in range(3)]
+    many = backend.infer_many(paths, threshold=0.2, masks=False)
+    assert [p.image for p in many] == [str(p) for p in paths]
+    assert [p.model_dump() for p in many] == [
+        backend.infer_one(p, threshold=0.2).model_dump() for p in paths
+    ]
+
+
 def test_backend_carries_model_info(backend):
     assert backend.info.key == "rfdetr-nano"
     assert backend.info.license == "Apache-2.0"
