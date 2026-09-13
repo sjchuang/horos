@@ -505,9 +505,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Active-learning loop: show where it stands, or select the next round",
     )
     p.add_argument(
-        "action", nargs="?", choices=("status", "select"), default="status",
+        "action", nargs="?", choices=("status", "select", "train", "close"), default="status",
         help="'status' (default) prints pool, labels and rounds; 'select' opens the "
-             "next round and picks its images",
+             "next round and picks its images; 'train' trains the open round on every "
+             "labeled image; 'close' closes the open round",
     )
     p.add_argument(
         "--project",
@@ -520,6 +521,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="auto (default): PAL once labels exist, diversity before",
     )
     p.add_argument("--device", help="Device override (cuda, mps, cpu)")
+    p.add_argument(
+        "--model", default="rfdetr-nano", help="loop train: model key (default rfdetr-nano)"
+    )
+    p.add_argument("--epochs", type=int, help="loop train: epochs (default: derived)")
 
     p = sub.add_parser("ui", help="Start the Web API + WebUI server")
     p.add_argument(
@@ -584,8 +589,8 @@ def _ml_preflight(command: str) -> int | None:
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     gated = args.command in _ML_GATED_COMMANDS or args.command == "ui"
-    if args.command == "loop" and args.action == "select":
-        gated = True  # embedding / scoring models; 'loop status' works without them
+    if args.command == "loop" and args.action in ("select", "train"):
+        gated = True  # embedding / scoring / training models; status and close work without
     if gated:
         exit_code = _ml_preflight(args.command)
         if exit_code is not None:
@@ -1078,6 +1083,23 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if final is None or final.type != "completed" or final.result.get("cancelled"):
                     return 1
                 record = api.get_round(project, int(final.result["round"]))
+                _emit(record.model_dump(mode="json"))
+            elif args.action in ("train", "close"):
+                status = api.loop_status(project)
+                if status.current is None:
+                    raise ProjectError("No open round — run 'horos loop select' first")
+                if args.action == "train":
+                    record = api.train_round(
+                        project, status.current.number, model=args.model, epochs=args.epochs,
+                        device=args.device,
+                    )
+                    print(  # noqa: T201
+                        f"training run {record.train_run_id} started for round {record.number}; "
+                        f"follow it with 'horos loop' or the Loop page",
+                        file=sys.stderr,
+                    )
+                else:
+                    record = api.close_round(project, status.current.number)
                 _emit(record.model_dump(mode="json"))
             else:
                 _emit(api.loop_status(project).model_dump(mode="json"))

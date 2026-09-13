@@ -428,3 +428,11 @@ def test_loop_status_and_select_from_the_cli(tmp_path, capsys, monkeypatch):
 
     code, body = _run(capsys, "loop", "--project", str(proj))
     assert code == 0 and body["current"]["number"] == 1 and body["pool_size"] == 0
+
+    # 'train' is refused with the readiness reasons (3 labeled images), not a trace
+    code, body = _run(capsys, "loop", "train", "--project", str(proj))
+    assert code != 0 and body is None
+    code, body = _run(capsys, "loop", "close", "--project", str(proj))
+    assert code == 0 and body["state"] == "closed"
+    code, body = _run(capsys, "loop", "close", "--project", str(proj))
+    assert code != 0  # nothing open any more
