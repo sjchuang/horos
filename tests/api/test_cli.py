@@ -402,7 +402,7 @@ def test_boxes_to_polygons_streams_events_and_filters_by_class(tmp_path, monkeyp
 
 def test_loop_status_and_select_from_the_cli(tmp_path, capsys, monkeypatch):
     """E10-T15: the loop runs from the CLI without a browser (E9-S3)."""
-    from helpers.fake_backend import FakeEmbedder
+    from helpers.fake_backend import fake_get_backend
 
     coco_dir = write_sample_coco_dir(tmp_path / "coco")
     proj = tmp_path / "proj"
@@ -419,7 +419,7 @@ def test_loop_status_and_select_from_the_cli(tmp_path, capsys, monkeypatch):
     assert code == 0 and body["pool_size"] == 1 and body["labeled_images"] == 2
     assert body["next_strategy"] == "pal" and body["rounds"] == []
 
-    monkeypatch.setattr("horos.backends.get_backend", lambda key, **kw: FakeEmbedder())
+    monkeypatch.setattr("horos.backends.get_backend", fake_get_backend)
     code, body = _run(capsys, "loop", "select", "--project", str(proj),
                       "--count", "1", "--strategy", "diversity")
     assert code == 0 and body["number"] == 1 and body["state"] == "labeling"

@@ -21,6 +21,7 @@ from horos.backends.base import (
     TrainSpec,
     translate_backend_errors,
 )
+from horos.errors import BackendError
 
 IMPORTED_MARKER = {"count": 0}
 IMPORTED_MARKER["count"] += 1  # increments once per real import of this module
@@ -296,3 +297,78 @@ class FakeEmbedder(ImageEmbedder):
             vec = np.asarray([*mean, width / 1000.0, height / 1000.0, 1.0])
             out.append((vec / (np.linalg.norm(vec) or 1.0)).tolist())
         return out
+
+
+# colour → what the fake detector "sees": red = confident box, green = unsure
+# box, blue = confident pallet, grey = nothing
+COLOURS = {
+    "red": (220, 20, 20),
+    "green": (20, 220, 20),
+    "blue": (20, 20, 220),
+    "grey": (128, 128, 128),
+}
+
+
+def dominant_colour(path) -> str:
+    from PIL import Image
+
+    with Image.open(path) as im:
+        r, g, b = im.convert("RGB").resize((1, 1)).getpixel((0, 0))
+    if max(r, g, b) - min(r, g, b) < 30:
+        return "grey"
+    return {r: "red", g: "green", b: "blue"}[max(r, g, b)]
+
+
+class FakeDetector(ModelBackend):
+    """A detector that 'sees' by image colour (E10 loop tests): red = a
+    confident 'box', green = a fence-sitting 'box', blue = a confident
+    'pallet', grey = nothing. Candidates repeat the instance `support`
+    times so PAL's support counts are meaningful."""
+
+    family = "fake-detector"
+
+    def __init__(self):
+        super().__init__(None)
+        self.seen: list[str] = []
+
+    def infer_one(self, image, *, threshold: float = 0.5):
+        self.seen.append(str(image))
+        kind = dominant_colour(image)
+        box = (10.0, 10.0, 30.0, 20.0)
+        instances, candidates = [], []
+
+        def add(name, score, support):
+            inst = PredictedInstance(bbox=box, score=score, category_id=0, category_name=name)
+            instances.append(inst)
+            candidates.extend([inst] * support)
+
+        if kind == "red":
+            add("box", 0.95, 8)
+        elif kind == "green":
+            add("box", 0.5, 2)
+        elif kind == "blue":
+            add("pallet", 0.9, 7)
+        return ImagePrediction(image=str(image), width=64, height=48,
+                               instances=[i for i in instances if i.score >= threshold],
+                               candidates=candidates)
+
+    def configure_prompts(self, prompts):
+        """Lets the fake stand in for the OWLv2 zero-shot scorer."""
+        self.prompts = list(prompts)
+
+    def train(self, spec):
+        raise BackendError("fake", backend=self.family)
+
+    def infer_batch(self, images, *, threshold=0.5):
+        raise BackendError("fake", backend=self.family)
+
+    def export(self, checkpoint, spec):
+        raise BackendError("fake", backend=self.family)
+
+
+def fake_get_backend(key, **kwargs):
+    """Drop-in for horos.backends.get_backend in loop tests: embedding keys
+    resolve to FakeEmbedder, everything else to FakeDetector."""
+    if key in ("fake-embedder", "dinov2-small"):
+        return FakeEmbedder()
+    return FakeDetector()

@@ -6,7 +6,7 @@ import time
 
 import pytest
 from helpers.data import make_image
-from helpers.fake_backend import FakeEmbedder
+from helpers.fake_backend import fake_get_backend
 
 from horos.core.dataset import Category
 from horos.web.app import create_app
@@ -26,7 +26,7 @@ def project_root(tmp_path):
 
 @pytest.fixture
 def client(project_root, monkeypatch):
-    monkeypatch.setattr("horos.backends.get_backend", lambda key, **kw: FakeEmbedder())
+    monkeypatch.setattr("horos.backends.get_backend", fake_get_backend)
     app = create_app(project_root)
     app.testing = True
     return app.test_client()

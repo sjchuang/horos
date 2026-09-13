@@ -8,7 +8,13 @@ import time
 
 import pytest
 from helpers.data import make_image
-from helpers.fake_backend import FakeEmbedder
+from helpers.fake_backend import (
+    COLOURS,
+    FakeDetector,
+    FakeEmbedder,
+    dominant_colour,
+    fake_get_backend,
+)
 
 from horos.api.jobs import job_status
 from horos.api.loop import (
@@ -20,67 +26,9 @@ from horos.api.loop import (
     start_round_job,
 )
 from horos.api.project import create_project
-from horos.backends.base import ImagePrediction, ModelBackend, PredictedInstance
 from horos.core.dataset import Annotation, Category
 from horos.core.rounds import load_round
 from horos.errors import BackendError, ProjectError
-
-# colour → what the fake detector "sees": red = confident box, green = unsure
-# box, blue = confident pallet, grey = nothing
-COLOURS = {
-    "red": (220, 20, 20),
-    "green": (20, 220, 20),
-    "blue": (20, 20, 220),
-    "grey": (128, 128, 128),
-}
-
-
-def _dominant(path) -> str:
-    from PIL import Image
-
-    with Image.open(path) as im:
-        r, g, b = im.convert("RGB").resize((1, 1)).getpixel((0, 0))
-    if max(r, g, b) - min(r, g, b) < 30:
-        return "grey"
-    return {r: "red", g: "green", b: "blue"}[max(r, g, b)]
-
-
-class FakeDetector(ModelBackend):
-    family = "fake-detector"
-
-    def __init__(self):
-        super().__init__(None)
-        self.seen: list[str] = []
-
-    def infer_one(self, image, *, threshold: float = 0.5):
-        self.seen.append(str(image))
-        kind = _dominant(image)
-        box = (10.0, 10.0, 30.0, 20.0)
-        instances, candidates = [], []
-
-        def add(name, score, support):
-            inst = PredictedInstance(bbox=box, score=score, category_id=0, category_name=name)
-            instances.append(inst)
-            candidates.extend([inst] * support)
-
-        if kind == "red":
-            add("box", 0.95, 8)
-        elif kind == "green":
-            add("box", 0.5, 2)
-        elif kind == "blue":
-            add("pallet", 0.9, 7)
-        return ImagePrediction(image=str(image), width=64, height=48,
-                               instances=[i for i in instances if i.score >= threshold],
-                               candidates=candidates)
-
-    def train(self, spec):
-        raise BackendError("fake", backend=self.family)
-
-    def infer_batch(self, images, *, threshold=0.5):
-        raise BackendError("fake", backend=self.family)
-
-    def export(self, checkpoint, spec):
-        raise BackendError("fake", backend=self.family)
 
 
 def _project(tmp_path, layout: list[tuple[str, str]], *, labeled: dict[int, str] | None = None):
@@ -105,6 +53,7 @@ def _project(tmp_path, layout: list[tuple[str, str]], *, labeled: dict[int, str]
 def _select(project, **kw):
     kw.setdefault("embedder", FakeEmbedder())
     kw.setdefault("embedding_model", "fake-embedder")
+    kw.setdefault("detector", FakeDetector())  # never load a real scorer in tests
     return select_round(project, **kw)
 
 
@@ -120,9 +69,10 @@ def test_cold_start_uses_diversity_and_spreads_over_colours(tmp_path):
     assert record.number == 1 and record.state == "labeling"
     sel = record.selection
     assert sel.strategy == "diversity" and sel.requested == 3 and sel.pool_size == 12
-    assert sel.embedding_model == "fake-embedder" and sel.scorer is None
+    assert sel.embedding_model == "fake-embedder"
+    assert sel.scorer == "fake-detector"  # only used to pre-annotate the picks (E10-T7)
     assert len(set(sel.image_ids)) == 3
-    colours = {_dominant(project.image_path(project.get_image(i))) for i in sel.image_ids}
+    colours = {dominant_colour(project.image_path(project.get_image(i))) for i in sel.image_ids}
     assert colours == {"red", "green", "blue"}
     assert all(p.reason for p in sel.picks)
     assert any("no labeled images yet" in n for n in sel.notes)
@@ -170,7 +120,7 @@ def test_labels_and_a_scorer_give_a_pal_round(tmp_path):
     pal_picks = [p for p in sel.picks if p.reason.startswith("PAL for class")]
     assert pal_picks, sel.picks
     # the fence-sitting green images outrank the confident red ones
-    kinds = [_dominant(project.image_path(project.get_image(p.image_id))) for p in pal_picks]
+    kinds = [dominant_colour(project.image_path(project.get_image(p.image_id))) for p in pal_picks]
     assert "green" in kinds and "red" not in kinds[: len(pal_picks) // 2 + 1]
     assert any("PAL class budgets" in n for n in sel.notes)
     assert all(i not in sel.image_ids for i in labeled)
@@ -287,7 +237,7 @@ def test_cancel_closes_the_round(tmp_path):
 
 def test_background_job_selects_a_round(tmp_path, monkeypatch):
     project = _project(tmp_path, [("red", "train")] * 5)
-    monkeypatch.setattr("horos.backends.get_backend", lambda key, **kw: FakeEmbedder())
+    monkeypatch.setattr("horos.backends.get_backend", fake_get_backend)
     job_id = start_round_job(project, count=2, embedding_model="fake-embedder")
     deadline = time.monotonic() + 10
     while job_status(project, job_id).state == "running":

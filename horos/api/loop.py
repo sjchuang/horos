@@ -67,6 +67,9 @@ __all__ = [
     "select_round",
     "start_round_job",
     "close_round",
+    "preannotate_events",
+    "preannotate_round",
+    "start_preannotate_job",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -77,6 +80,10 @@ SCORE_THRESHOLD = 0.3
 #: so a large labeled set does not cost a full inference pass every round
 MAX_FIT_IMAGES = 300
 ZERO_SHOT_SCORER = "owlv2-base"
+#: pre-label confidence floor per scorer kind: a fine-tuned run is calibrated
+#: on the project's classes, zero-shot OWLv2 scores run low (autolabel's
+#: default is 0.1)
+PRELABEL_THRESHOLD = {"run": SCORE_THRESHOLD, "zero_shot": 0.1}
 
 
 class RoundSummary(BaseModel):
@@ -250,20 +257,74 @@ def _pal_detections(
 
 
 def _scorer(project: Project, device: str | None):
-    """(backend, label, name_of, run_id) — the newest completed run's model,
-    else OWLv2 prompted with the class names."""
+    """(backend, label, name_of, kind) — the newest completed run's model
+    ("run"), else OWLv2 prompted with the class names ("zero_shot")."""
     run = _latest_completed_run(project)
     if run is not None:
         from horos.api.evaluate import _load_run_backend
 
         backend, _ = _load_run_backend(project, run.run_id, device=device)
-        return backend, run.run_id, {}, run.run_id
+        return backend, run.run_id, {}, "run"
+    if not project.categories:
+        raise ProjectError(
+            "No trained model and no classes to prompt a zero-shot scorer with — "
+            "add the project's classes first."
+        )
     from horos.backends import get_backend
 
     names = [c.name for c in project.categories]
     backend = get_backend(ZERO_SHOT_SCORER, device=device)
     backend.configure_prompts(names)  # type: ignore[attr-defined]
-    return backend, ZERO_SHOT_SCORER, dict(enumerate(names)), None
+    return backend, ZERO_SHOT_SCORER, dict(enumerate(names)), "zero_shot"
+
+
+def _preannotate_images(
+    project: Project,
+    image_ids: list[int],
+    backend: ModelBackend,
+    name_of: dict[int, str],
+    *,
+    threshold: float,
+    cached: dict[int, ImagePrediction] | None = None,
+    cancel: CancelEvent | None = None,
+    phase: str = "pre-annotating",
+) -> Iterator[Event]:
+    """Write the scorer's detections on `image_ids` as pending auto pre-labels
+    (E10-T7, E10-T11). Predictions in `cached` (from the PAL scoring pass)
+    are reused, so a PAL round costs no second inference. Images that
+    already hold confirmed annotations are left alone. Returns the summary
+    dict via StopIteration.value; use `result = yield from ...`."""
+    from horos.api.autolabel import _ensure_categories, _write_pending
+    from horos.backends.base import ProgressUpdated
+
+    by_id = {r.id: r for r in project.list_images()}
+    images = annotations = 0
+    for n, image_id in enumerate(image_ids):
+        if cancel is not None and cancel.is_set():
+            raise _Cancelled()
+        record = by_id.get(image_id)
+        if record is None:
+            continue
+        stored = project.load_annotations(image_id)
+        if any(a.status == "confirmed" for a in stored.annotations):
+            continue  # a person already labeled it; never overwrite human work
+        pred = (cached or {}).get(image_id)
+        if pred is None:
+            pred = backend.infer_one(project.image_path(record), threshold=threshold)
+        detections = []
+        for inst in pred.instances:
+            name = inst.category_name or name_of.get(inst.category_id)
+            if name is None or inst.score < threshold:
+                continue
+            detections.append((name, inst.bbox, inst.score))
+        cat_ids = _ensure_categories(project, {d[0] for d in detections}) if detections else {}
+        annotations += _write_pending(project, image_id, detections, cat_ids)
+        images += 1
+        yield ProgressUpdated(
+            current=n + 1, total=len(image_ids), phase=phase,
+            message=f"{record.file_name}: {len(detections)} pre-label(s)",
+        )
+    return {"images": images, "annotations": annotations, "threshold": threshold}
 
 
 def select_round_events(
@@ -279,6 +340,7 @@ def select_round_events(
     detector_label: str | None = None,
     cancel: CancelEvent | None = None,
     seed: int | None = None,
+    preannotate: bool = True,
 ) -> Iterator[Event]:
     """Open the next round and choose its images, as an R4 event stream.
     Ends with RunCompleted(result={"round", "picked", "strategy"}) and the
@@ -329,13 +391,15 @@ def select_round_events(
 
         picks: list[PickedImage] = []
         scorer_label: str | None = None
+        scorer_kind = "run"
+        backend = detector
+        name_of: dict[int, str] = dict(enumerate(c.name for c in project.categories))
+        if backend is not None:
+            scorer_label = detector_label or getattr(backend, "family", "detector")
+        pool_preds: dict[int, ImagePrediction] = {}
         if chosen == "pal":
-            backend = detector
             if backend is None:
-                backend, scorer_label, name_of, _ = _scorer(project, device)
-            else:
-                scorer_label = detector_label or getattr(backend, "family", "detector")
-                name_of = dict(enumerate(c.name for c in project.categories))
+                backend, scorer_label, name_of, scorer_kind = _scorer(project, device)
             by_id = {r.id: r for r in images}
             # labeled detections with true/false-positive flags → LIUS training set
             fit_ids = labeled_ids
@@ -378,6 +442,7 @@ def select_round_events(
                 if cancel is not None and cancel.is_set():
                     raise _Cancelled()
                 pred = backend.infer_one(project.image_path(rec), threshold=SCORE_THRESHOLD)
+                pool_preds[rec.id] = pred
                 unlabeled_dets[rec.id] = _pal_detections(
                     pred, rec.id, name_of, threshold=SCORE_THRESHOLD
                 )
@@ -432,13 +497,33 @@ def select_round_events(
                                          score=p.score, reason=p.reason))
         yield ProgressUpdated(current=wanted, total=wanted, phase="selecting",
                               message=f"{len(picks)} image(s) chosen")
+        # ---- pre-annotate the picks so labeling starts from corrections (E10-T7)
+        preannotation: dict = {}
+        if preannotate and project.categories:
+            try:
+                if backend is None:
+                    backend, scorer_label, name_of, scorer_kind = _scorer(project, device)
+                threshold = PRELABEL_THRESHOLD[scorer_kind]
+                # a PAL pass already predicted at SCORE_THRESHOLD; only reuse
+                # those predictions when the pre-label floor is not lower
+                cached = pool_preds if threshold >= SCORE_THRESHOLD else None
+                summary = yield from _preannotate_images(
+                    project, [p.image_id for p in picks], backend, name_of,
+                    threshold=threshold, cached=cached, cancel=cancel,
+                )
+                preannotation = {"scorer": scorer_label, **summary}
+            except BackendError as exc:
+                notes.append(f"pre-annotation skipped — scorer unavailable: {exc}")
+        elif preannotate:
+            notes.append("pre-annotation skipped — the project has no classes yet")
         record = record.model_copy(update={
             "selection": SelectionRecord(
                 strategy=chosen, requested=wanted, requested_percent=percent,
                 pool_size=len(pool),
                 embedding_model=embedding_model if pool_vecs is not None else None,
                 scorer=scorer_label, picks=picks, notes=notes,
-            )
+            ),
+            "preannotation": preannotation,
         }).advance("labeling")
         save_round(project, record)
         yield RunCompleted(result={"round": record.number, "picked": len(picks),
@@ -457,6 +542,80 @@ def select_round_events(
 
 class _Cancelled(Exception):
     pass
+
+
+def preannotate_events(
+    project: Project,
+    number: int,
+    *,
+    device: str | None = None,
+    detector: ModelBackend | None = None,
+    detector_label: str | None = None,
+    cancel: CancelEvent | None = None,
+) -> Iterator[Event]:
+    """(Re)write pending pre-labels on a round's unlabeled images with the
+    current scorer — a newer trained run, or OWLv2 before one exists. Human
+    annotations are never touched; earlier pending pre-labels are replaced."""
+    from horos.backends.base import RunCompleted, RunFailed, RunStarted
+
+    record = load_round(project, number)
+    if record.state == "closed":
+        raise ProjectError(f"Round {number} is closed; pre-annotate the open round instead")
+    ids = record.image_ids
+    yield RunStarted(total=len(ids), config={"round": number})
+    try:
+        if detector is not None:
+            backend, label, kind = detector, detector_label or detector.family, "run"
+            name_of = dict(enumerate(c.name for c in project.categories))
+        else:
+            backend, label, name_of, kind = _scorer(project, device)
+        summary = yield from _preannotate_images(
+            project, ids, backend, name_of, threshold=PRELABEL_THRESHOLD[kind], cancel=cancel,
+        )
+        save_round(project, load_round(project, number).model_copy(
+            update={"preannotation": {"scorer": label, **summary}}
+        ))
+        yield RunCompleted(result={"round": number, "cancelled": False, **summary})
+    except _Cancelled:
+        yield RunCompleted(result={"round": number, "cancelled": True})
+    except Exception as exc:  # noqa: BLE001 — the stream must end with an event (R4)
+        logger.exception("round pre-annotation failed")
+        yield RunFailed(error_code=getattr(exc, "code", "backend_error"), message=str(exc))
+
+
+@capability(
+    "loop.preannotate",
+    summary="Pre-label a round's unlabeled images with the current model (blocking)",
+    not_web_because="The Web API runs it as a background job (loop.preannotate_job).",
+    cli=None,
+    not_cli_because="Selection pre-annotates automatically; redoing it is a UI action.",
+)
+def preannotate_round(project: Project, number: int, **kwargs) -> LoopRound:
+    last = None
+    for event in preannotate_events(project, number, **kwargs):
+        last = event
+    if last is None or last.type != "completed":
+        raise ProjectError(
+            f"Pre-annotation failed: {getattr(last, 'message', 'no result')}"
+        )
+    return load_round(project, number)
+
+
+@capability(
+    "loop.preannotate_job",
+    summary="Pre-label a round's unlabeled images as a background job (poll via jobs.status)",
+    web_route="/api/v1/loop/rounds/<int:number>/preannotate",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Selection pre-annotates automatically; redoing it is a UI action.",
+)
+def start_preannotate_job(project: Project, number: int, *, device: str | None = None) -> str:
+    load_round(project, number)  # unknown rounds fail synchronously
+    return start_job(
+        project,
+        "loop-preannotate",
+        lambda cancel: preannotate_events(project, number, device=device, cancel=cancel),
+    )
 
 
 @capability(

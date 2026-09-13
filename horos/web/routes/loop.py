@@ -71,3 +71,10 @@ def start_round_job():
 @bp.post("/rounds/<int:number>/close")
 def close_round(number: int):
     return jsonify(api.close_round(_project(), number).model_dump())
+
+
+@bp.post("/rounds/<int:number>/preannotate")
+def start_preannotate_job(number: int):
+    body = request.get_json(silent=True) or {}
+    job_id = api.start_preannotate_job(_project(), number, device=body.get("device") or None)
+    return jsonify({"job_id": job_id}), 202

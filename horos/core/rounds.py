@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -89,6 +89,9 @@ class LoopRound(BaseModel):
     train_run_id: str | None = None
     #: headline validation metrics of this round's model, filled in at review
     metrics: dict[str, float] = Field(default_factory=dict)
+    #: what pre-annotated the round's images (E10-T7): scorer, threshold,
+    #: images and pending annotations written; empty when nothing could
+    preannotation: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def image_ids(self) -> list[int]:

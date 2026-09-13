@@ -99,7 +99,9 @@ from horos.api.loop import (
     close_round,
     get_round,
     loop_status,
+    preannotate_round,
     select_round,
+    start_preannotate_job,
     start_round_job,
 )
 from horos.api.manifest import Capability, get_capability, list_capabilities
@@ -171,7 +173,9 @@ __all__ = [
     "close_round",
     "get_round",
     "loop_status",
+    "preannotate_round",
     "select_round",
+    "start_preannotate_job",
     "start_round_job",
     "EmbeddingStatus",
     "embedding_status",
