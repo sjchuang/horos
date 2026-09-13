@@ -735,7 +735,7 @@ const Page = {
     await this.loadImages(1);
     if (ROUND && !location.hash && this.queue.length) {
       // straight into the first image that still needs work
-      const first = this.queue.findIndex((item) => !item.annotated && !item.excluded);
+      const first = this.queue.findIndex((item) => !item.annotated);
       this.openEditor(first >= 0 ? first : 0);
     }
     // #<image_id> deep-links straight into the editor on that image;
@@ -755,15 +755,15 @@ const Page = {
       const q = new URLSearchParams({ session });
       if (ANNOTATOR) q.set("annotator", ANNOTATOR);
       // RoundQueueItem carries the same fields the grid and editor read
-      this.queue = (await api(`/loop/rounds/${ROUND}/queue?` + q)).map((item) => ({
-        ...item, num_annotations: item.annotated ? 1 : 0,
-      }));
+      this.queue = (await api(`/loop/rounds/${ROUND}/queue?` + q))
+        .filter((item) => !item.excluded)   // skipped photos were replaced; see All photos
+        .map((item) => ({ ...item, num_annotations: item.annotated ? 1 : 0 }));
       this.page = page;
       this.renderGrid();
-      const done = this.queue.filter((item) => item.annotated || item.excluded).length;
+      const done = this.queue.filter((item) => item.annotated).length;
       $("progress-line").innerHTML =
-        `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} done`;
-      this._notifyRound(done);
+        `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} labeled`;
+      this._notifyRound(done, done === this.queue.length && this.queue.length > 0);
       return;
     }
     const q = new URLSearchParams({ mode: $("queue-mode").value, session });
@@ -973,7 +973,7 @@ const Page = {
       if (!await this._checkUnsaved()) return;
       this.openEditor(this.currentIdx + 1);
     } else if (ROUND) {
-      const left = this.queue.filter((item) => !item.annotated && !item.excluded).length;
+      const left = this.queue.filter((item) => !item.annotated).length;
       if (left) toast(`${left} image(s) of this round still need labels`, "warn", 3000);
       else { toast("Round complete — every image is labeled", "ok", 3000); this._notifyRound(this.queue.length, true); }
     }
@@ -1104,9 +1104,9 @@ const Page = {
       this._syncReviewBar();
       this._drawCanvas();
       if (ROUND) {
-        const done = this.queue.filter((q) => q.annotated || q.excluded).length;
+        const done = this.queue.filter((q) => q.annotated).length;
         $("progress-line").innerHTML =
-          `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} done`;
+          `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} labeled`;
         this._notifyRound(done, done === this.queue.length);
       }
     } catch (e) {
@@ -1219,14 +1219,14 @@ const Page = {
     if (ROUND) await this.loadImages(this.page);
     else this.queue = this.queue.filter((q) => !skipped.has(q.image.id));
     this._undoToast(ids, (result.replacements || []).length);
-    this._notifyRound(this.queue.filter((q) => q.annotated || q.excluded).length,
-                      this.queue.every((q) => q.annotated || q.excluded));
-    // move on to the next photo that still needs work
-    const next = this.queue.findIndex((q, i) => i > this.currentIdx && !q.annotated && !q.excluded);
-    const fallback = this.queue.findIndex((q) => !q.annotated && !q.excluded);
+    // move on to the next photo that still needs work (the queue was reloaded
+    // in round mode, so indices start over from the current position)
+    const from = Math.min(this.currentIdx, this.queue.length - 1);
+    const next = this.queue.findIndex((q, i) => i >= from && !q.annotated);
+    const fallback = this.queue.findIndex((q) => !q.annotated);
     const target = next >= 0 ? next : fallback;
     if (target >= 0) this.openEditor(target);
-    else if (this.queue.length && ROUND) this.openEditor(Math.min(this.currentIdx, this.queue.length - 1));
+    else if (this.queue.length && ROUND) this.openEditor(from);
     else this.closeEditor();
   },
   _undoToast(ids, added = 0) {

@@ -501,7 +501,7 @@ const Loop = {
       if (!status.current || status.current.state !== "labeling") { this.status = status; return this.refresh(); }
       this.status = status;
       const row = status.rounds.find((r) => r.number === status.current.number);
-      if (row) this.setRing(row.labeled + row.skipped, row.picked);
+      if (row) this.setRing(row.labeled, row.picked - row.skipped);
       await this.renderReadiness();
     } catch (e) {}
     this.pollTimer = setTimeout(() => this.refreshLabel(), 5000);
@@ -513,7 +513,8 @@ const Loop = {
   },
   updateRing(picks) {
     const row = this.status.rounds.find((r) => r.number === this.status.current.number);
-    this.setRing(row ? row.labeled + row.skipped : 0, picks.length);
+    // skipped picks were replaced: the round's size is its active picks
+    this.setRing(row ? row.labeled : 0, row ? row.picked - row.skipped : picks.length);
   },
   setRing(done, total) {
     const frac = total ? done / total : 0;
