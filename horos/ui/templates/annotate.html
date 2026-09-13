@@ -439,14 +439,14 @@ const Loop = {
           <div class="seg" data-opt="model">
             <button data-v="auto" title="Boxes → RF-DETR Nano · polygons → RF-DETR-Seg Nano">Auto</button>
             <button data-v="detection" title="detect boxes">Boxes</button>
-            <button data-v="instance_segmentation" title="segment masks">Masks</button>
+            <button data-v="instance_segmentation" title="instance segmentation">Segm</button>
           </div>
           <select data-opt="size" style="display:none"></select>
         </div>
         <div class="opt">
-          <span class="k">Suggestions</span>
+          <span class="k">Pseudo labeling</span>
           <div class="seg" data-opt="suggest">
-            <button data-v="1" title="pre-label the picked photos">On</button>
+            <button data-v="1" title="pseudo-label the picked photos">On</button>
             <button data-v="0" title="start every photo blank">Off</button>
           </div>
         </div>
@@ -559,8 +559,8 @@ const Loop = {
     await this.renderOptions();
     const pre = cur.preannotation || {};
     $("prelabel-badge").style.display = pre.annotations ? "" : "none";
-    $("prelabel-badge").innerHTML = `${ICON.robot} ${pre.annotations} suggested`;
-    $("prelabel-badge").dataset.tip = `suggested by ${pre.scorer} — accept or fix, no drawing from scratch`;
+    $("prelabel-badge").innerHTML = `${ICON.robot} ${pre.annotations} pseudo labels`;
+    $("prelabel-badge").dataset.tip = `pseudo-labeled by ${pre.scorer} — accept or fix, no drawing from scratch`;
     const names = [...new Set(picks.map((p) => p.assigned_to).filter(Boolean))];
     $("names").innerHTML = names.map((n) => `<span class="name ${n === this.annotator ? "on" : ""}" data-n="${n}">${n}</span>`).join("");
     $("names").querySelectorAll(".name").forEach((el) => { el.onclick = () => this.setAnnotator(el.dataset.n); });
