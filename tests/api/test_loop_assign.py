@@ -59,7 +59,7 @@ def test_assign_keeps_existing_owners_unless_reassigning(tmp_path):
     assert sorted({p.assigned_to for p in redone.selection.picks}) == ["cid", "dee"]
 
 
-def test_queue_puts_unlabeled_first_and_shows_claims(tmp_path):
+def test_queue_keeps_pick_order_and_shows_claims(tmp_path):
     project = _project(tmp_path)
     record = _round(project, 4)
     first, second = record.image_ids[:2]
@@ -69,7 +69,9 @@ def test_queue_puts_unlabeled_first_and_shows_claims(tmp_path):
     )
     claim_image(project, second, "session-x")
     queue = round_queue(project, record.number, session_id="session-y")
-    assert queue[-1].image.id == first and queue[-1].annotated  # labeled sinks to the end
+    # pick order is kept even for labeled photos: the annotator's position never jumps
+    assert [i.image.id for i in queue] == record.image_ids
+    assert queue[0].image.id == first and queue[0].annotated
     claimed = next(i for i in queue if i.image.id == second)
     assert claimed.claimed_by == "session-x"
     # the claiming session does not see its own claim as someone else's

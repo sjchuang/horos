@@ -1226,8 +1226,10 @@ def round_queue(
                 reason=pick.reason,
             )
         )
-    # stable: pick order within each group — open work first, then labeled, then skipped
-    items.sort(key=lambda i: (i.excluded, i.annotated))
+    # pick order, always: labeled photos keep their place and replacements
+    # (appended to the picks) come last, so a reload after a skip never
+    # reshuffles what the annotator is walking through; skipped picks sink
+    items.sort(key=lambda i: i.excluded)  # stable
     return items
 
 

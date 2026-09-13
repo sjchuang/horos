@@ -123,7 +123,9 @@ def test_round_progress_counts_skipped_picks(tmp_path):
     assert (row.picked, row.labeled, row.skipped) == (5, 1, 1)  # one replacement added
     queue = round_queue(project, record.number)
     assert queue[-1].image.id == first and queue[-1].excluded  # skipped sinks to the end
-    assert queue[-2].image.id == second and queue[-2].annotated
+    assert queue[0].image.id == second and queue[0].annotated  # labeled keeps its place
+    replacement = [p.image_id for p in loop_status(project).current.selection.picks][-1]
+    assert queue[-2].image.id == replacement  # the replacement is appended, not inserted
     # the skipped image cannot be picked again by a later round
     assert loop_status(project).pool_size == 12 - 5  # picks reserved; skipped not in pool
 
