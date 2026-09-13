@@ -61,6 +61,8 @@ class QueueItem(BaseModel):
     #: uncertainty-first review ordering (E3-T6)
     num_pending: int = 0
     mean_pending_score: float | None = None
+    #: skipped as unfit for training (E10-T16); shown, never selected or trained on
+    excluded: bool = False
 
 
 class AnnotationProgress(BaseModel):
@@ -212,6 +214,7 @@ def image_queue(
                 image=record,
                 num_annotations=len(confirmed),
                 annotated=bool(confirmed),
+                excluded=record.excluded,
                 claimed_by=(
                     holder["session"]
                     if holder and holder["session"] != session_id

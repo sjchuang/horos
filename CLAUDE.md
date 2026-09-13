@@ -580,6 +580,7 @@ Decisions confirmed on 2026-09-13:
 - Batch size per round defaults to a **fixed number**; a percentage of the unlabeled pool is selectable
 - **Multiple annotators**: a round's images are assigned per annotator on top of the E2-T8 claims
 - Machine-generated geometry (autolabel, SAM boxes-to-polygons, round pre-annotation) is **always** `source="auto", status="pending"` with a score — never stored as human work
+- Confirmed 2026-09-13 (second pass): annotators can **skip** a photo as unfit for training and take visually similar photos with it (embedding similarity, user-set threshold); the loop is **part of the annotate page**, not a separate page; UI text is kept short and plain, Apple-like in tone
 
 #### User stories
 
@@ -611,6 +612,8 @@ Decisions confirmed on 2026-09-13:
 | E10-T13 | Canvas embeddable without its page shell: `/annotate?embed=1&round=<n>[&annotator=]` hides the site header, swaps the project queue for the round's picks and reports progress to the parent via `postMessage` (the engine itself is not split into a separate file) | Interface scenario (`tests/ui_scenarios/E10-T14.md`) |
 | E10-T14 | Loop page: four-step stepper, one primary action at a time, count slider, embedded canvas, live curves, round history | Interface scenario |
 | E10-T15 | CLI `horos loop` (status / select / train / close) | `tests/api/test_cli.py` |
+| E10-T16 | Skip unfit photos, and similar ones with them: `ImageRecord.excluded`, skipped images leave the pool, statistics, snapshots and training; similar photos found by embedding cosine similarity with a threshold the user adjusts; undo via restore | `tests/api/test_loop_skip.py` |
+| E10-T17 | The loop lives in the annotate page (`/annotate` is the four-step shell, the canvas is its Label step); one nav entry, no separate loop page; wording trimmed to short, plain labels with an Apple-like calm look | Interface scenario (`tests/ui_scenarios/E10-T14.md`) |
 
 #### How it is accepted
 

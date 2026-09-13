@@ -138,3 +138,42 @@ def round_queue(number: int):
         session_id=request.args.get("session") or None,
     )
     return jsonify([item.model_dump() for item in items])
+
+
+def _ids(body: dict) -> list[int]:
+    ids = body.get("image_ids")
+    if not isinstance(ids, list) or not ids or not all(
+        isinstance(i, int) and not isinstance(i, bool) for i in ids
+    ):
+        raise ProjectError("'image_ids' must be a non-empty list of image ids")
+    return ids
+
+
+images_bp = Blueprint("loop_images", __name__, url_prefix="/api/v1/images")
+
+
+@images_bp.get("/<int:image_id>/similar")
+def similar_images(image_id: int):
+    threshold = request.args.get("threshold", default=0.9, type=float)
+    limit = request.args.get("limit", default=48, type=int)
+    items = api.similar_images(
+        _project(), image_id, threshold=threshold, limit=limit,
+        model=_model(request.args, DEFAULT_EMBEDDING_MODEL),
+        include_labeled=request.args.get("include_labeled") == "1",
+    )
+    return jsonify([item.model_dump() for item in items])
+
+
+@images_bp.post("/skip")
+def skip_images():
+    body = request.get_json(silent=True) or {}
+    note = body.get("note", "")
+    if not isinstance(note, str):
+        raise ProjectError("'note' must be a string")
+    return jsonify(api.skip_images(_project(), _ids(body), note=note).model_dump())
+
+
+@images_bp.post("/restore")
+def restore_images():
+    body = request.get_json(silent=True) or {}
+    return jsonify(api.restore_images(_project(), _ids(body)).model_dump())

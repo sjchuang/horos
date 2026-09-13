@@ -282,6 +282,27 @@ class Project:
         self._save_image_index(index)
         return removed
 
+    def set_excluded(self, image_ids: list[int], excluded: bool, *, note: str = "") -> int:
+        """Mark images as skipped (unfit for training) or bring them back.
+        Unknown ids fail before anything is written. Returns how many records
+        changed state."""
+        index = self._load_image_index()
+        by_id = {record.id: record for record in index.images}
+        missing = [i for i in image_ids if i not in by_id]
+        if missing:
+            raise ProjectError(
+                f"No image(s) with id(s) {sorted(missing)} in project {self.root}"
+            )
+        changed = 0
+        for image_id in image_ids:
+            record = by_id[image_id]
+            if record.excluded != excluded:
+                changed += 1
+            record.excluded = excluded
+            record.exclude_note = note if excluded else ""
+        self._save_image_index(index)
+        return changed
+
     def update_image_splits(self, split_by_id: dict[int, str]) -> None:
         index = self._load_image_index()
         for record in index.images:
@@ -300,17 +321,20 @@ class Project:
         return candidate
 
     # -------------------------------------------------------------- assembly
-    def to_dataset(self):
-        """Assemble the full in-memory Dataset snapshot (for stats/validation/export)."""
+    def to_dataset(self, *, include_excluded: bool = False):
+        """Assemble the in-memory Dataset snapshot (for stats/validation/
+        export/training). Images an annotator skipped as unfit for training
+        are left out unless `include_excluded` is set (E10-T16)."""
         from horos.core.dataset import Dataset
 
         index = self._load_image_index()
+        images = [r for r in index.images if include_excluded or not r.excluded]
         annotations: list[Annotation] = []
-        for record in index.images:
+        for record in images:
             annotations.extend(self.load_annotations(record.id).annotations)
         return Dataset(
             categories=self.manifest.categories,
-            images=index.images,
+            images=images,
             annotations=annotations,
         )
 

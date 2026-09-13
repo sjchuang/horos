@@ -80,6 +80,11 @@ __all__ = [
     "assign_round",
     "RoundQueueItem",
     "round_queue",
+    "SimilarImage",
+    "similar_images",
+    "SkipResult",
+    "skip_images",
+    "restore_images",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -124,6 +129,8 @@ class RoundSummary(BaseModel):
     picked: int = 0
     #: picks that now hold confirmed annotations
     labeled: int = 0
+    #: picks the annotators skipped as unfit (E10-T16)
+    skipped: int = 0
     labeled_before: int = 0
     #: labeled images gained during the round (so far, while it is open)
     labels_spent: int = 0
@@ -141,7 +148,9 @@ class RoundSummary(BaseModel):
 class LoopStatus(BaseModel):
     total_images: int
     labeled_images: int
-    #: selectable images: unlabeled, in the train split, not in the open round
+    #: skipped by annotators as unfit for training (E10-T16)
+    skipped_images: int = 0
+    #: selectable images: unlabeled, not skipped, in the train split, not in the open round
     pool_size: int
     validation_images: int
     categories: list[str]
@@ -157,11 +166,18 @@ class LoopStatus(BaseModel):
 
 
 def _labeled_ids(project: Project) -> set[int]:
+    """Images with confirmed annotations that are not skipped — the training set."""
     out = set()
     for record in project.list_images():
+        if record.excluded:
+            continue
         if any(a.status == "confirmed" for a in project.load_annotations(record.id).annotations):
             out.add(record.id)
     return out
+
+
+def _in_pool(record, labeled: set[int]) -> bool:
+    return not record.excluded and record.id not in labeled and record.split == "train"
 
 
 def _latest_completed_run(project: Project):
@@ -196,13 +212,17 @@ def _summary(
     labeled_now: int,
     previous: tuple[str, float] | None,
 ) -> RoundSummary:
-    labeled = 0
+    labeled = skipped = 0
     if record.selection:
+        by_id = {r.id: r for r in project.list_images()}
         for image_id in record.selection.image_ids:
-            try:
-                anns = project.load_annotations(image_id).annotations
-            except ProjectError:
+            image = by_id.get(image_id)
+            if image is None:
                 continue
+            if image.excluded:
+                skipped += 1
+                continue
+            anns = project.load_annotations(image_id).annotations
             if any(a.status == "confirmed" for a in anns):
                 labeled += 1
     after = record.labeled_after if record.labeled_after is not None else labeled_now
@@ -218,6 +238,7 @@ def _summary(
         requested=record.selection.requested if record.selection else 0,
         picked=len(record.image_ids),
         labeled=labeled,
+        skipped=skipped,
         labeled_before=record.labeled_before,
         labels_spent=max(0, after - record.labeled_before),
         train_run_id=record.train_run_id,
@@ -268,13 +289,12 @@ def loop_status(project: Project) -> LoopStatus:
     if active is not None:
         active = _reconcile_round(project, active)
     reserved = set(active.image_ids) if active else set()
-    pool = [
-        r for r in images if r.id not in labeled and r.split == "train" and r.id not in reserved
-    ]
+    pool = [r for r in images if _in_pool(r, labeled) and r.id not in reserved]
     strategy, _ = _auto_strategy(project, labeled)
     return LoopStatus(
         total_images=len(images),
         labeled_images=len(labeled),
+        skipped_images=sum(1 for r in images if r.excluded),
         pool_size=len(pool),
         validation_images=sum(1 for r in images if r.split == "valid"),
         categories=[c.name for c in project.categories],
@@ -439,7 +459,7 @@ def select_round_events(
 
     images = project.list_images()
     labeled = _labeled_ids(project)
-    pool = [r for r in images if r.id not in labeled and r.split == "train"]
+    pool = [r for r in images if _in_pool(r, labeled)]
     wanted = resolve_count(len(pool), count=count, percent=percent)
     if strategy == "auto":
         chosen, why = _auto_strategy(project, labeled)
@@ -983,6 +1003,7 @@ class RoundQueueItem(BaseModel):
     image: ImageRecord
     assigned_to: str | None = None
     annotated: bool
+    excluded: bool = False
     num_pending: int = 0
     #: another session's live claim on the image (E2-T8), None if free
     claimed_by: str | None = None
@@ -1022,6 +1043,7 @@ def round_queue(
                 image=image,
                 assigned_to=pick.assigned_to,
                 annotated=any(a.status == "confirmed" for a in anns),
+                excluded=image.excluded,
                 num_pending=sum(1 for a in anns if a.status == "pending"),
                 claimed_by=(
                     holder["session"] if holder and holder["session"] != session_id else None
@@ -1030,6 +1052,119 @@ def round_queue(
                 reason=pick.reason,
             )
         )
-    items.sort(key=lambda i: i.annotated)  # stable: pick order within each group
+    # stable: pick order within each group — open work first, then labeled, then skipped
+    items.sort(key=lambda i: (i.excluded, i.annotated))
     return items
+
+
+# ------------------------------------------------------------------ skipping
+
+
+class SimilarImage(BaseModel):
+    image: ImageRecord
+    #: cosine similarity to the reference image (1 = identical)
+    similarity: float
+    annotated: bool = False
+
+
+class SkipResult(BaseModel):
+    skipped: list[int]
+    #: ids that were already skipped / unknown to the round and left alone
+    unchanged: int = 0
+    skipped_images: int
+
+
+@capability(
+    "images.similar",
+    summary="Unlabeled images that look like this one (embedding cosine similarity)",
+    web_route="/api/v1/images/<int:image_id>/similar",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="Drives the 'skip similar photos' sheet in the annotator.",
+)
+def similar_images(
+    project: Project,
+    image_id: int,
+    *,
+    threshold: float = 0.9,
+    limit: int = 48,
+    model: str = DEFAULT_EMBEDDING_MODEL,
+    include_labeled: bool = False,
+) -> list[SimilarImage]:
+    """Other images whose embedding is within `threshold` cosine similarity
+    of `image_id`, most similar first. Without a current embedding for the
+    reference image the answer is an explicit error, never a silent empty
+    list — the caller runs the embedding job first (E10-T3)."""
+    if not 0.0 <= threshold <= 1.0:
+        raise ProjectError(f"threshold must be within [0, 1], got {threshold}")
+    records = project.list_images()
+    reference = next((r for r in records if r.id == image_id), None)
+    if reference is None:
+        raise ProjectError(f"No image with id {image_id} in project {project.root}")
+    ref_vec = load_embeddings(project, [image_id], model)
+    if ref_vec is None:
+        raise ProjectError(
+            f"Image {image_id} has no current {model} embedding yet — run the embedding "
+            f"job (POST /loop/embeddings) first."
+        )
+    labeled = _labeled_ids(project)
+    candidates = [
+        r for r in records
+        if r.id != image_id and not r.excluded and (include_labeled or r.id not in labeled)
+    ]
+    vecs = load_embeddings(project, [r.id for r in candidates], model)
+    if vecs is None:
+        # some candidates lack a vector: score the ones that have one
+        scored = []
+        for r in candidates:
+            v = load_embeddings(project, [r.id], model)
+            if v is not None:
+                scored.append((r, float(v[0] @ ref_vec[0])))
+    else:
+        sims = vecs @ ref_vec[0]
+        scored = list(zip(candidates, (float(x) for x in sims), strict=True))
+    scored = [(r, sim) for r, sim in scored if sim >= threshold]
+    scored.sort(key=lambda t: -t[1])
+    return [
+        SimilarImage(image=r, similarity=round(sim, 4), annotated=r.id in labeled)
+        for r, sim in scored[:limit]
+    ]
+
+
+@capability(
+    "images.skip",
+    summary="Skip images as unfit for training (they leave the pool, stats and snapshots)",
+    web_route="/api/v1/images/skip",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Skipping is an annotator's judgement made in the editor.",
+)
+def skip_images(project: Project, image_ids: list[int], *, note: str = "") -> SkipResult:
+    if not image_ids:
+        raise ProjectError("Give at least one image id to skip")
+    before = {r.id for r in project.list_images() if r.excluded}
+    project.set_excluded(list(image_ids), True, note=note.strip())
+    skipped = [i for i in image_ids if i not in before]
+    return SkipResult(
+        skipped=skipped, unchanged=len(image_ids) - len(skipped),
+        skipped_images=sum(1 for r in project.list_images() if r.excluded),
+    )
+
+
+@capability(
+    "images.restore",
+    summary="Bring skipped images back into the pool",
+    web_route="/api/v1/images/restore",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Undo of an editor action.",
+)
+def restore_images(project: Project, image_ids: list[int]) -> SkipResult:
+    if not image_ids:
+        raise ProjectError("Give at least one image id to restore")
+    changed = project.set_excluded(list(image_ids), False)
+    return SkipResult(
+        skipped=[], unchanged=len(image_ids) - changed,
+        skipped_images=sum(1 for r in project.list_images() if r.excluded),
+    )
 

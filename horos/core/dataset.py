@@ -50,6 +50,11 @@ class ImageRecord(BaseModel):
     #: Absolute path for images referenced in place (import with copy=False).
     #: None for images owned by the project (the default).
     external_path: str | None = None
+    #: skipped by an annotator as unfit for training (E10-T16): stays in the
+    #: project and the annotator, but leaves the selection pool, the dataset
+    #: snapshot, the statistics and every training run
+    excluded: bool = False
+    exclude_note: str = ""
 
 
 class Annotation(BaseModel):
