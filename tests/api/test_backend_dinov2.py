@@ -67,12 +67,30 @@ def test_fake_embedder_is_deterministic_and_normalised(tmp_path):
 
 @pytest.mark.skipif(not HAS_TRANSFORMERS, reason="transformers not installed")
 def test_real_dinov2_embeds_images(tmp_path):
-    backend = get_backend("dinov2-small", device="cpu")
+    """Runs in a subprocess: importing transformers here would pollute
+    sys.modules for the lazy-loading assertions of later test modules."""
+    import json
+    import subprocess
+    import sys
+
     same = make_image(tmp_path / "same.png", 96, 96, color=(30, 60, 200))
     twin = make_image(tmp_path / "twin.png", 96, 96, color=(30, 60, 200))
     other = make_image(tmp_path / "other.png", 96, 96, color=(220, 220, 40))
-    vecs = np.asarray(backend.embed_batch([same, twin, other]))
-    assert vecs.shape == (3, backend.embedding_dim) and backend.embedding_dim == 384
+    script = (
+        "import json, sys\n"
+        "from horos.backends import get_backend\n"
+        "b = get_backend('dinov2-small', device='cpu')\n"
+        "vecs = b.embed_batch([sys.argv[1], sys.argv[2], sys.argv[3]])\n"
+        "print(json.dumps({'dim': b.embedding_dim, 'vecs': vecs}))\n"
+    )
+    proc = subprocess.run(
+        [sys.executable, "-c", script, str(same), str(twin), str(other)],
+        capture_output=True, text=True, timeout=600, check=False,
+    )
+    assert proc.returncode == 0, proc.stderr[-2000:]
+    body = json.loads(proc.stdout.strip().splitlines()[-1])
+    vecs = np.asarray(body["vecs"])
+    assert vecs.shape == (3, body["dim"]) and body["dim"] == 384
     assert np.allclose(np.linalg.norm(vecs, axis=1), 1.0, atol=1e-4)
     assert vecs[0] @ vecs[1] == pytest.approx(1.0, abs=1e-4)
     assert vecs[0] @ vecs[2] < vecs[0] @ vecs[1]
