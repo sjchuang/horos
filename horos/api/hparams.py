@@ -153,10 +153,15 @@ def _derive_resolution(
     base = model_info.input_resolution
     area = stats.relative_area
     if area is not None and area.median < 0.01:
-        # +128 keeps rfdetr's divisible-by-64 constraint for every base size
-        return base + 128, (
+        # a third more pixels per side, snapped UP to the model's resolution
+        # step (patch size × windows: 64 for RF-DETR detection, 12/24 for
+        # RF-DETR-Seg) — an unsnapped value is rejected by the backend
+        step = max(1, model_info.resolution_step)
+        raised = -(-(base + 128) // step) * step
+        return raised, (
             f"median object covers {area.median:.2%} of its image (<1%): "
-            f"small objects need more pixels — raised {base} → {base + 128}"
+            f"small objects need more pixels — raised {base} → {raised} "
+            f"(multiple of {step})"
         )
     return base, f"model's native input resolution ({base}px), objects are not tiny"
 

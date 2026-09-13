@@ -21,7 +21,7 @@ The problem it solves is not "which model is more accurate". It is **the path th
 
 | Item | Scope |
 |---|---|
-| Models | RF-DETR Nano / Small / Medium / Large (Apache 2.0) |
+| Models | RF-DETR Nano / Small / Medium / Large (detection) and RF-DETR-Seg Nano … 2XLarge (instance segmentation), all Apache 2.0 |
 | Auto-labeling | OWLv2 open-vocabulary zero-shot (Apache 2.0) |
 | Data formats | COCO JSON, YOLO, LabelMe (read + write); Pascal VOC, Darknet, VIA (import only) |
 | Export | ONNX, TensorRT, TFLite |
@@ -379,6 +379,7 @@ API tests cover pipeline correctness (fixture images with known prompts, asserti
 | E4-T12 | `backends/device.py` device abstraction | CUDA → MPS → CPU priority, overridable; `tests/api/test_device.py` |
 | E4-T13 | Platform capability query | Returns a feature-availability list for the current platform; `tests/api/test_platform_capabilities.py` |
 | E4-T14 | Error handling for unsupported combinations | macOS + TensorRT raises an explicit error, no CPU fallback; `tests/api/test_unsupported_combos.py` |
+| E4-T15 | RF-DETR-Seg instance segmentation models: registry entries (all sizes Apache 2.0, verified against the open package's weight list), class mapping, masks → polygons on inference, mask output in the export spec, resolution snapping to the model's patch step | `tests/unit/test_registry.py`, `tests/api/test_backend_rfdetr.py`, `tests/api/test_hparam_derive.py` |
 
 #### How it is accepted
 
@@ -435,6 +436,7 @@ Search-based HPO (Optuna and friends) is left as a pluggable extension. Rational
 | E5-T7 | End-to-end small-dataset training | Fixture dataset completes 2 epochs and produces weights; `tests/api/test_train_e2e.py` |
 | E5-T8 | Training monitoring UI | Interface scenario |
 | E5-T9 | Web API endpoints | `tests/web/test_train_routes.py` |
+| E5-T10 | End-to-end small-dataset **segmentation** training | Polygon fixture completes 2 epochs with RF-DETR-Seg Nano and inference returns polygons; `tests/api/test_train_seg_e2e.py` |
 
 #### How it is accepted
 
@@ -613,6 +615,7 @@ Decisions confirmed on 2026-09-13:
 | E10-T14 | Loop page: four-step stepper, one primary action at a time, count slider, embedded canvas, live curves, round history | Interface scenario |
 | E10-T15 | CLI `horos loop` (status / select / train / close) | `tests/api/test_cli.py` |
 | E10-T16 | Skip unfit photos, and similar ones with them: `ImageRecord.excluded`, skipped images leave the pool, statistics, snapshots and training; similar photos found by embedding cosine similarity with a threshold the user adjusts; undo via restore | `tests/api/test_loop_skip.py` |
+| E10-T18 | The loop picks the model itself: RF-DETR-Seg Nano when most confirmed labels are polygons, RF-DETR Nano otherwise; reason recorded on the round | `tests/api/test_loop_train.py` |
 | E10-T17 | The loop lives in the annotate page (`/annotate` is the four-step shell, the canvas is its Label step); one nav entry, no separate loop page; wording trimmed to short, plain labels with an Apple-like calm look | Interface scenario (`tests/ui_scenarios/E10-T14.md`) |
 
 #### How it is accepted

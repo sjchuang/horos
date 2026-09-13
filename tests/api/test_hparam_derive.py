@@ -165,3 +165,21 @@ def test_lr_is_derived_with_reason_and_overridable():
     # an lr override does not disturb the other derivations (E5-T2)
     assert overridden.values["epochs"] == plan.values["epochs"]
     assert overridden.values["batch_size"] == plan.values["batch_size"]
+
+
+def test_tiny_objects_snap_the_raised_resolution_to_the_model_step():
+    """E4-T15: RF-DETR-Seg needs multiples of 12/24, not 64 — 312+128=440 is
+    rejected by the backend, 444 (nano) / 528 (small) are what get derived."""
+    def plan_for(key):
+        info = get_model_info(key)
+        return derive_plan(_stats(median_area=0.005), model=key, model_info=info, memory=_memory())
+
+    plan = plan_for("rfdetr-seg-nano")
+    assert plan.values["resolution"] == 444 and 444 % 12 == 0
+    reasons = " ".join(getattr(d, "reason", "") for d in plan.derivations)
+    assert "multiple of 12" in reasons
+    plan = plan_for("rfdetr-seg-small")
+    assert plan.values["resolution"] == 528 and 528 % 24 == 0
+    # detection keeps its 64-step behaviour
+    plan = _plan(_stats(median_area=0.005))
+    assert plan.values["resolution"] == NANO.input_resolution + 128

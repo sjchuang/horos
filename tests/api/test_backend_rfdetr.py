@@ -246,3 +246,36 @@ def test_best_tracker_smoothing_compares_raw_regular():
         _best_ema=0.25,             # below the RAW regular: regular must win
     )
     assert tracker.observe(2) == {"best/epoch": 2.0, "best/is_ema": 0.0}
+
+
+def test_segmentation_masks_become_polygons_for_final_instances_only():
+    """E4-T15: RF-DETR-Seg masks are polygonised for detections at or above
+    the score floor; low-confidence candidates stay boxes."""
+    import numpy as np
+
+    mask_a = np.zeros((40, 40), dtype=bool)
+    mask_a[10:30, 5:25] = True  # a 20×20 block
+    mask_b = np.zeros((40, 40), dtype=bool)
+    mask_b[0:4, 0:4] = True
+    detections = SimpleNamespace(
+        xyxy=[(5.0, 10.0, 25.0, 30.0), (0.0, 0.0, 4.0, 4.0)],
+        confidence=[0.9, 0.1],
+        class_id=[0, 0],
+        mask=np.stack([mask_a, mask_b]),
+    )
+    strong, weak = _detections_to_instances(detections, ["box"], masks=True, min_score=0.5)
+    assert strong.segmentation and len(strong.segmentation[0]) >= 6  # ≥ 3 vertices
+    xs, ys = strong.segmentation[0][0::2], strong.segmentation[0][1::2]
+    assert 4 <= min(xs) <= 6 and 24 <= max(xs) <= 26
+    assert 9 <= min(ys) <= 11 and 29 <= max(ys) <= 31
+    assert weak.segmentation is None  # below the floor: not polygonised
+    # without masks requested (or a detection-only model) nothing changes
+    plain = _detections_to_instances(detections, ["box"])
+    assert all(i.segmentation is None for i in plain)
+
+
+def test_every_seg_size_maps_to_an_rfdetr_seg_class():
+    for key, cls in _MODEL_CLASSES.items():
+        if "seg" in key:
+            assert cls.startswith("RFDETRSeg"), (key, cls)
+    assert _MODEL_CLASSES["rfdetr-seg-nano"] == "RFDETRSegNano"

@@ -42,6 +42,9 @@ class ModelInfo(BaseModel):
     hf_id: str | None = None  # HuggingFace hub id, for transformers-hosted weights
     #: can this model be fine-tuned through horos? (drives the training UI list)
     trainable: bool = False
+    #: a training resolution must be a multiple of this (backbone patch size ×
+    #: window count); the hyperparameter rules snap derived values to it
+    resolution_step: int = 64
     notes: str = ""
 
     @property
@@ -117,6 +120,100 @@ _MODELS: dict[str, ModelInfo] = {
             latency_hint="highest accuracy — desktop GPU recommended",
             entrypoint=_RFDETR_ENTRYPOINT,
             trainable=True,
+        ),
+        # RF-DETR-Seg (instance segmentation). Code and weights Apache 2.0 for
+        # every size — unlike detection, the seg XL/2XL weights ship in the
+        # open `rfdetr` package, not in rfdetr_plus (verified 2026-09-13 against
+        # rfdetr/assets/model_weights.py and the upstream README).
+        ModelInfo(
+            key="rfdetr-seg-nano",
+            family="rfdetr",
+            display_name="RF-DETR-Seg Nano",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=312,
+            params_millions=33.6,
+            latency_hint="fastest masks — Jetson-friendly",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
+            resolution_step=12,
+        ),
+        ModelInfo(
+            key="rfdetr-seg-small",
+            family="rfdetr",
+            display_name="RF-DETR-Seg Small",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=384,
+            params_millions=33.7,
+            latency_hint="fast masks — good default for Jetson",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
+            resolution_step=24,
+        ),
+        ModelInfo(
+            key="rfdetr-seg-medium",
+            family="rfdetr",
+            display_name="RF-DETR-Seg Medium",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=432,
+            params_millions=35.7,
+            latency_hint="balanced mask quality/latency",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
+            resolution_step=24,
+        ),
+        ModelInfo(
+            key="rfdetr-seg-large",
+            family="rfdetr",
+            display_name="RF-DETR-Seg Large",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=504,
+            params_millions=36.2,
+            latency_hint="high mask quality — desktop GPU recommended",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
+            resolution_step=24,
+        ),
+        ModelInfo(
+            key="rfdetr-seg-xlarge",
+            family="rfdetr",
+            display_name="RF-DETR-Seg XLarge",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=624,
+            params_millions=38.1,
+            latency_hint="highest mask quality — desktop GPU only",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
+            resolution_step=24,
+        ),
+        ModelInfo(
+            key="rfdetr-seg-2xlarge",
+            family="rfdetr",
+            display_name="RF-DETR-Seg 2XLarge",
+            task="instance_segmentation",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url=_RFDETR_LICENSE_URL,
+            input_resolution=768,
+            params_millions=38.6,
+            latency_hint="best masks, slowest — desktop GPU only",
+            entrypoint=_RFDETR_ENTRYPOINT,
+            trainable=True,
+            resolution_step=24,
         ),
         ModelInfo(
             key="owlv2-base",

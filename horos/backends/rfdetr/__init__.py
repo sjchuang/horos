@@ -41,6 +41,13 @@ _MODEL_CLASSES = {
     "rfdetr-small": "RFDETRSmall",
     "rfdetr-medium": "RFDETRMedium",
     "rfdetr-large": "RFDETRLarge",
+    # instance segmentation (RF-DETR-Seg): same trainer, masks on top
+    "rfdetr-seg-nano": "RFDETRSegNano",
+    "rfdetr-seg-small": "RFDETRSegSmall",
+    "rfdetr-seg-medium": "RFDETRSegMedium",
+    "rfdetr-seg-large": "RFDETRSegLarge",
+    "rfdetr-seg-xlarge": "RFDETRSegXLarge",
+    "rfdetr-seg-2xlarge": "RFDETRSeg2XLarge",
 }
 
 # Best-first order among the files rfdetr training writes to output_dir.
@@ -99,29 +106,48 @@ CANDIDATE_FLOOR = 0.05
 
 
 def _detections_to_instances(
-    detections: Any, class_names: list[str] | None = None
+    detections: Any,
+    class_names: list[str] | None = None,
+    *,
+    masks: bool = False,
+    min_score: float = 0.0,
 ) -> list[PredictedInstance]:
     """supervision.Detections (xyxy) → PredictedInstance list (COCO xywh).
 
     Fine-tuned rfdetr emits 0-based indices into its class list — NOT the
     training dataset's COCO category ids. The name is the portable identity,
-    so it is attached to every instance (see PredictedInstance)."""
+    so it is attached to every instance (see PredictedInstance).
+
+    With `masks`, a segmentation model's boolean masks (N, H, W) become one
+    polygon per instance (largest blob, simplified) for detections scoring
+    at least `min_score` — polygonising every low-confidence candidate would
+    cost more than the detection itself."""
     instances: list[PredictedInstance] = []
     xyxy = detections.xyxy
     confidence = detections.confidence
     class_id = detections.class_id
+    mask_stack = getattr(detections, "mask", None) if masks else None
     for i in range(len(xyxy)):
         x1, y1, x2, y2 = (float(v) for v in xyxy[i])
         label = int(class_id[i]) if class_id is not None else 0
         name = None
         if class_names is not None and 0 <= label < len(class_names):
             name = class_names[label]
+        score = float(confidence[i]) if confidence is not None else 1.0
+        segmentation = None
+        if mask_stack is not None and score >= min_score:
+            from horos.backends.sam.polygonize import mask_to_polygon
+
+            polygon = mask_to_polygon(mask_stack[i])
+            if polygon:
+                segmentation = [polygon]
         instances.append(
             PredictedInstance(
                 bbox=(x1, y1, max(x2 - x1, 0.0), max(y2 - y1, 0.0)),
-                score=float(confidence[i]) if confidence is not None else 1.0,
+                score=score,
                 category_id=label,
                 category_name=name,
+                segmentation=segmentation,
             )
         )
     return instances
@@ -514,13 +540,17 @@ class RFDETRBackend(ModelBackend):
             floor = min(threshold, CANDIDATE_FLOOR)
             detections = model.predict(str(image), threshold=floor, include_source_image=False)
             class_names = list(getattr(model, "class_names", None) or [])
-            candidates = _detections_to_instances(detections, class_names or None)
+            # segmentation models carry masks: polygonised for the final
+            # instances only; candidates stay boxes (the scorer needs counts)
+            with_masks = _detections_to_instances(
+                detections, class_names or None, masks=True, min_score=threshold
+            )
             return ImagePrediction(
                 image=str(image),
                 width=width,
                 height=height,
-                instances=[c for c in candidates if c.score >= threshold],
-                candidates=candidates,
+                instances=[c for c in with_masks if c.score >= threshold],
+                candidates=[c.model_copy(update={"segmentation": None}) for c in with_masks],
             )
 
     def infer_batch(
@@ -552,6 +582,10 @@ class RFDETRBackend(ModelBackend):
                  "description": "boxes as (cx, cy, w, h) normalised to [0,1] of the input"},
                 {"name": "labels", "shape": ["batch", "queries", "num_classes"],
                  "description": "class logits; apply sigmoid, take the max per query"},
+                *([{"name": "masks", "shape": ["batch", "queries", "mask_h", "mask_w"],
+                    "description": "per-query mask logits at reduced resolution; apply "
+                                   "sigmoid and threshold at 0.5, then resize to the input"}]
+                  if getattr(model.model_config, "segmentation_head", False) else []),
             ],
         }
 

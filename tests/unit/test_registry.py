@@ -62,3 +62,26 @@ def test_list_models_filter_by_task():
     assert registry.list_models(task="instance_segmentation") == [
         m for m in registry.list_models() if m.task == "instance_segmentation"
     ]
+
+
+SEG_KEYS = {
+    "rfdetr-seg-nano", "rfdetr-seg-small", "rfdetr-seg-medium", "rfdetr-seg-large",
+    "rfdetr-seg-xlarge", "rfdetr-seg-2xlarge",
+}
+
+
+def test_rfdetr_seg_models_are_listed_as_apache_instance_segmentation():
+    """E4-T15: every RF-DETR-Seg size ships in the open rfdetr package under
+    Apache 2.0 (unlike detection XL/2XL), so all of them are public."""
+    seg = {m.key: m for m in registry.list_models(task="instance_segmentation")
+           if m.family == "rfdetr"}
+    assert set(seg) == SEG_KEYS
+    for m in seg.values():
+        assert m.trainable and m.weights_license == "Apache-2.0"
+        assert m.resolution_step in (12, 24)
+        assert m.input_resolution % m.resolution_step == 0
+    assert seg["rfdetr-seg-nano"].input_resolution == 312
+    assert seg["rfdetr-seg-2xlarge"].input_resolution == 768
+    # detection listings (and the detection default) are untouched
+    assert not (SEG_KEYS & {m.key for m in registry.list_models(task="detection")})
+    assert registry.get_model_info("rfdetr-nano").resolution_step == 64
