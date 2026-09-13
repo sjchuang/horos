@@ -72,8 +72,23 @@ def test_experiments_page_holds_the_comparison_table_and_editor(client):
     assert "/experiments/runs" in html and "/experiments/compare" in html
 
 
+def test_annotate_page_is_the_loop_shell_and_embeds_the_canvas(client):
+    """E10-T17: /annotate is the four-step loop; the canvas is its Label step."""
+    shell = client.get("/annotate").get_data(as_text=True)
+    for element in ("steps", "panel-select", "panel-label", "panel-train", "panel-review",
+                    "annotator", "btn-select", "btn-train", "btn-next-round"):
+        assert f'id="{element}"' in shell, element
+    assert "/annotate?embed=1&round=" in shell and 'href="/annotate?canvas=1"' in shell
+    assert "/loop/rounds" in shell and "/loop/readiness" in shell
+    canvas = client.get("/annotate?embed=1&round=1").get_data(as_text=True)
+    assert 'id="anno-canvas"' in canvas and 'id="skip-modal"' in canvas
+    assert "/images/skip" in canvas and "/similar?" in canvas and "/images/restore" in canvas
+    assert client.get("/annotate?canvas=1").get_data(as_text=True) == canvas
+    assert client.get("/loop").status_code == 302  # the old page redirects
+
+
 def test_class_manager_offers_merge_and_train_setup_folds_advanced_knobs(client):
-    annotate = client.get("/annotate").get_data(as_text=True)
+    annotate = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'id="merge-row"' in annotate and 'id="merge-target"' in annotate
     assert "/categories/merge" in annotate
     train = client.get("/train").get_data(as_text=True)
@@ -117,7 +132,7 @@ def test_lab_serve_offers_every_artifact_format_from_the_capability_list(client)
 
 
 def test_annotator_has_the_sam_tool(client):
-    html = client.get("/annotate").get_data(as_text=True)
+    html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html
     # SAM-T5: several objects per Enter — a "Next object" control and the
     # queue in the tool's state
