@@ -543,7 +543,7 @@ const Loop = {
       seg("suggest").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ preannotate: b.dataset.v === "1" }); });
       const goal = root.querySelector('[data-opt="target"]');
       goal.value = st.target == null ? "" : st.target;
-      goal.onchange = () => this.saveSettings({ target: goal.value === "" ? null : Number(goal.value) });
+      goal.onchange = () => this.saveSettings({ target: goal.value === "" || Number(goal.value) <= 0 ? null : Number(goal.value) });
       if (window.horosControls) horosControls.wire(root);
       seg("shapes").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ shapes: b.dataset.v }); });
     });
@@ -831,7 +831,9 @@ const Loop = {
     const rows = this.status.rounds;
     const row = cur ? rows.find((r) => r.number === cur.number) : rows.filter((r) => r.metric != null).slice(-1)[0];
     $("metric-value").textContent = row && row.metric != null ? fmt(row.metric) : "—";
-    $("metric-key").textContent = row && row.metric_key ? `${row.metric_key} · fixed validation set` : "no metric yet";
+    const SET = (k) => k.startsWith("eval/test/") ? "held-out test set" : k.startsWith("eval/valid/") ? "validation set"
+      : k.startsWith("eval/train/") ? "training photos" : "trainer's validation";
+    $("metric-key").textContent = row && row.metric_key ? `${row.metric_key} · ${SET(row.metric_key)}` : "no metric yet";
     const d = row ? row.delta : null;
     $("metric-delta").innerHTML = d == null ? "" :
       `<span class="${row.improved ? "up" : "down"}">${row.improved ? "▲" : "▼"} ${fmt(Math.abs(d))}</span>`;
@@ -868,7 +870,9 @@ const Loop = {
     for (const r of rows) for (const k of ["train", "test"]) if (k in r.curve) series[k].push([xOf(r), r.curve[k]]);
     for (const k in series) series[k].sort((a, b) => a[0] - b[0]);
     const evaluating = rows.some((r) => r.evaluating);
-    $("curve-note").textContent = evaluating ? "evaluating this round's model on its splits…" : "";
+    const noTest = rows.filter((r) => "train" in r.curve && !("test" in r.curve) && !r.evaluating).map((r) => r.number);
+    $("curve-note").textContent = evaluating ? "evaluating this round's model on its splits…"
+      : noTest.length ? `Round${noTest.length > 1 ? "s" : ""} ${noTest.join(", ")}: trained before a held-out test set existed — no test score` : "";
     $("curve-legend").innerHTML = "";
     const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = 300;
     canvas.width = w * dpr; canvas.height = h * dpr;
@@ -931,11 +935,14 @@ const Loop = {
       ctx.beginPath(); p.forEach(([x, y], j) => (j ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)))); ctx.stroke();
       p.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(X(x), Y(y), 4.5, 0, Math.PI * 2); ctx.fill(); });
     }
-    // legend box, top right inside the plot
+    // legend box in the corner with the fewest points under it
     const items = ["train", "test"].filter((k) => series[k].length);
     ctx.font = "12px system-ui"; ctx.textAlign = "left";
     const lw = Math.max(...items.map((k) => ctx.measureText(NAME[k]).width)) + 44, lh = items.length * 20 + 10;
-    const lx = w - pad.r - lw - 10, ly = pad.t + 10;
+    const corners = [[w - pad.r - lw - 10, pad.t + 10], [pad.l + 10, pad.t + 10],
+                     [w - pad.r - lw - 10, h - pad.b - lh - 10], [pad.l + 10, h - pad.b - lh - 10]];
+    const covered = ([cx, cy]) => pts.filter(([x, y]) => X(x) >= cx - 8 && X(x) <= cx + lw + 8 && Y(y) >= cy - 8 && Y(y) <= cy + lh + 8).length;
+    const [lx, ly] = corners.reduce((best, c) => covered(c) < covered(best) ? c : best, corners[0]);
     ctx.fillStyle = "rgba(26,33,41,0.92)"; ctx.strokeStyle = "#3a4552";
     ctx.beginPath(); ctx.roundRect(lx, ly, lw, lh, 6); ctx.fill(); ctx.stroke();
     items.forEach((k, i) => {

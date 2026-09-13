@@ -24,6 +24,7 @@ rounds (E7-T2).
 
 from __future__ import annotations
 
+import json
 import logging
 import random
 import threading
@@ -150,7 +151,7 @@ class LoopSettings(BaseModel):
     refiner: str = "sam2.1-tiny"
     #: stop-when-reached value of the headline metric (mAP flavours are in
     #: [0, 1]); None = keep going until the pool is empty or gains flatten
-    target: float | None = Field(default=None, ge=0.0)
+    target: float | None = Field(default=None, gt=0.0)
     #: share of labeled photos held out as test (never trained on) and as
     #: valid (checkpoint selection); assigned per photo by a stable hash so the
     #: sets grow with the labels and never lose a member
@@ -175,8 +176,11 @@ def get_loop_settings(project: Project) -> LoopSettings:
     if not path.is_file():
         return LoopSettings()
     try:
-        return LoopSettings.model_validate_json(path.read_text(encoding="utf-8"))
-    except ValueError as exc:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(data, dict) and data.get("target") is not None and data["target"] <= 0:
+            data["target"] = None  # written by earlier versions: a goal of 0 is no goal
+        return LoopSettings.model_validate(data)
+    except (ValueError, TypeError) as exc:
         raise ProjectError(f"Corrupt loop settings at {path}: {exc}") from exc
 
 
@@ -193,6 +197,8 @@ def update_loop_settings(project: Project, **changes) -> LoopSettings:
     unknown = set(changes) - set(LoopSettings.model_fields)
     if unknown:
         raise ProjectError(f"Unknown loop setting(s): {sorted(unknown)}")
+    if "target" in changes and changes["target"] is not None and float(changes["target"]) <= 0:
+        changes["target"] = None  # a goal of 0 would be met by any model: it means "no goal"
     try:
         updated = current.model_copy(update=changes)
         updated = LoopSettings.model_validate(updated.model_dump())
@@ -1591,6 +1597,10 @@ Verdict = Literal["continue", "flattening", "target_reached", "check_labels", "n
 #: round counts as "flat"; two flat rounds in a row → flattening
 FLAT_GAIN = 0.01
 FLAT_LOSS_DROP = 0.02
+#: train minus test mAP@50 above which the model is still learning the
+#: training photos rather than the task — the goal does not count as reached
+#: and more (diverse) labels are the advice
+GAP_TOLERANCE = 0.05
 
 
 class LoopAdvice(BaseModel):
@@ -1609,6 +1619,8 @@ class LoopAdvice(BaseModel):
     pool_size: int = 0
     rounds_with_metric: int = 0
     target: float | None = None
+    #: train minus test mAP@50 of the last evaluated round, when both exist
+    gap: float | None = None
     #: the trained run's own verdict findings (E7): validation too small, …
     findings: list[str] = Field(default_factory=list)
 
@@ -1662,11 +1674,26 @@ def loop_advice(project: Project) -> LoopAdvice:
             gain = round(100 * change / spent, 4)
     base["gain_per_100"] = gain
     metric_text = f"{key} {last.metric:.3f}" if last.metric is not None else ""
-
-    if settings.target is not None and last.metric is not None and (
+    gap = None
+    if "train" in last.curve and "test" in last.curve:
+        gap = round(last.curve["train"] - last.curve["test"], 4)
+    base["gap"] = gap
+    target_met = settings.target is not None and last.metric is not None and (
         (not lower_is_better and last.metric >= settings.target)
         or (lower_is_better and last.metric <= settings.target)
-    ):
+    )
+    if gap is not None and gap > GAP_TOLERANCE and status.pool_size > 0:
+        goal = (f" The goal of {settings.target:g} is met on the test set, but a gap of"
+                if target_met else " A gap of")
+        return LoopAdvice(
+            verdict="continue", title="Keep going — train is still well above test",
+            reason=f"mAP@50 is {last.curve['train']:.3f} on the training photos and "
+                   f"{last.curve['test']:.3f} on the held-out test set.{goal} {gap:+.3f} means "
+                   f"the model still learns these photos rather than the task; more labels, "
+                   f"chosen for diversity, close it. Export when the two curves meet.",
+            **base,
+        )
+    if target_met:
         return LoopAdvice(
             verdict="target_reached", title="Goal reached — export the model",
             reason=f"{metric_text} meets the goal of {settings.target:g}. Another round would "

@@ -102,8 +102,44 @@ def test_empty_pool_says_nothing_left(tmp_path):
 
 def test_target_setting_validates(tmp_path):
     project = _project(tmp_path)
-    from horos.errors import ProjectError
+    import json
 
-    with pytest.raises(ProjectError):
-        update_loop_settings(project, target=-1)
+    from horos.api.loop import get_loop_settings
+
+    # a goal of 0 (or below) would be met by any model: it is "no goal", not an error
+    assert update_loop_settings(project, target=-1).target is None
+    assert update_loop_settings(project, target=0).target is None
     assert update_loop_settings(project, target=None).target is None
+    # files written by earlier versions may still carry 0
+    path = project.root / "loop.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "target": 0.0}))
+    assert get_loop_settings(project).target is None
+    _closed_round(project, 1, metric=0.6, labeled_before=10, labeled_after=30)
+    assert loop_advice(project).verdict != "target_reached"
+
+
+def _evaluated_round(project, number, *, train, test, labeled_before, labeled_after, metric):
+    _closed_round(project, number, metric=metric, labeled_before=labeled_before,
+                  labeled_after=labeled_after, key="eval/test/map_5095")
+    from horos.core.rounds import load_round, save_round
+
+    record = load_round(project, number)
+    metrics = {**record.metrics, "eval/train/map_50": train, "eval/test/map_50": test}
+    save_round(project, record.model_copy(update={"metrics": metrics}))
+
+
+def test_a_wide_train_test_gap_keeps_the_loop_going_even_past_the_goal(tmp_path):
+    """The user saw 'Goal reached — export' while train sat 0.15 above test:
+    a model that still memorises its photos is not done, goal or not."""
+    project = _project(tmp_path)
+    update_loop_settings(project, target=0.6)
+    _evaluated_round(project, 1, train=0.95, test=0.79, labeled_before=10, labeled_after=30,
+                     metric=0.68)
+    a = loop_advice(project)
+    assert a.verdict == "continue" and a.gap == pytest.approx(0.16)
+    assert "train is still well above test" in a.title and "goal of 0.6 is met" in a.reason
+    # once the curves meet, the goal counts
+    _evaluated_round(project, 2, train=0.83, test=0.80, labeled_before=30, labeled_after=50,
+                     metric=0.70)
+    a = loop_advice(project)
+    assert a.verdict == "target_reached" and a.gap == pytest.approx(0.03)
