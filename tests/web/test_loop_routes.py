@@ -45,7 +45,7 @@ def _wait_job(client, job_id, timeout=15.0):
 def test_status_round_and_close_roundtrip(client):
     status = client.get("/api/v1/loop").get_json()
     assert status["pool_size"] == 6 and status["next_strategy"] == "diversity"
-    assert status["current"] is None and status["rounds"] == []
+    assert status["current"] is None and status["rounds"] == [] and status["job"] is None
 
     emb = client.get("/api/v1/loop/embeddings?model=fake-embedder").get_json()
     assert emb["missing"] == 6

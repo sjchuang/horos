@@ -247,3 +247,61 @@ def test_background_job_selects_a_round(tmp_path, monkeypatch):
     assert load_round(project, 1).state == "labeling"
     with pytest.raises(ProjectError, match="still 'labeling'"):
         start_round_job(project, count=1)
+
+
+def test_status_reports_the_running_selection_so_a_reload_can_reattach(tmp_path, monkeypatch):
+    """The page keeps the job id only in memory; after a reload it asks the
+    loop status, which names the job in flight — and nothing once it is done."""
+    import threading
+
+    from horos.api import loop as loop_api
+
+    project = _project(tmp_path, [("red", "train")] * 5)
+    monkeypatch.setattr("horos.backends.get_backend", fake_get_backend)
+    gate = threading.Event()
+    real = loop_api.embedding_events
+
+    def slow(*args, **kwargs):
+        assert gate.wait(10), "test gate never opened"
+        yield from real(*args, **kwargs)
+
+    monkeypatch.setattr(loop_api, "embedding_events", slow)
+    job_id = start_round_job(project, count=2, embedding_model="fake-embedder")
+    try:
+        deadline = time.monotonic() + 10  # the job thread opens the round, then waits at the gate
+        while loop_status(project).current is None:
+            assert time.monotonic() < deadline
+            time.sleep(0.02)
+        status = loop_status(project)
+        assert status.current.state == "selecting"
+        assert status.job is not None
+        assert (status.job.job_id, status.job.kind) == (job_id, "loop-select")
+        assert status.rounds and status.rounds[0].state == "selecting"
+    finally:
+        gate.set()  # never leave the job registry holding a stuck "running" job
+    deadline = time.monotonic() + 10
+    while job_status(project, job_id).state == "running":
+        assert time.monotonic() < deadline
+        time.sleep(0.02)
+    status = loop_status(project)
+    assert status.job is None and status.current.state == "labeling"
+
+
+def test_interrupted_selection_is_closed_by_hand_and_leaves_no_history(tmp_path):
+    """A server restart mid-pick strands a round in 'selecting' with no job;
+    the page offers Start over, which closes it, and an empty round is not a
+    row in the history."""
+    from horos.core.rounds import create_round
+
+    project = _project(tmp_path, [("red", "train")] * 5)
+    create_round(project, labeled_before=0)
+    status = loop_status(project)
+    assert status.current.state == "selecting" and status.job is None
+    with pytest.raises(ProjectError, match="still 'selecting'"):
+        start_round_job(project, count=1)
+    close_round(project, 1)
+    status = loop_status(project)
+    assert status.current is None and status.rounds == []
+    record = select_round(project, count=2, embedder=FakeEmbedder(), detector=FakeDetector(),
+                          embedding_model="fake-embedder", preannotate=False)
+    assert record.number == 2 and [r.number for r in loop_status(project).rounds] == [2]

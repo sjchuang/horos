@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["JobStatus", "start_job", "job_status", "cancel_job"]
+__all__ = ["JobStatus", "RunningJob", "start_job", "job_status", "cancel_job", "running_job"]
 
 
 class JobStatus(BaseModel):
@@ -33,6 +33,14 @@ class JobStatus(BaseModel):
     kind: str
     state: str  # running | completed | failed | cancelled
     events: list[dict[str, Any]] = Field(default_factory=list)  # events[after:]
+    num_events: int = 0
+
+
+class RunningJob(BaseModel):
+    """The one job in flight, so a reloaded page can pick its progress back up."""
+
+    job_id: str
+    kind: str
     num_events: int = 0
 
 
@@ -155,6 +163,18 @@ def cancel_job(project: Project, job_id: str) -> bool:
         return False
     job.cancel.set()
     return True
+
+
+def running_job(kinds: tuple[str, ...] | None = None) -> RunningJob | None:
+    """The running job (of one of `kinds`, when given) or None. Not a
+    capability of its own: status endpoints embed it so a page that was
+    reloaded mid-job finds the job again instead of offering to start another."""
+    with _REGISTRY_LOCK:
+        job = _running_job()
+    if job is None or (kinds is not None and job.kind not in kinds):
+        return None
+    with job.lock:
+        return RunningJob(job_id=job.job_id, kind=job.kind, num_events=len(job.events))
 
 
 def cancel_event_for(job_id: str) -> threading.Event:

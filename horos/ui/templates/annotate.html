@@ -441,6 +441,8 @@ const Loop = {
       : cur.state === "labeling" ? 2 : cur.state === "training" ? 3 : cur.state === "reviewing" ? 4 : 1;
     this.showStep(step, cur);
     if (step === 1) this.renderSelect();
+    // a reload mid-selection: pick the running job back up, or offer a way out
+    if (cur && cur.state === "selecting") this.resumeSelect(cur);
     if (step === 2) this.renderLabel(cur);
     if (step === 3) this.renderTrain(cur);
     if (step === 4) this.renderReview(cur);
@@ -574,17 +576,36 @@ const Loop = {
     $("history-details").style.display = s.rounds.length ? "" : "none";
     if (s.pool_size === 0) toast(s.total_images ? "Everything is labeled or skipped" : "Add photos on the Dataset page first", "warn", 4000);
   },
+  showSelectProgress(text, button, action) {
+    $("btn-select").style.display = "none";
+    $("select-progress").style.display = "block";
+    $("select-bar").style.width = "0"; $("select-text").textContent = text;
+    $("btn-select-cancel").textContent = button;
+    $("btn-select-cancel").onclick = action;
+  },
   async select() {
     const body = { strategy: "auto" };
     if (this.unit === "count") body.count = Number($("count-input").value); else body.percent = Number($("count-input").value);
     try {
       const { job_id } = await api("/loop/rounds", json("POST", body));
       this.jobId = job_id; this.seen = 0;
-      $("btn-select").style.display = "none";
-      $("select-progress").style.display = "block";
-      $("select-bar").style.width = "0"; $("select-text").textContent = "starting… (the first run may download weights)";
+      this.showSelectProgress("starting… (the first run may download weights)", "Cancel", () => this.cancelJob());
       this.pollSelect();
     } catch (e) { toast(e.message, "err", 4200); }
+  },
+  resumeSelect(cur) {
+    const job = this.status.job;
+    if (job && job.kind === "loop-select") {
+      // the server is still picking: replay its events from the start so the bar catches up
+      this.jobId = job.job_id; this.seen = 0;
+      this.showSelectProgress("picking…", "Cancel", () => this.cancelJob());
+      this.pollSelect();
+      return;
+    }
+    // no job in flight (the server restarted mid-pick): the round is stuck in "selecting"
+    this.jobId = null;
+    this.showSelectProgress(`Round ${cur.number} was interrupted before any photo was picked`,
+      "Start over", () => this.closeRound("Round dropped"));
   },
   async pollSelect() {
     try {

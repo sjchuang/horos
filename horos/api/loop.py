@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 
 from horos.api.annotate import _load_claims
 from horos.api.embeddings import DEFAULT_EMBEDDING_MODEL, embedding_events, load_embeddings
-from horos.api.jobs import start_job
+from horos.api.jobs import RunningJob, running_job, start_job
 from horos.api.manifest import capability
 from horos.api.train import TrainRunConfig, TrainStatus, list_runs, start_training, training_status
 from horos.core import pal
@@ -107,6 +107,8 @@ Strategy = Literal["auto", "pal", "diversity", "random"]
 #: a detection counts as "final" for PAL scoring at or above this confidence;
 #: the backends report raw candidates below it (down to their own floor)
 SCORE_THRESHOLD = 0.3
+#: background job kinds the loop page owns — LoopStatus.job reports the one in flight
+LOOP_JOB_KINDS = ("loop-select", "loop-preannotate", "embeddings")
 #: labeled images used to fit PAL's logistic classifiers per round — a cap
 #: so a large labeled set does not cost a full inference pass every round
 MAX_FIT_IMAGES = 300
@@ -267,6 +269,9 @@ class LoopStatus(BaseModel):
     #: what strategy "auto" would pick for the next round
     next_strategy: SelectionStrategy
     current: LoopRound | None = None
+    #: the loop job in flight (selection, pre-annotation, embeddings) — a
+    #: reloaded page reattaches to it instead of showing the Pick button
+    job: RunningJob | None = None
     rounds: list[RoundSummary] = Field(default_factory=list)
     settings: LoopSettings = Field(default_factory=LoopSettings)
 
@@ -399,6 +404,8 @@ def loop_history(project: Project) -> list[RoundSummary]:
     out: list[RoundSummary] = []
     previous: tuple[str, float] | None = None
     for record in list_rounds(project):
+        if record.state == "closed" and record.selection is None:
+            continue  # a selection that was cancelled or interrupted: nothing happened
         record = _reconcile_round(project, record)
         row = _summary(project, record, labeled_now=labeled_now, previous=previous)
         out.append(row)
@@ -437,6 +444,7 @@ def loop_status(project: Project) -> LoopStatus:
         has_model=_latest_completed_run(project) is not None,
         next_strategy=strategy,
         current=active,
+        job=running_job(LOOP_JOB_KINDS),
         rounds=loop_history(project),
         settings=get_loop_settings(project),
     )
