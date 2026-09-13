@@ -5,17 +5,17 @@
 <br>
 
 [![CI][ci-shield]][ci-url]
-[![Stargazers][stars-shield]][stars-url]
-[![Issues][issues-shield]][issues-url]
 [![License][license-shield]][license-url]
 
 **horos** (ὅρος — *boundary, definition*) is the path that takes a detection
-model into production: one tool that carries a dataset from raw images through
-annotation, training, and evaluation to a deployable artifact — with a web UI,
-a Python API, and a CLI that share one capability set.
+or instance-segmentation model into production: one tool that carries a
+dataset from raw images through an active-learning annotation loop, training,
+and evaluation to a deployable artifact — with a web UI, a Python API, and a
+CLI that share one capability set.
 
 [Quickstart](#quickstart) ·
 [Web UI](#web-ui) ·
+[Active learning loop](#annotate--the-active-learning-loop) ·
 [Models](#models) ·
 [Platforms](#platform-support) ·
 [Installation](#installation) ·
@@ -46,10 +46,15 @@ Run the whole pipeline from the terminal:
 mkdir my-project && cd my-project
 horos init my-project        # an empty directory becomes the project itself
 horos import path/to/data    # COCO / YOLO / VOC / Darknet / VIA / LabelMe, dir or zip
-horos train                  # hyperparameters derived from the dataset
+horos loop select --count 20 # pick the next batch to label (diverse, or model-scored)
+horos loop train             # train the open round on everything labeled so far
+horos loop close             # review, then open the next round
+horos train                  # or a full training run with derived hyperparameters
 horos models                 # the project's trained models (completed runs)
 horos infer photo.jpg        # newest completed run, unless you pass --run
-horos ui                     # web UI: dataset, annotate, train, evaluate
+horos export-model --format onnx   # ONNX / TensorRT / TFLite with a model card
+horos serve                  # POST /predict from an export bundle or checkpoint
+horos ui                     # web UI: dataset, annotate loop, train, evaluate, lab
 horos catalog                # architectures horos can train, with their licenses
 ```
 
@@ -63,6 +68,14 @@ Or from Python — every UI action has a scriptable twin:
 import horos.api as api
 
 project = api.open_project("my-project")
+
+# the active-learning loop: pick → label (here, or elsewhere) → train → review
+rnd = api.select_round(project, count=20)       # every pick carries a score and a reason
+rnd = api.train_round(project, rnd.number)      # trains on all labels, holds out test/valid
+print(api.loop_advice(project).title)           # "keep going" / "flattening" / "goal reached"
+api.close_round(project, rnd.number)
+
+# or a plain training run
 record = api.start_training(project, api.TrainRunConfig(model="rfdetr-small"))
 # ... poll api.training_status(project, record.run_id) ...
 report = api.get_eval_report(project, record.run_id, "test")
@@ -74,7 +87,8 @@ report = api.get_eval_report(project, record.run_id, "test")
 
 ## Web UI
 
-`horos ui <project>` serves four pages on localhost.
+`horos ui <project>` serves six pages on localhost: Dataset, Annotate, Train,
+Evaluate, Experiments and Lab.
 
 ### Dataset
 
@@ -84,12 +98,39 @@ statistics, and train/valid/test re-splitting.
 
 <img src="docs/assets/screens/dataset.png" alt="Dataset page" width="100%">
 
-### Annotate
+### Annotate — the active learning loop
 
-A keyboard-first canvas for boxes and polygons. OWLv2 turns text prompts into
-zero-shot pre-labels, so annotators start from *correcting* instead of from a
-blank image — with an accept / fix / reject review flow, and safe concurrent
-annotation for teams.
+Annotation is a four-step loop you can follow without reading any help text:
+**Select → Label → Train → Review**, then the next round.
+
+- **Select.** Choose how many photos the round should have (a fixed count, or a
+  percentage of the unlabeled pool). With no labels yet, the batch is spread
+  over the data by DINOv2 embeddings (k-center greedy). Once labels exist, the
+  loop scores the pool with your latest model — or OWLv2 zero-shot from the
+  class names before there is one — using
+  [Portable Active Learning](https://arxiv.org/abs/2605.10349) (PAL): per-class
+  true-positive probabilities, class-weighted image entropy, rare-class
+  budgets and a similarity penalty. Every pick records its score and reason.
+  Pick the model family (boxes or segmentation), pseudo-labeling on/off and
+  box vs. polygon shapes right here; the choices persist per project.
+- **Label.** The keyboard-first canvas opens on the round's photos, pre-filled
+  with pending pseudo-labels to correct instead of a blank image. Boxes and
+  polygons are drawn by clicking with SAM 2.1; the edit tool adds a vertex on
+  an edge click and merges vertices when one is dragged onto another. Photos
+  unfit for training can be skipped together with their look-alikes (embedding
+  similarity, adjustable threshold) — skipped photos leave the pool and the
+  round refills at the end of the queue. Several annotators can open the same
+  round and each get their own share of its photos.
+- **Train.** One button. Newly labeled photos are bucketed by a stable hash
+  into a held-out test set (20 %), a validation set (10 %) and training data;
+  a photo never changes split, and the test set is never trained on. Live
+  loss curves while it runs.
+- **Review.** A learning curve of train vs. test mAP against photos labeled,
+  the round's metric and its delta to the previous round, and a plain verdict:
+  keep going, gains are flattening, check the labels, or goal reached.
+
+Machine-generated geometry — pseudo-labels, autolabel, SAM polygons — is
+always stored as pending with a score, never as human work.
 
 <img src="docs/assets/screens/annotate.png" alt="Annotate page" width="100%">
 
@@ -111,6 +152,15 @@ navigation). COCO metrics with per-class AP and PR curves, persisted per run.
 
 <img src="docs/assets/screens/evaluate.png" alt="Evaluate page" width="100%">
 
+### Experiments and Lab
+
+**Experiments** lists every run with its scores, compares hyperparameters and
+metrics side by side, flags runs whose dataset fingerprint differs (their
+metrics are not comparable), and keeps notes and tags. **Lab** is where a
+trained model meets new data: drop photos, GIFs or videos, see boxes or
+polygons overlaid, export to ONNX / TensorRT / TFLite with a `model_card.json`,
+and start `horos serve` for an HTTP `POST /predict` endpoint.
+
 ## Models
 
 All registered weights are Apache-2.0. Nothing is bundled — weights download
@@ -125,12 +175,29 @@ on first use and cache locally.
 | RF-DETR Medium | 33.7 M | 576 px | balanced accuracy/latency |
 | RF-DETR Large | 129 M | 704 px | highest accuracy — desktop GPU recommended |
 
+**Instance segmentation (trainable)**
+
+| Model | Params | Input | Notes |
+|---|---|---|---|
+| RF-DETR-Seg Nano | 33.6 M | 312 px | fastest masks — Jetson-friendly |
+| RF-DETR-Seg Small | 33.7 M | 384 px | fast masks — good default for Jetson |
+| RF-DETR-Seg Medium | 35.7 M | 432 px | balanced mask quality/latency |
+| RF-DETR-Seg Large | 36.2 M | 504 px | high mask quality — desktop GPU recommended |
+| RF-DETR-Seg XLarge | 38.1 M | 624 px | highest mask quality — desktop GPU only |
+| RF-DETR-Seg 2XLarge | 38.6 M | 768 px | best masks, slowest — desktop GPU only |
+
+The loop picks a model for you — RF-DETR-Seg Nano when most labels are
+polygons, RF-DETR Nano otherwise — and records why; any trainable key can be
+chosen instead.
+
 **Annotation assistants (not for deployment)**
 
 | Model | Params | Role |
 |---|---|---|
-| OWLv2 Base / Large | 155 M / 437 M | open-vocabulary zero-shot pre-labeling from text prompts |
-| SAM ViT-B | 94 M | turns autolabel boxes into polygon masks |
+| OWLv2 Base / Large | 155 M / 437 M | open-vocabulary zero-shot pseudo-labels from class names or text prompts |
+| DINOv2 Small | 22.1 M | one embedding per image — cold-start batch selection, look-alike skipping, PAL similarity |
+| SAM 2.1 Hiera-Tiny / Small | 38.9 M / 46 M | click-to-mask drawing on the canvas; refines pseudo-label boxes into polygons |
+| SAM ViT-B | 94 M | batch conversion of existing box annotations into polygons |
 
 RF-DETR XL/2XL are deliberately unregistered: their weights are not Apache-2.0
 (PML 1.0). Loading them requires an explicit `acknowledge_non_apache=True`.
@@ -140,7 +207,7 @@ RF-DETR XL/2XL are deliberately unregistered: their weights are not Apache-2.0
 | Capability | Ubuntu (CUDA) | Windows | macOS | Jetson |
 |---|:-:|:-:|:-:|:-:|
 | Dataset management & annotation | ✅ | ✅ | ✅ | ✅ |
-| Auto-labeling (OWLv2) | ✅ | ✅ | ✅ (MPS/CPU, slower) | ✅ |
+| Pseudo-labeling & selection (OWLv2, DINOv2, SAM 2.1) | ✅ | ✅ | ✅ (MPS/CPU, slower) | ✅ |
 | Training | ✅ | ✅ | small-dataset validation only | discouraged, not blocked |
 | Inference & evaluation | ✅ | ✅ | ✅ | ✅ |
 | TensorRT export | ✅ | ✅ | ❌ refused explicitly | ✅ |
@@ -250,8 +317,10 @@ horos install       # rfdetr (--no-deps), training stack, albumentations, transf
 ## Roadmap
 
 - [x] Project & dataset core — formats, validation, stats, splits
-- [x] Manual annotation — bbox + polygon, multi-annotator
-- [x] Auto-labeling — OWLv2 open-vocabulary, review workflow
+- [x] Manual annotation — bbox + polygon, SAM click-to-draw, multi-annotator
+- [x] Auto-labeling — OWLv2 open-vocabulary, SAM boxes-to-polygons
+- [x] Active learning loop — DINOv2 cold start, PAL acquisition, pseudo-labels, skip look-alikes, growing held-out test set, learning curve
+- [x] Instance segmentation — RF-DETR-Seg training, polygon pseudo-labels, mask output in exports
 - [x] Training — derived hyperparameters, queue, resume, live monitoring
 - [x] Evaluation — media gallery, COCO metrics, per-class analysis
 - [x] Error analysis — confusion matrix, worst-case mining, colour-coded overlays
@@ -295,13 +364,12 @@ shown in the UI, and stamped into every training run.
 
 [RF-DETR](https://github.com/roboflow/rf-detr) by Roboflow ·
 [OWLv2](https://arxiv.org/abs/2306.09683) by Google Research ·
-[Segment Anything](https://segment-anything.com/) by Meta AI
+[DINOv2](https://github.com/facebookresearch/dinov2) and
+[Segment Anything 2](https://ai.meta.com/sam2/) by Meta AI ·
+[Portable Active Learning for Object Detection](https://arxiv.org/abs/2605.10349)
+by Sharma, Bersamin & Subramanian
 
 [ci-shield]: https://img.shields.io/github/actions/workflow/status/SJ-Chuang/horos/ci.yml?branch=main&style=for-the-badge&label=CI
 [ci-url]: https://github.com/SJ-Chuang/horos/actions/workflows/ci.yml
-[stars-shield]: https://img.shields.io/github/stars/SJ-Chuang/horos.svg?style=for-the-badge
-[stars-url]: https://github.com/SJ-Chuang/horos/stargazers
-[issues-shield]: https://img.shields.io/github/issues/SJ-Chuang/horos.svg?style=for-the-badge
-[issues-url]: https://github.com/SJ-Chuang/horos/issues
 [license-shield]: https://img.shields.io/github/license/SJ-Chuang/horos.svg?style=for-the-badge
 [license-url]: https://github.com/SJ-Chuang/horos/blob/main/LICENSE
