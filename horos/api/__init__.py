@@ -100,9 +100,12 @@ from horos.api.loop import (
     get_round,
     loop_status,
     preannotate_round,
+    round_training_status,
     select_round,
     start_preannotate_job,
     start_round_job,
+    train_readiness,
+    train_round,
 )
 from horos.api.manifest import Capability, get_capability, list_capabilities
 from horos.api.media import (
@@ -174,9 +177,12 @@ __all__ = [
     "get_round",
     "loop_status",
     "preannotate_round",
+    "round_training_status",
     "select_round",
     "start_preannotate_job",
     "start_round_job",
+    "train_readiness",
+    "train_round",
     "EmbeddingStatus",
     "embedding_status",
     "start_embedding_job",

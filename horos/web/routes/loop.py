@@ -78,3 +78,36 @@ def start_preannotate_job(number: int):
     body = request.get_json(silent=True) or {}
     job_id = api.start_preannotate_job(_project(), number, device=body.get("device") or None)
     return jsonify({"job_id": job_id}), 202
+
+
+@bp.get("/readiness")
+def train_readiness():
+    return jsonify(api.train_readiness(_project()).model_dump())
+
+
+@bp.post("/rounds/<int:number>/train")
+def train_round(number: int):
+    body = request.get_json(silent=True) or {}
+    kwargs = {}
+    for key in ("epochs", "batch_size", "resolution"):
+        value = body.get(key)
+        if value is not None:
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ProjectError(f"'{key}' must be a positive integer")
+            kwargs[key] = value
+    model = body.get("model", "rfdetr-nano")
+    if not isinstance(model, str) or not model:
+        raise ProjectError("'model' must be a model key")
+    extra = body.get("extra") or {}
+    if not isinstance(extra, dict):
+        raise ProjectError("'extra' must be an object")
+    record = api.train_round(
+        _project(), number, model=model, device=body.get("device") or None, extra=extra, **kwargs
+    )
+    return jsonify(record.model_dump()), 202
+
+
+@bp.get("/rounds/<int:number>/training")
+def round_training_status(number: int):
+    after = request.args.get("after", default=0, type=int)
+    return jsonify(api.round_training_status(_project(), number, after=after).model_dump())

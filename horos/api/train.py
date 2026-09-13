@@ -28,7 +28,12 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from horos.api.dataset import dataset_stats, export_dataset, filter_dataset_categories
+from horos.api.dataset import (
+    dataset_stats,
+    export_dataset,
+    filter_dataset_categories,
+    subset_dataset,
+)
 from horos.api.hparams import DerivedValue, HyperparameterPlan, derive_plan
 from horos.api.manifest import capability
 from horos.api.system import ensure_supported
@@ -98,6 +103,10 @@ class TrainRunConfig(BaseModel):
     #: valid split makes per-epoch mAP noisy) or "loss" (lowest val loss)
     checkpoint_criterion: Literal["map", "smoothed_map", "loss"] = "map"
     acknowledge_non_apache: bool = False
+    #: train on these images only (None = the whole project). The active-
+    #: learning loop passes its labeled set so the thousands of still-unlabeled
+    #: images are not exported as empty background (E10-T8)
+    image_ids: list[int] | None = None
     #: expert passthrough to the backend's own knobs — applied last, wins (E5-S5)
     extra: dict[str, Any] = Field(default_factory=dict)
     #: testing hook: "module:ClassName" resolved instead of the model registry.
@@ -473,7 +482,9 @@ def derive_hyperparameters(
         # the rules must see the data this run will actually train on
         from horos.core.stats import compute_stats
 
-        full = project.to_dataset()
+        full = subset_dataset(
+            project.to_dataset(), image_ids=config.image_ids, confirmed_only=True
+        )
         filtered = filter_dataset_categories(
             full, config.categories, include_background=config.include_background
         )
@@ -492,7 +503,7 @@ def derive_hyperparameters(
                 )
             )
     else:
-        stats = dataset_stats(project)
+        stats = dataset_stats(project, image_ids=config.image_ids, confirmed_only=True)
     plan = derive_plan(
         stats,
         model=config.model,
@@ -545,7 +556,10 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
 
     busy = any(r.state in ACTIVE_STATES for r in list_runs(project))
 
-    dataset = project.to_dataset()
+    # pending pre-labels are unreviewed machine output — never ground truth
+    dataset = subset_dataset(
+        project.to_dataset(), image_ids=config.image_ids, confirmed_only=True
+    )
     if config.categories is not None:
         dataset = filter_dataset_categories(
             dataset, config.categories, include_background=config.include_background
@@ -628,6 +642,8 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
         format="coco",
         categories=config.categories,
         include_background=config.include_background,
+        image_ids=config.image_ids,
+        confirmed_only=True,
     )
 
     # mosaic composites are baked into the train snapshot here, before the

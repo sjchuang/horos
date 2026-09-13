@@ -1,0 +1,188 @@
+"""E10-T8: a round trains on every labeled image only, locks the validation
+split at the first training and never grows it, drops pending pre-labels
+from the snapshot, and moves the round on when the run finishes."""
+
+from __future__ import annotations
+
+import json
+import time
+
+import pytest
+from helpers.data import make_image
+from helpers.fake_backend import COLOURS, FakeDetector, FakeEmbedder
+from helpers.runs import FAKE, ensure_worker_can_import_helpers
+
+from horos.api.loop import (
+    close_round,
+    get_round,
+    loop_status,
+    round_training_status,
+    select_round,
+    train_readiness,
+    train_round,
+)
+from horos.api.project import create_project
+from horos.api.train import training_status
+from horos.core.dataset import Annotation, Category
+from horos.errors import ProjectError
+
+
+def _project(tmp_path, *, total=30, labeled=24, pallet_every=4):
+    """`total` images; the first `labeled` get a confirmed box ('pallet' on
+    every `pallet_every`-th, 'box' otherwise). One labeled and one unlabeled
+    image also carry a pending pre-label that must never reach a snapshot."""
+    project = create_project(tmp_path / "proj")
+    project.set_categories([Category(id=1, name="box"), Category(id=2, name="pallet")])
+    colours = list(COLOURS.values())
+    for n in range(1, total + 1):
+        path = make_image(tmp_path / "src" / f"{n}.png", 64 + n, 48, colours[n % len(colours)])
+        project.add_image(path, width=64 + n, height=48)
+    for image_id in range(1, labeled + 1):
+        cat = 2 if image_id % pallet_every == 0 else 1
+        anns = [Annotation(id=1, image_id=image_id, category_id=cat, bbox=(10, 10, 30, 20))]
+        if image_id == 1:
+            anns.append(Annotation(id=2, image_id=1, category_id=1, bbox=(1, 1, 5, 5),
+                                   source="auto", status="pending", score=0.4))
+        project.save_annotations(image_id, anns, expected_version=0)
+    project.save_annotations(
+        total, [Annotation(id=1, image_id=total, category_id=1, bbox=(2, 2, 6, 6),
+                           source="auto", status="pending", score=0.3)], expected_version=0,
+    )
+    return project
+
+
+def _open_round(project, count=2):
+    return select_round(project, count=count, embedder=FakeEmbedder(),
+                        embedding_model="fake-embedder", detector=FakeDetector(),
+                        preannotate=False)
+
+
+def _wait(project, run_id, timeout=90):
+    deadline = time.monotonic() + timeout
+    while training_status(project, run_id).run.state in ("queued", "pending", "running"):
+        assert time.monotonic() < deadline, "fake training did not finish"
+        time.sleep(0.2)
+    return training_status(project, run_id).run
+
+
+def _snapshot_counts(project, run_id):
+    base = project.root / "runs" / run_id / "dataset"
+    images = annotations = pending = 0
+    for split in ("train", "valid", "test"):
+        path = base / split / "_annotations.coco.json"
+        if not path.is_file():
+            continue
+        body = json.loads(path.read_text("utf-8"))
+        images += len(body["images"])
+        annotations += len(body["annotations"])
+        fakes = ([1, 1, 5, 5], [2, 2, 6, 6])
+        pending += sum(1 for a in body["annotations"] if a.get("bbox") in fakes)
+    return images, annotations, pending
+
+
+# ---------------------------------------------------------------- readiness
+
+
+def test_readiness_names_every_blocker(tmp_path):
+    project = _project(tmp_path, total=12, labeled=10)
+    ready = train_readiness(project)
+    assert not ready.ready and ready.labeled_images == 10
+    assert any("needs at least 20" in r for r in ready.reasons)
+    assert any("class 'pallet' has 2 instance(s)" in r for r in ready.reasons)
+    assert ready.instances == {"box": 8, "pallet": 2}
+
+    project = _project(tmp_path / "b", total=30, labeled=24)
+    ready = train_readiness(project)
+    assert ready.ready and ready.reasons == [] and ready.validation_images == 0
+    assert ready.instances == {"box": 18, "pallet": 6}
+
+
+def test_training_refuses_until_ready_and_outside_labeling(tmp_path):
+    project = _project(tmp_path, total=12, labeled=10)
+    record = _open_round(project)
+    with pytest.raises(ProjectError, match="Not ready to train: 10 labeled"):
+        train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
+    close_round(project, record.number)
+    with pytest.raises(ProjectError, match="is 'closed'; training starts from 'labeling'"):
+        train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
+
+
+# ----------------------------------------------------------------- training
+
+
+def test_round_trains_on_labeled_images_only_and_locks_validation(tmp_path):
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path)
+    record = _open_round(project, count=3)
+    labeled_before = loop_status(project).labeled_images
+
+    trained = train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
+    assert trained.state == "training" and trained.train_run_id
+    lock = trained.training["validation"]
+    assert lock["locked_now"] is True and lock["validation_images"] == 5  # 20 % of 24
+    assert trained.training["labeled_images"] == 24
+    by_id = {r.id: r for r in project.list_images()}
+    valid_ids = [i for i, r in by_id.items() if r.split == "valid"]
+    assert sorted(valid_ids) == lock["image_ids"] and all(i <= 24 for i in valid_ids)
+    assert all(by_id[i].split == "train" for i in range(25, 31))  # the pool is untouched
+
+    # the snapshot: 24 labeled images, 24 confirmed boxes, no pending pre-label
+    images, annotations, pending = _snapshot_counts(project, trained.train_run_id)
+    assert (images, annotations, pending) == (24, 24, 0)
+
+    run = _wait(project, trained.train_run_id)
+    assert run.state == "completed"
+    assert run.dataset_images == 24 and run.dataset_splits["valid"] == 5
+
+    status = round_training_status(project, record.number)
+    assert status.round.state == "reviewing"
+    assert status.round.metrics  # the fake backend reports a loss
+    assert status.training.run.state == "completed"
+    assert loop_status(project).current.state == "reviewing"
+    assert loop_status(project).labeled_images == labeled_before
+    assert loop_status(project).has_model
+
+
+def test_second_training_keeps_the_validation_split_fixed(tmp_path):
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path)
+    first = _open_round(project, count=2)
+    first = train_round(project, first.number, entrypoint_override=FAKE, epochs=1)
+    _wait(project, first.train_run_id)
+    valid_before = sorted(r.id for r in project.list_images() if r.split == "valid")
+    close_round(project, first.number)
+
+    # more labels arrive (the next round's picks get annotated)
+    second = _open_round(project, count=2)
+    for image_id in second.image_ids:
+        stored = project.load_annotations(image_id)
+        project.save_annotations(
+            image_id, [Annotation(id=1, image_id=image_id, category_id=1, bbox=(5, 5, 20, 20))],
+            expected_version=stored.version,
+        )
+    second = train_round(project, second.number, entrypoint_override=FAKE, epochs=1)
+    assert second.training["validation"] == {"locked_now": False, "validation_images": 5}
+    assert sorted(r.id for r in project.list_images() if r.split == "valid") == valid_before
+    assert second.training["labeled_images"] == 26 and second.training["labeled_in_round"] == 2
+    images, _, _ = _snapshot_counts(project, second.train_run_id)
+    assert images == 26
+    _wait(project, second.train_run_id)
+    assert get_round(project, second.number).state == "reviewing"
+
+
+def test_failed_training_returns_the_round_to_labeling(tmp_path):
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path)
+    record = _open_round(project)
+    trained = train_round(project, record.number, entrypoint_override=FAKE, epochs=1,
+                          extra={"fail": True})
+    run = _wait(project, trained.train_run_id)
+    assert run.state == "failed"
+    after = get_round(project, record.number)
+    assert after.state == "labeling"
+    assert "simulated failure" in after.training["error"]
+    # the user can fix things and train again from the same round
+    again = train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
+    assert again.state == "training" and again.train_run_id != trained.train_run_id
+    _wait(project, again.train_run_id)
+    assert get_round(project, record.number).state == "reviewing"

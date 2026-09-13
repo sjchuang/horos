@@ -36,7 +36,7 @@ from pydantic import BaseModel, Field
 from horos.api.embeddings import DEFAULT_EMBEDDING_MODEL, embedding_events, load_embeddings
 from horos.api.jobs import start_job
 from horos.api.manifest import capability
-from horos.api.train import list_runs
+from horos.api.train import TrainRunConfig, TrainStatus, list_runs, start_training, training_status
 from horos.core import pal
 from horos.core.project import Project
 from horos.core.rounds import (
@@ -70,6 +70,10 @@ __all__ = [
     "preannotate_events",
     "preannotate_round",
     "start_preannotate_job",
+    "TrainReadiness",
+    "train_readiness",
+    "train_round",
+    "round_training_status",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -84,6 +88,14 @@ ZERO_SHOT_SCORER = "owlv2-base"
 #: on the project's classes, zero-shot OWLv2 scores run low (autolabel's
 #: default is 0.1)
 PRELABEL_THRESHOLD = {"run": SCORE_THRESHOLD, "zero_shot": 0.1}
+#: training readiness (E10-T8): enough labeled images, and every class that
+#: appears at all has enough instances for a validation split to mean anything
+MIN_LABELED_IMAGES = 20
+MIN_INSTANCES_PER_CLASS = 5
+#: the validation split locked at the first training: a fixed share of the
+#: labeled images, never grown afterwards (round metrics stay comparable)
+VALID_FRACTION = 0.2
+MIN_VALID_IMAGES = 2
 
 
 class RoundSummary(BaseModel):
@@ -180,6 +192,8 @@ def loop_status(project: Project) -> LoopStatus:
     images = project.list_images()
     labeled = _labeled_ids(project)
     active = current_round(project)
+    if active is not None:
+        active = _reconcile_round(project, active)
     reserved = set(active.image_ids) if active else set()
     pool = [
         r for r in images if r.id not in labeled and r.split == "train" and r.id not in reserved
@@ -207,7 +221,7 @@ def loop_status(project: Project) -> LoopStatus:
     not_cli_because="'horos loop' prints the round table; per-pick reasons are for the UI.",
 )
 def get_round(project: Project, number: int) -> LoopRound:
-    return load_round(project, number)
+    return _reconcile_round(project, load_round(project, number))
 
 
 @capability(
@@ -542,6 +556,187 @@ def select_round_events(
 
 class _Cancelled(Exception):
     pass
+
+
+# ---------------------------------------------------------------- training
+
+
+class TrainReadiness(BaseModel):
+    ready: bool
+    labeled_images: int
+    #: confirmed instances per class name
+    instances: dict[str, int] = Field(default_factory=dict)
+    #: labeled images already in the validation split (0 before the lock)
+    validation_images: int = 0
+    #: what still blocks training; empty when ready
+    reasons: list[str] = Field(default_factory=list)
+
+
+def _confirmed_instances(project: Project, labeled: set[int]) -> dict[str, int]:
+    names = {c.id: c.name for c in project.categories}
+    counts: dict[str, int] = {}
+    for image_id in labeled:
+        for a in project.load_annotations(image_id).annotations:
+            if a.status == "confirmed":
+                name = names.get(a.category_id, f"#{a.category_id}")
+                counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
+@capability(
+    "loop.readiness",
+    summary="Can the loop train now? Labeled images, instances per class, blockers",
+    web_route="/api/v1/loop/readiness",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="'horos loop' includes readiness in its status output.",
+)
+def train_readiness(
+    project: Project,
+    *,
+    min_images: int = MIN_LABELED_IMAGES,
+    min_instances: int = MIN_INSTANCES_PER_CLASS,
+) -> TrainReadiness:
+    labeled = _labeled_ids(project)
+    instances = _confirmed_instances(project, labeled)
+    reasons: list[str] = []
+    if len(labeled) < min_images:
+        reasons.append(
+            f"{len(labeled)} labeled image(s); training needs at least {min_images}"
+        )
+    if not instances:
+        reasons.append("no confirmed annotations yet")
+    for name, count in sorted(instances.items()):
+        if count < min_instances:
+            reasons.append(
+                f"class '{name}' has {count} instance(s); needs at least {min_instances}"
+            )
+    by_id = {r.id: r for r in project.list_images()}
+    valid = sum(1 for i in labeled if by_id[i].split == "valid")
+    return TrainReadiness(
+        ready=not reasons, labeled_images=len(labeled), instances=instances,
+        validation_images=valid, reasons=reasons,
+    )
+
+
+def _lock_validation(project: Project, labeled: set[int], *, seed: int) -> dict:
+    """First training only: move a fixed share of the labeled train images to
+    the valid split. Later rounds find the lock in place and change nothing,
+    so every round's model is measured on the same images (E7-T2)."""
+    by_id = {r.id: r for r in project.list_images()}
+    already = sorted(i for i in labeled if by_id[i].split == "valid")
+    if already:
+        return {"locked_now": False, "validation_images": len(already)}
+    candidates = sorted(i for i in labeled if by_id[i].split == "train")
+    if len(candidates) < 2:
+        raise ProjectError(
+            "Cannot lock a validation split: fewer than two labeled train images"
+        )
+    share = max(MIN_VALID_IMAGES, round(len(candidates) * VALID_FRACTION))
+    n_valid = min(len(candidates) - 1, share)
+    chosen = sorted(random.Random(seed).sample(candidates, n_valid))
+    project.update_image_splits({i: "valid" for i in chosen})
+    return {"locked_now": True, "validation_images": n_valid, "seed": seed,
+            "image_ids": chosen}
+
+
+@capability(
+    "loop.train",
+    summary="Train this round's model on every labeled image (locks the validation split first)",
+    web_route="/api/v1/loop/rounds/<int:number>/train",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="'horos train' trains; the loop's automatic config is a UI default.",
+)
+def train_round(
+    project: Project,
+    number: int,
+    *,
+    model: str = "rfdetr-nano",
+    epochs: int | None = None,
+    batch_size: int | None = None,
+    resolution: int | None = None,
+    device: str | None = None,
+    seed: int = 42,
+    extra: dict | None = None,
+    entrypoint_override: str | None = None,
+) -> LoopRound:
+    """Start training for a round in state "labeling". Only labeled images
+    enter the snapshot (pending pre-labels are dropped by start_training),
+    hyperparameters not given are derived by the E5 rules, and the run id
+    is recorded on the round, which moves to "training"."""
+    record = _reconcile_round(project, load_round(project, number))
+    if record.state != "labeling":
+        raise ProjectError(
+            f"Round {number} is '{record.state}'; training starts from 'labeling'"
+        )
+    readiness = train_readiness(project)
+    if not readiness.ready:
+        raise ProjectError("Not ready to train: " + "; ".join(readiness.reasons))
+    labeled = _labeled_ids(project)
+    lock = _lock_validation(project, labeled, seed=seed)
+    config = TrainRunConfig(
+        model=model, epochs=epochs, batch_size=batch_size, resolution=resolution,
+        device=device, seed=seed, image_ids=sorted(labeled), extra=extra or {},
+        entrypoint_override=entrypoint_override,
+    )
+    run = start_training(project, config)
+    record = record.model_copy(update={
+        "train_run_id": run.run_id,
+        "training": {
+            "model": model, "labeled_images": len(labeled), "validation": lock,
+            "labeled_in_round": sum(1 for i in record.image_ids if i in labeled),
+        },
+    }).advance("training")
+    return save_round(project, record)
+
+
+def _reconcile_round(project: Project, record: LoopRound) -> LoopRound:
+    """Move a training round on when its run has finished: completed →
+    reviewing (with the run's best scores), failed/stopped → back to
+    labeling with the error on record."""
+    if record.state != "training" or not record.train_run_id:
+        return record
+    try:
+        status = training_status(project, record.train_run_id)
+    except HorosError as exc:
+        training = {**record.training, "error": f"run record unreadable: {exc}"}
+        return save_round(project, record.model_copy(update={"training": training})
+                          .advance("labeling"))
+    run = status.run
+    if run.state == "completed":
+        from horos.api.experiment import get_run_summary
+
+        scores = get_run_summary(project, run.run_id, reference=None).scores
+        return save_round(project, record.model_copy(update={"metrics": dict(scores)})
+                          .advance("reviewing"))
+    if run.state in ("failed", "stopped"):
+        training = {**record.training, "error": run.error or f"run {run.state}"}
+        return save_round(project, record.model_copy(update={"training": training})
+                          .advance("labeling"))
+    return record
+
+
+class RoundTrainingStatus(BaseModel):
+    round: LoopRound
+    training: TrainStatus | None = None
+
+
+@capability(
+    "loop.training_status",
+    summary="A round's training run: state and events after an index, plus the round",
+    web_route="/api/v1/loop/rounds/<int:number>/training",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="'horos loop' shows the round table; live events are a UI need.",
+)
+def round_training_status(project: Project, number: int, *, after: int = 0) -> RoundTrainingStatus:
+    record = _reconcile_round(project, load_round(project, number))
+    if not record.train_run_id:
+        return RoundTrainingStatus(round=record)
+    return RoundTrainingStatus(
+        round=record, training=training_status(project, record.train_run_id, after=after)
+    )
 
 
 def preannotate_events(

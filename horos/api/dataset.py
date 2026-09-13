@@ -543,6 +543,29 @@ def filter_dataset_categories(
     )
 
 
+def subset_dataset(
+    dataset: Dataset,
+    *,
+    image_ids: list[int] | None = None,
+    confirmed_only: bool = False,
+) -> Dataset:
+    """Restrict a snapshot to `image_ids` (None = all) and, with
+    `confirmed_only`, drop pending pre-labels — a training run must never
+    learn from geometry nobody reviewed (E10-T8/E10-T11). Categories are
+    kept intact so class ids stay stable across rounds."""
+    keep = None if image_ids is None else set(image_ids)
+    images = [i for i in dataset.images if keep is None or i.id in keep]
+    present = {i.id for i in images}
+    annotations = [
+        a for a in dataset.annotations
+        if a.image_id in present and (not confirmed_only or a.status == "confirmed")
+    ]
+    return Dataset(
+        categories=list(dataset.categories), images=images, annotations=annotations,
+        reader_warnings=list(dataset.reader_warnings),
+    )
+
+
 @capability(
     "dataset.export",
     summary="Export the project's dataset as COCO, YOLO or LabelMe",
@@ -557,11 +580,16 @@ def export_dataset(
     format: str = "coco",
     categories: list[str] | None = None,
     include_background: bool = False,
+    image_ids: list[int] | None = None,
+    confirmed_only: bool = False,
 ) -> Path:
     """Write the project dataset to `out_dir` in the requested format,
     optionally restricted to the named categories (see
-    filter_dataset_categories for `include_background`)."""
-    dataset = project.to_dataset()
+    filter_dataset_categories for `include_background`), to `image_ids`,
+    and to confirmed annotations only (see subset_dataset)."""
+    dataset = subset_dataset(
+        project.to_dataset(), image_ids=image_ids, confirmed_only=confirmed_only
+    )
     if categories is not None:
         dataset = filter_dataset_categories(
             dataset, categories, include_background=include_background
@@ -802,12 +830,18 @@ def dataset_stats(
     *,
     categories: list[str] | None = None,
     include_background: bool = False,
+    image_ids: list[int] | None = None,
+    confirmed_only: bool = False,
 ) -> DatasetStats:
     """Class distribution, relative object area, image sizes, splits (E1-T7).
 
     With `categories`, the statistics describe the data a run on those classes
-    would train on (the Train page shows them live as classes are toggled)."""
-    dataset = project.to_dataset()
+    would train on (the Train page shows them live as classes are toggled);
+    `image_ids` / `confirmed_only` narrow it the way a loop round's training
+    snapshot is narrowed (E10-T8)."""
+    dataset = subset_dataset(
+        project.to_dataset(), image_ids=image_ids, confirmed_only=confirmed_only
+    )
     if categories is not None:
         dataset = filter_dataset_categories(
             dataset, categories, include_background=include_background

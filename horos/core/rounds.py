@@ -92,6 +92,9 @@ class LoopRound(BaseModel):
     #: what pre-annotated the round's images (E10-T7): scorer, threshold,
     #: images and pending annotations written; empty when nothing could
     preannotation: dict[str, Any] = Field(default_factory=dict)
+    #: how this round trained (E10-T8): model, labeled images in the
+    #: snapshot, the validation lock, and an error when the run failed
+    training: dict[str, Any] = Field(default_factory=dict)
 
     @property
     def image_ids(self) -> list[int]:
