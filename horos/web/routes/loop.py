@@ -177,3 +177,10 @@ def skip_images():
 def restore_images():
     body = request.get_json(silent=True) or {}
     return jsonify(api.restore_images(_project(), _ids(body)).model_dump())
+
+
+@bp.post("/rounds/<int:number>/refill")
+def refill_round(number: int):
+    body = request.get_json(silent=True) or {}
+    record = api.refill_round(_project(), number, device=body.get("device") or None)
+    return jsonify(record.model_dump())

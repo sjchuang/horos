@@ -11,8 +11,10 @@ from helpers.fake_backend import COLOURS, FakeDetector, FakeEmbedder
 from horos.api.dataset import dataset_stats
 from horos.api.embeddings import embedding_events
 from horos.api.loop import (
+    assign_round,
     loop_history,
     loop_status,
+    refill_round,
     restore_images,
     round_queue,
     select_round,
@@ -112,15 +114,72 @@ def test_round_progress_counts_skipped_picks(tmp_path):
                           embedding_model="fake-embedder", detector=FakeDetector(),
                           preannotate=False)
     first, second = record.image_ids[:2]
-    skip_images(project, [first])
+    skip_images(project, [first], embedder=FakeEmbedder(), detector=FakeDetector())
     project.save_annotations(
         second, [Annotation(id=1, image_id=second, category_id=1, bbox=(1, 1, 5, 5))],
         expected_version=0,
     )
     row = loop_history(project)[0]
-    assert (row.picked, row.labeled, row.skipped) == (4, 1, 1)
+    assert (row.picked, row.labeled, row.skipped) == (5, 1, 1)  # one replacement added
     queue = round_queue(project, record.number)
     assert queue[-1].image.id == first and queue[-1].excluded  # skipped sinks to the end
     assert queue[-2].image.id == second and queue[-2].annotated
     # the skipped image cannot be picked again by a later round
-    assert loop_status(project).pool_size == 12 - 4  # picks reserved; skipped not in pool
+    assert loop_status(project).pool_size == 12 - 5  # picks reserved; skipped not in pool
+
+
+def _fakes():
+    return dict(embedder=FakeEmbedder(), embedding_model="fake-embedder", detector=FakeDetector())
+
+
+def test_skipping_round_picks_refills_the_round_to_its_size(tmp_path):
+    project = _project(tmp_path)
+    record = select_round(project, count=4, preannotate=False, **_fakes())
+    assign_round(project, record.number, ["ann", "bob"])
+    victims = record.image_ids[:2]  # owned by ann and bob
+    result = skip_images(project, victims, embedder=FakeEmbedder(), detector=FakeDetector())
+    assert result.skipped == victims and len(result.replacements) == 2
+    after = loop_history(project)[0]
+    assert (after.picked, after.skipped) == (6, 2)
+    round_now = loop_status(project).current
+    active = [p for p in round_now.selection.picks if p.image_id in result.replacements]
+    assert all(p.reason.startswith("replacement for a skipped photo") for p in active)
+    assert sorted(p.assigned_to for p in active) == ["ann", "bob"]  # inherited
+    assert not set(result.replacements) & set(victims)
+    assert any("added to replace" in n for n in round_now.selection.notes)
+    # replacements got the round's pre-labels (the fake detector sees red/green/blue)
+    assert round_now.preannotation["images"] == 2
+    # the queue offers the replacements and sinks the skipped ones
+    queue = round_queue(project, record.number)
+    assert [i.image.id for i in queue if i.excluded] == victims
+    assert loop_status(project).pool_size == 12 - 6
+
+
+def test_skipping_outside_the_round_or_with_refill_off_adds_nothing(tmp_path):
+    project = _project(tmp_path)
+    record = select_round(project, count=3, preannotate=False, **_fakes())
+    outsider = next(i for i in range(1, 13) if i not in record.image_ids)
+    assert skip_images(project, [outsider]).replacements == []
+    assert len(loop_status(project).current.image_ids) == 3
+    result = skip_images(project, record.image_ids[:1], refill=False)
+    assert result.replacements == []
+    assert len(loop_status(project).current.image_ids) == 3
+    # the manual retry tops it up
+    refilled = refill_round(project, record.number, embedder=FakeEmbedder(),
+                            detector=FakeDetector())
+    assert len(refilled.image_ids) == 4
+
+
+def test_refill_with_an_empty_pool_leaves_a_note(tmp_path):
+    project = _project(tmp_path)
+    record = select_round(project, count=12, preannotate=False, **_fakes())  # the whole pool
+    result = skip_images(project, record.image_ids[:1], embedder=FakeEmbedder(),
+                         detector=FakeDetector())
+    assert result.replacements == []
+    notes = loop_status(project).current.selection.notes
+    assert any("could not be replaced" in n for n in notes)
+    from horos.api.loop import close_round
+
+    close_round(project, record.number)
+    with pytest.raises(ProjectError, match="only a round being labeled"):
+        refill_round(project, record.number)

@@ -1205,15 +1205,20 @@ const Page = {
     const item = this.queue[this.currentIdx];
     if (!item) return;
     const ids = [item.image.id, ...this._skip.picked];
+    let result;
+    $("skip-confirm").disabled = true;
+    $("skip-note").textContent = ROUND ? "skipping and picking replacements…" : "skipping…";
     try {
-      await api("/images/skip", json("POST", { image_ids: ids }));
+      result = await api("/images/skip", json("POST", { image_ids: ids }));
     } catch (e) { toast(e.message, "err", 4000); return; }
+    finally { $("skip-confirm").disabled = false; }
     this.closeSkip();
     const skipped = new Set(ids);
-    // the round keeps its picks (shown as skipped); the free queue drops them
-    if (ROUND) this.queue.forEach((q) => { if (skipped.has(q.image.id)) q.excluded = true; });
+    // a round refills itself with replacements (E10-T16): reload its queue;
+    // the free queue simply drops the skipped photos
+    if (ROUND) await this.loadImages(this.page);
     else this.queue = this.queue.filter((q) => !skipped.has(q.image.id));
-    this._undoToast(ids);
+    this._undoToast(ids, (result.replacements || []).length);
     this._notifyRound(this.queue.filter((q) => q.annotated || q.excluded).length,
                       this.queue.every((q) => q.annotated || q.excluded));
     // move on to the next photo that still needs work
@@ -1224,11 +1229,12 @@ const Page = {
     else if (this.queue.length && ROUND) this.openEditor(Math.min(this.currentIdx, this.queue.length - 1));
     else this.closeEditor();
   },
-  _undoToast(ids) {
+  _undoToast(ids, added = 0) {
     const el = $("toast");
     el.className = "ok"; el.style.display = "block";
-    el.innerHTML = `Skipped ${ids.length} photo${ids.length === 1 ? "" : "s"} ·
-      <a href="#" id="skip-undo" style="color:var(--accent);font-weight:600">Undo</a>`;
+    el.innerHTML = `Skipped ${ids.length} photo${ids.length === 1 ? "" : "s"}`
+      + (added ? ` · ${added} added` : "")
+      + ` · <a href="#" id="skip-undo" style="color:var(--accent);font-weight:600">Undo</a>`;
     $("skip-undo").onclick = async (e) => {
       e.preventDefault();
       try {

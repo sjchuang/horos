@@ -85,6 +85,7 @@ __all__ = [
     "SkipResult",
     "skip_images",
     "restore_images",
+    "refill_round",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -379,10 +380,10 @@ def _scorer(project: Project, device: str | None):
             "No trained model and no classes to prompt a zero-shot scorer with — "
             "add the project's classes first."
         )
-    from horos.backends import get_backend
+    from horos.api.autolabel import _cached_backend
 
     names = [c.name for c in project.categories]
-    backend = get_backend(ZERO_SHOT_SCORER, device=device)
+    backend = _cached_backend(ZERO_SHOT_SCORER, device)  # loaded once per process
     backend.configure_prompts(names)  # type: ignore[attr-defined]
     return backend, ZERO_SHOT_SCORER, dict(enumerate(names)), "zero_shot"
 
@@ -1072,6 +1073,8 @@ class SkipResult(BaseModel):
     #: ids that were already skipped / unknown to the round and left alone
     unchanged: int = 0
     skipped_images: int
+    #: photos added to the open round to replace skipped picks (E10-T16)
+    replacements: list[int] = Field(default_factory=list)
 
 
 @capability(
@@ -1139,16 +1142,146 @@ def similar_images(
     cli=None,
     not_cli_because="Skipping is an annotator's judgement made in the editor.",
 )
-def skip_images(project: Project, image_ids: list[int], *, note: str = "") -> SkipResult:
+def skip_images(
+    project: Project,
+    image_ids: list[int],
+    *,
+    note: str = "",
+    refill: bool = True,
+    embedder: ImageEmbedder | None = None,
+    detector: ModelBackend | None = None,
+    device: str | None = None,
+) -> SkipResult:
+    """Skip photos. When some of them belong to the open round, the round is
+    refilled with as many fresh photos from the pool (`refill`), so skipping
+    never shrinks a round below the size that was asked for — otherwise a
+    few unusable photos could leave the round short of the training
+    threshold."""
     if not image_ids:
         raise ProjectError("Give at least one image id to skip")
     before = {r.id for r in project.list_images() if r.excluded}
     project.set_excluded(list(image_ids), True, note=note.strip())
     skipped = [i for i in image_ids if i not in before]
+    replacements: list[int] = []
+    active = current_round(project)
+    if refill and skipped and active is not None and active.state == "labeling":
+        if set(skipped) & set(active.image_ids):
+            refilled = refill_round(
+                project, active.number, embedder=embedder, detector=detector, device=device,
+            )
+            known = set(active.image_ids)
+            replacements = [i for i in refilled.image_ids if i not in known]
     return SkipResult(
         skipped=skipped, unchanged=len(image_ids) - len(skipped),
         skipped_images=sum(1 for r in project.list_images() if r.excluded),
+        replacements=replacements,
     )
+
+
+@capability(
+    "loop.refill",
+    summary="Top an open round back up to its requested size after photos were skipped",
+    web_route="/api/v1/loop/rounds/<int:number>/refill",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Skipping refills automatically; this is the manual retry.",
+)
+def refill_round(
+    project: Project,
+    number: int,
+    *,
+    embedder: ImageEmbedder | None = None,
+    detector: ModelBackend | None = None,
+    detector_label: str | None = None,
+    device: str | None = None,
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+) -> LoopRound:
+    """Add `requested − active picks` photos to a round in state "labeling".
+    Replacements are chosen by diversity against everything already labeled
+    or in the round (fast: the embeddings exist from the selection), inherit
+    the skipped picks' annotators round robin, and get the same pre-labels
+    the round got. With an empty pool the round notes say so."""
+    record = _reconcile_round(project, load_round(project, number))
+    if record.state != "labeling" or record.selection is None:
+        raise ProjectError(
+            f"Round {number} is '{record.state}'; only a round being labeled refills"
+        )
+    sel = record.selection
+    by_id = {r.id: r for r in project.list_images()}
+    active_picks = [p for p in sel.picks if p.image_id in by_id and not by_id[p.image_id].excluded]
+    need = sel.requested - len(active_picks)
+    if need <= 0:
+        return record
+    labeled = _labeled_ids(project)
+    in_round = set(sel.image_ids)
+    pool = [r for r in by_id.values() if _in_pool(r, labeled) and r.id not in in_round]
+    notes = list(sel.notes)
+    if not pool:
+        notes.append(f"{need} photo(s) skipped could not be replaced — the pool is empty")
+        return save_round(project, record.model_copy(
+            update={"selection": sel.model_copy(update={"notes": notes})}
+        ))
+    need = min(need, len(pool))
+    pool_ids = [r.id for r in pool]
+    covered_ids = sorted(labeled | {p.image_id for p in active_picks})
+    pool_vecs = load_embeddings(project, pool_ids, embedding_model)
+    if pool_vecs is None:
+        # new photos since the selection: embed just what is missing
+        try:
+            for _ in embedding_events(project, embedding_model, device=device, backend=embedder):
+                pass
+            pool_vecs = load_embeddings(project, pool_ids, embedding_model)
+        except BackendError:
+            pool_vecs = None
+    covered = load_embeddings(project, covered_ids, embedding_model) if covered_ids else None
+    if pool_vecs is not None:
+        extra = kcenter_greedy(pool_vecs, need, covered=covered)
+        how = "replacement for a skipped photo — "
+    else:
+        extra = random_picks(len(pool_ids), need)
+        how = "replacement for a skipped photo (no embeddings) — "
+        notes.append("replacements were picked at random — no embeddings available")
+    # inherit the annotators of the skipped picks, round robin
+    owners = [p.assigned_to for p in sel.picks
+              if p.assigned_to and p.image_id in by_id and by_id[p.image_id].excluded]
+    new_picks = []
+    for n, pick in enumerate(extra):
+        new_picks.append(PickedImage(
+            image_id=pool_ids[pick.index], score=pick.score, reason=how + pick.reason,
+            assigned_to=owners[n % len(owners)] if owners else None,
+        ))
+    notes.append(f"{len(new_picks)} photo(s) added to replace skipped ones")
+    preannotation = dict(record.preannotation)
+    if project.categories:
+        try:
+            if detector is not None:
+                backend, label, name_of, kind = detector, detector_label or detector.family, \
+                    dict(enumerate(c.name for c in project.categories)), "run"
+            else:
+                backend, label, name_of, kind = _scorer(project, device)
+            gen = _preannotate_images(
+                project, [p.image_id for p in new_picks], backend, name_of,
+                threshold=PRELABEL_THRESHOLD[kind],
+            )
+            summary = None
+            while True:
+                try:
+                    next(gen)
+                except StopIteration as stop:
+                    summary = stop.value
+                    break
+            if summary:
+                preannotation = {
+                    "scorer": label, "threshold": summary["threshold"],
+                    "images": preannotation.get("images", 0) + summary["images"],
+                    "annotations": preannotation.get("annotations", 0) + summary["annotations"],
+                }
+        except BackendError as exc:
+            notes.append(f"replacements not pre-labeled — scorer unavailable: {exc}")
+    return save_round(project, record.model_copy(update={
+        "selection": sel.model_copy(update={"picks": [*sel.picks, *new_picks], "notes": notes}),
+        "preannotation": preannotation,
+    }))
 
 
 @capability(
