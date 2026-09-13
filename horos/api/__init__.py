@@ -95,11 +95,16 @@ from horos.api.labels import (
 )
 from horos.api.loop import (
     LoopStatus,
+    RoundQueueItem,
     RoundSummary,
+    TrainReadiness,
+    assign_round,
     close_round,
     get_round,
+    loop_history,
     loop_status,
     preannotate_round,
+    round_queue,
     round_training_status,
     select_round,
     start_preannotate_job,
@@ -172,11 +177,16 @@ from horos.api.visualize import (
 
 __all__ = [
     "LoopStatus",
+    "RoundQueueItem",
     "RoundSummary",
+    "TrainReadiness",
+    "assign_round",
     "close_round",
     "get_round",
+    "loop_history",
     "loop_status",
     "preannotate_round",
+    "round_queue",
     "round_training_status",
     "select_round",
     "start_preannotate_job",

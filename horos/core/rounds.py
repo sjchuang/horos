@@ -85,6 +85,8 @@ class LoopRound(BaseModel):
     closed_at: str | None = None
     #: labeled images in the project when the round started (E10-S5: labels spent)
     labeled_before: int = 0
+    #: labeled images when the round reached review / was closed; None while open
+    labeled_after: int | None = None
     selection: SelectionRecord | None = None
     train_run_id: str | None = None
     #: headline validation metrics of this round's model, filled in at review

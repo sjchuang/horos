@@ -111,3 +111,30 @@ def train_round(number: int):
 def round_training_status(number: int):
     after = request.args.get("after", default=0, type=int)
     return jsonify(api.round_training_status(_project(), number, after=after).model_dump())
+
+
+@bp.get("/history")
+def loop_history():
+    return jsonify([row.model_dump() for row in api.loop_history(_project())])
+
+
+@bp.post("/rounds/<int:number>/assign")
+def assign_round(number: int):
+    body = request.get_json(silent=True) or {}
+    annotators = body.get("annotators")
+    if not isinstance(annotators, list) or not all(isinstance(a, str) for a in annotators):
+        raise ProjectError("'annotators' must be a list of names")
+    record = api.assign_round(
+        _project(), number, annotators, reassign=bool(body.get("reassign", False))
+    )
+    return jsonify(record.model_dump())
+
+
+@bp.get("/rounds/<int:number>/queue")
+def round_queue(number: int):
+    items = api.round_queue(
+        _project(), number,
+        annotator=request.args.get("annotator") or None,
+        session_id=request.args.get("session") or None,
+    )
+    return jsonify([item.model_dump() for item in items])

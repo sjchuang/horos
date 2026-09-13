@@ -85,3 +85,30 @@ def test_embedding_job_route(client):
     assert _wait_job(client, resp.get_json()["job_id"])["state"] == "completed"
     emb = client.get("/api/v1/loop/embeddings?model=fake-embedder").get_json()
     assert emb["embedded"] == 6 and emb["missing"] == 0
+
+
+def test_history_readiness_assign_and_queue_routes(client):
+    assert client.get("/api/v1/loop/history").get_json() == []
+    ready = client.get("/api/v1/loop/readiness").get_json()
+    assert ready["ready"] is False and ready["reasons"]
+
+    resp = client.post("/api/v1/loop/rounds", json={"count": 3, "model": "fake-embedder"})
+    assert _wait_job(client, resp.get_json()["job_id"])["state"] == "completed"
+    history = client.get("/api/v1/loop/history").get_json()
+    assert len(history) == 1 and history[0]["labels_spent"] == 0
+
+    assign = "/api/v1/loop/rounds/1/assign"
+    assert client.post(assign, json={"annotators": "ann"}).status_code == 400
+    body = client.post(assign, json={"annotators": ["ann", "bob"]}).get_json()
+    owners = [p["assigned_to"] for p in body["selection"]["picks"]]
+    assert owners == ["ann", "bob", "ann"]
+    queue = client.get("/api/v1/loop/rounds/1/queue?annotator=bob").get_json()
+    assert len(queue) == 1 and queue[0]["assigned_to"] == "bob" and queue[0]["reason"]
+    assert len(client.get("/api/v1/loop/rounds/1/queue").get_json()) == 3
+
+    # training is refused with the readiness reasons, not a stack trace
+    resp = client.post("/api/v1/loop/rounds/1/train", json={})
+    assert resp.status_code == 400 and "Not ready to train" in resp.get_data(as_text=True)
+    assert client.post("/api/v1/loop/rounds/1/train", json={"epochs": 0}).status_code == 400
+    status = client.get("/api/v1/loop/rounds/1/training").get_json()
+    assert status["round"]["number"] == 1 and status["training"] is None

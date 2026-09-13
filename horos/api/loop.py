@@ -33,11 +33,13 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 from pydantic import BaseModel, Field
 
+from horos.api.annotate import _load_claims
 from horos.api.embeddings import DEFAULT_EMBEDDING_MODEL, embedding_events, load_embeddings
 from horos.api.jobs import start_job
 from horos.api.manifest import capability
 from horos.api.train import TrainRunConfig, TrainStatus, list_runs, start_training, training_status
 from horos.core import pal
+from horos.core.dataset import ImageRecord
 from horos.core.project import Project
 from horos.core.rounds import (
     LoopRound,
@@ -74,6 +76,10 @@ __all__ = [
     "train_readiness",
     "train_round",
     "round_training_status",
+    "loop_history",
+    "assign_round",
+    "RoundQueueItem",
+    "round_queue",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -98,7 +104,14 @@ VALID_FRACTION = 0.2
 MIN_VALID_IMAGES = 2
 
 
+#: which of a run's best-checkpoint scores headlines a round, first match wins;
+#: for "loss" lower is better, for every mAP flavour higher is
+_METRIC_PREFERENCE = ("map_5095", "map50", "map_50", "map", "loss")
+
+
 class RoundSummary(BaseModel):
+    """One row of the round history (E10-T9)."""
+
     number: int
     state: str
     strategy: str | None = None
@@ -106,8 +119,17 @@ class RoundSummary(BaseModel):
     picked: int = 0
     #: picks that now hold confirmed annotations
     labeled: int = 0
+    labeled_before: int = 0
+    #: labeled images gained during the round (so far, while it is open)
+    labels_spent: int = 0
     train_run_id: str | None = None
     metrics: dict[str, float] = Field(default_factory=dict)
+    #: the headline metric of this round's model and its change against the
+    #: previous round that has one; `improved` accounts for loss vs mAP
+    metric_key: str | None = None
+    metric: float | None = None
+    delta: float | None = None
+    improved: bool | None = None
     created_at: str
 
 
@@ -155,7 +177,20 @@ def _auto_strategy(project: Project, labeled: set[int]) -> tuple[SelectionStrate
     return "diversity", "labels exist but the project has no classes to prompt a scorer with"
 
 
-def _summary(project: Project, record: LoopRound) -> RoundSummary:
+def _headline(metrics: dict[str, float]) -> tuple[str | None, float | None]:
+    for key in _METRIC_PREFERENCE:
+        if key in metrics:
+            return key, float(metrics[key])
+    return None, None
+
+
+def _summary(
+    project: Project,
+    record: LoopRound,
+    *,
+    labeled_now: int,
+    previous: tuple[str, float] | None,
+) -> RoundSummary:
     labeled = 0
     if record.selection:
         for image_id in record.selection.image_ids:
@@ -165,6 +200,12 @@ def _summary(project: Project, record: LoopRound) -> RoundSummary:
                 continue
             if any(a.status == "confirmed" for a in anns):
                 labeled += 1
+    after = record.labeled_after if record.labeled_after is not None else labeled_now
+    key, value = _headline(record.metrics)
+    delta = improved = None
+    if key is not None and previous is not None and previous[0] == key:
+        delta = value - previous[1]
+        improved = delta < 0 if key == "loss" else delta > 0
     return RoundSummary(
         number=record.number,
         state=record.state,
@@ -172,10 +213,37 @@ def _summary(project: Project, record: LoopRound) -> RoundSummary:
         requested=record.selection.requested if record.selection else 0,
         picked=len(record.image_ids),
         labeled=labeled,
+        labeled_before=record.labeled_before,
+        labels_spent=max(0, after - record.labeled_before),
         train_run_id=record.train_run_id,
         metrics=record.metrics,
+        metric_key=key,
+        metric=value,
+        delta=delta,
+        improved=improved,
         created_at=record.created_at,
     )
+
+
+@capability(
+    "loop.history",
+    summary="Round history: labels spent, headline metric and its change per round",
+    web_route="/api/v1/loop/history",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="'horos loop' prints the same table.",
+)
+def loop_history(project: Project) -> list[RoundSummary]:
+    labeled_now = len(_labeled_ids(project))
+    out: list[RoundSummary] = []
+    previous: tuple[str, float] | None = None
+    for record in list_rounds(project):
+        record = _reconcile_round(project, record)
+        row = _summary(project, record, labeled_now=labeled_now, previous=previous)
+        out.append(row)
+        if row.metric_key is not None:
+            previous = (row.metric_key, row.metric)  # type: ignore[assignment]
+    return out
 
 
 # ------------------------------------------------------------------ status
@@ -208,7 +276,7 @@ def loop_status(project: Project) -> LoopStatus:
         has_model=_latest_completed_run(project) is not None,
         next_strategy=strategy,
         current=active,
-        rounds=[_summary(project, r) for r in list_rounds(project)],
+        rounds=loop_history(project),
     )
 
 
@@ -233,9 +301,11 @@ def get_round(project: Project, number: int) -> LoopRound:
     not_cli_because="Rounds close themselves at review; abandoning one is a UI action.",
 )
 def close_round(project: Project, number: int) -> LoopRound:
-    record = load_round(project, number)
+    record = _reconcile_round(project, load_round(project, number))
     if record.state == "closed":
         return record
+    if record.labeled_after is None:
+        record = record.model_copy(update={"labeled_after": len(_labeled_ids(project))})
     return save_round(project, record.advance("closed"))
 
 
@@ -708,8 +778,8 @@ def _reconcile_round(project: Project, record: LoopRound) -> LoopRound:
         from horos.api.experiment import get_run_summary
 
         scores = get_run_summary(project, run.run_id, reference=None).scores
-        return save_round(project, record.model_copy(update={"metrics": dict(scores)})
-                          .advance("reviewing"))
+        update = {"metrics": dict(scores), "labeled_after": len(_labeled_ids(project))}
+        return save_round(project, record.model_copy(update=update).advance("reviewing"))
     if run.state in ("failed", "stopped"):
         training = {**record.training, "error": run.error or f"run {run.state}"}
         return save_round(project, record.model_copy(update={"training": training})
@@ -862,3 +932,99 @@ def start_round_job(
             embedding_model=embedding_model, device=device, cancel=cancel,
         ),
     )
+
+
+# -------------------------------------------------------------- annotators
+
+
+@capability(
+    "loop.assign",
+    summary="Hand a round's images to annotators, round robin (E10-S7)",
+    web_route="/api/v1/loop/rounds/<int:number>/assign",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Assignment coordinates interactive annotators.",
+)
+def assign_round(
+    project: Project, number: int, annotators: list[str], *, reassign: bool = False
+) -> LoopRound:
+    """Distribute the round's picks over `annotators` in pick order. Picks
+    that already have an owner keep it unless `reassign` is set — a person
+    joining late only receives what nobody holds yet."""
+    names = [str(a).strip() for a in annotators]
+    if not names:
+        raise ProjectError("Give at least one annotator")
+    if any(not n for n in names):
+        raise ProjectError("Annotator names must not be empty")
+    if len(set(names)) != len(names):
+        raise ProjectError("Annotator names must be distinct")
+    record = load_round(project, number)
+    if record.state == "closed":
+        raise ProjectError(f"Round {number} is closed; nothing left to assign")
+    if record.selection is None:
+        raise ProjectError(f"Round {number} has no picks yet")
+    picks = []
+    n = 0
+    for pick in record.selection.picks:
+        if pick.assigned_to is None or reassign:
+            pick = pick.model_copy(update={"assigned_to": names[n % len(names)]})
+            n += 1
+        picks.append(pick)
+    selection = record.selection.model_copy(update={"picks": picks})
+    return save_round(project, record.model_copy(update={"selection": selection}))
+
+
+class RoundQueueItem(BaseModel):
+    image: ImageRecord
+    assigned_to: str | None = None
+    annotated: bool
+    num_pending: int = 0
+    #: another session's live claim on the image (E2-T8), None if free
+    claimed_by: str | None = None
+    score: float
+    reason: str
+
+
+@capability(
+    "loop.queue",
+    summary="A round's images for one annotator: their share plus unassigned, unlabeled first",
+    web_route="/api/v1/loop/rounds/<int:number>/queue",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="The queue drives the interactive annotator.",
+)
+def round_queue(
+    project: Project,
+    number: int,
+    *,
+    annotator: str | None = None,
+    session_id: str | None = None,
+) -> list[RoundQueueItem]:
+    record = load_round(project, number)
+    by_id = {r.id: r for r in project.list_images()}
+    claims = _load_claims(project)
+    items: list[RoundQueueItem] = []
+    for pick in record.selection.picks if record.selection else []:
+        if annotator is not None and pick.assigned_to not in (None, annotator):
+            continue
+        image = by_id.get(pick.image_id)
+        if image is None:
+            continue  # deleted since the round was selected
+        anns = project.load_annotations(pick.image_id).annotations
+        holder = claims.get(pick.image_id)
+        items.append(
+            RoundQueueItem(
+                image=image,
+                assigned_to=pick.assigned_to,
+                annotated=any(a.status == "confirmed" for a in anns),
+                num_pending=sum(1 for a in anns if a.status == "pending"),
+                claimed_by=(
+                    holder["session"] if holder and holder["session"] != session_id else None
+                ),
+                score=pick.score,
+                reason=pick.reason,
+            )
+        )
+    items.sort(key=lambda i: i.annotated)  # stable: pick order within each group
+    return items
+
