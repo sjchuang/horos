@@ -943,6 +943,7 @@ const Page = {
       this._resizeCanvas();
       this._setSaveState("", "");
       this._syncReviewBar();
+      this._applyRememberedClass();
       this.renderChips();
       if (focusAnnotationId != null) {
         const sIdx = this.editorShapes.findIndex((sh) => sh.id === focusAnnotationId);
@@ -1431,6 +1432,7 @@ const Page = {
     [...$("class-chips").children].forEach((el) => {
       el.onclick = () => {
         $("class-input").value = el.dataset.name;
+        this._rememberClass(el.dataset.name);
         $("class-input").dispatchEvent(new Event("input"));
         $("class-input").dispatchEvent(new Event("change"));
       };
@@ -2158,15 +2160,29 @@ const Page = {
   // the class for a new shape: what is typed in Object Class, else ask
   async _labelFor() {
     const typed = $("class-input").value.trim();
-    if (typed) return typed;
+    if (typed) { this._rememberClass(typed); return typed; }
     const name = await this._askLabel();
     if (name) {
       $("class-input").value = name;
       this.sessionNames.add(name);
       this.renderChips();
       this._samSyncButtons();
+      this._rememberClass(name);
     }
     return name;
+  },
+  // the class of the last shape labeled is the class the next image opens
+  // with — nobody wants to re-pick "box" 300 times
+  _rememberClass(name) {
+    try { localStorage.setItem("horos_last_class", name); } catch (e) {}
+  },
+  _applyRememberedClass() {
+    if ($("class-input").value.trim()) return;  // the user already typed one
+    let last = null;
+    try { last = localStorage.getItem("horos_last_class"); } catch (e) {}
+    const names = this.categories.map((c) => c.name);
+    const pick = last && names.includes(last) ? last : (names.length === 1 ? names[0] : null);
+    if (pick) { $("class-input").value = pick; this._samSyncButtons(); }
   },
   _askLabel() {
     return new Promise((resolve) => {
