@@ -96,6 +96,9 @@ def test_headline_prefers_validation_map_over_loss():
     rfdetr_like = {"loss": 6.8, "val/loss": 5.9, "val/mAP_50": 0.57, "val/ema_mAP_50_95": 0.59,
                    "val/mAP_50_95": 0.54}
     assert _headline(rfdetr_like) == ("val/ema_mAP_50_95", 0.59)
+    # the loop's own split evaluation wins once it exists — it is computed the
+    # same way every round, unlike the trainer's EMA numbers
+    assert _headline({**rfdetr_like, "eval/valid/map_5095": 0.71})[0] == "eval/valid/map_5095"
     assert _headline({"loss": 1.0}) == ("loss", 1.0)
     assert _headline({}) == (None, None)
 

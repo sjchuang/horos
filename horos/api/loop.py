@@ -202,6 +202,9 @@ def update_loop_settings(project: Project, **changes) -> LoopSettings:
 #: are actually saved), then generic names, then loss. For "loss" lower is
 #: better, for every mAP flavour higher is
 _METRIC_PREFERENCE = (
+    # the loop's own post-training evaluation first: same code, same
+    # threshold, same fixed validation set every round — comparable by design
+    "eval/valid/map_5095", "eval/valid/map_50",
     "val/ema_mAP_50_95", "val/mAP_50_95", "map_5095", "val/ema_mAP_50", "val/mAP_50",
     "map50", "map_50", "map", "loss",
 )
