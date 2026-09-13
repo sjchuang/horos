@@ -97,6 +97,10 @@
   .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px;
            border: 1px solid var(--line); font-size: 12px; color: var(--dim); position: relative; }
   .badge svg { width: 14px; height: 14px; }
+  .options { justify-content: center; gap: 22px; margin-top: 4px; }
+  .opt { display: flex; align-items: center; gap: 8px; }
+  .opt .k { color: var(--dim); font-size: 12px; }
+  .opt select { font-size: 12px; padding: 5px 8px; }
   .badge.accent { border-color: var(--accent); color: var(--accent); }
   .bar { background: var(--line); height: 10px; border-radius: 5px; overflow: hidden; }
   .bar > div { background: var(--accent); height: 100%; width: 0; transition: width .3s; }
@@ -223,6 +227,32 @@
       </div>
       <div class="row" style="justify-content:center">
         <span class="badge tip" id="strategy-badge" data-tip=""></span>
+      </div>
+      <div class="row options" id="loop-options">
+        <div class="opt">
+          <span class="k">Model</span>
+          <div class="seg" id="opt-model">
+            <button data-v="auto" title="Boxes → RF-DETR Nano · polygons → RF-DETR-Seg Nano">Auto</button>
+            <button data-v="detection" title="detect boxes">Boxes</button>
+            <button data-v="instance_segmentation" title="segment masks">Masks</button>
+          </div>
+          <select id="opt-model-size" style="display:none"></select>
+        </div>
+        <div class="opt">
+          <span class="k">Suggestions</span>
+          <div class="seg" id="opt-suggest">
+            <button data-v="1" title="pre-label the picked photos">On</button>
+            <button data-v="0" title="start every photo blank">Off</button>
+          </div>
+        </div>
+        <div class="opt" id="opt-shapes-wrap">
+          <span class="k">Shapes</span>
+          <div class="seg" id="opt-shapes">
+            <button data-v="auto" title="whatever the model produces">Auto</button>
+            <button data-v="box" title="boxes only">Box</button>
+            <button data-v="polygon" title="boxes become SAM polygons">Polygon</button>
+          </div>
+        </div>
       </div>
       <button class="btn primary big" id="btn-select">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -426,8 +456,47 @@ const Loop = {
       + (this.unit === "percent" ? ` · ${$("count-input").value}%` : "");
     $("btn-select").disabled = n <= 0 || this.status.pool_size === 0;
   },
+  models: [],
+  async renderOptions() {
+    const st = this.status.settings || {};
+    if (!this.models.length) {
+      try { this.models = (await api("/models")).filter((m) => m.trainable); } catch (e) { this.models = []; }
+    }
+    const chosen = this.models.find((m) => m.key === st.model);
+    const kind = chosen ? chosen.task : "auto";
+    const setSeg = (id, v) => $(id).querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === String(v)));
+    setSeg("opt-model", kind);
+    setSeg("opt-suggest", st.preannotate === false ? 0 : 1);
+    setSeg("opt-shapes", st.shapes || "auto");
+    $("opt-shapes-wrap").style.opacity = st.preannotate === false ? ".4" : "1";
+    const size = $("opt-model-size");
+    if (kind === "auto") size.style.display = "none";
+    else {
+      const sizes = this.models.filter((m) => m.task === kind);
+      size.innerHTML = sizes.map((m) => `<option value="${m.key}" ${m.key === st.model ? "selected" : ""}>${m.display_name.replace(/^RF-DETR(-Seg)? /, "")}</option>`).join("");
+      size.style.display = "";
+    }
+    if (!this._optionsWired) {
+      this._optionsWired = true;
+      $("opt-model").querySelectorAll("button").forEach((b) => { b.onclick = () => {
+        const v = b.dataset.v;
+        const pick = v === "auto" ? null : (this.models.find((m) => m.task === v && /nano/i.test(m.key)) || this.models.find((m) => m.task === v) || {}).key || null;
+        this.saveSettings({ model: pick });
+      }; });
+      size.onchange = () => this.saveSettings({ model: size.value });
+      $("opt-suggest").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ preannotate: b.dataset.v === "1" }); });
+      $("opt-shapes").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ shapes: b.dataset.v }); });
+    }
+  },
+  async saveSettings(changes) {
+    try {
+      this.status.settings = await api("/loop/settings", json("PUT", changes));
+      await this.renderOptions();
+    } catch (e) { toast(e.message, "err", 4000); }
+  },
   renderSelect() {
     const s = this.status;
+    this.renderOptions();
     $("select-stats").innerHTML = [
       [s.pool_size, ICON.image, "to label"], [s.labeled_images, ICON.tag, "labeled"],
       [s.skipped_images, ICON.skip, "skipped"],
@@ -480,7 +549,9 @@ const Loop = {
   async renderLabel(cur) {
     const picks = cur.selection ? cur.selection.picks : [];
     const how = cur.selection ? (STRATEGY[cur.selection.strategy] || STRATEGY.random)[1] : "";
-    $("round-badge").innerHTML = `${ICON.loop} Round ${cur.number} · ${how}`;
+    const st = this.status.settings || {};
+    const modelName = st.model ? st.model.replace("rfdetr-", "RF-DETR ").replace("seg-", "Seg ") : "auto model";
+    $("round-badge").innerHTML = `${ICON.loop} Round ${cur.number} · ${how} · ${modelName}`;
     const pre = cur.preannotation || {};
     $("prelabel-badge").style.display = pre.annotations ? "" : "none";
     $("prelabel-badge").innerHTML = `${ICON.robot} ${pre.annotations} suggested`;

@@ -522,6 +522,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--device", help="Device override (cuda, mps, cpu)")
     p.add_argument(
+        "--no-suggestions", action="store_true",
+        help="loop select: do not pre-label the picked photos this time",
+    )
+    p.add_argument(
+        "--shapes", choices=("auto", "box", "polygon"),
+        help="loop select: suggestion geometry for this round (default: the loop settings)",
+    )
+    p.add_argument(
         "--model", help="loop train: model key (default: RF-DETR Nano, or RF-DETR-Seg Nano "
                         "when the labels are mostly polygons)"
     )
@@ -1078,6 +1086,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 for event in select_round_events(
                     project, count=args.count, percent=args.percent,
                     strategy=args.strategy, device=args.device,
+                    preannotate=False if args.no_suggestions else None, shapes=args.shapes,
                 ):
                     print(dump_event(event), file=sys.stderr)  # noqa: T201
                     final = event

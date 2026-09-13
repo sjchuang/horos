@@ -40,7 +40,9 @@ from horos.api.manifest import capability
 from horos.api.train import TrainRunConfig, TrainStatus, list_runs, start_training, training_status
 from horos.core import pal
 from horos.core.dataset import ImageRecord
+from horos.core.fsutil import atomic_write_text
 from horos.core.project import Project
+from horos.core.registry import get_model_info
 from horos.core.rounds import (
     LoopRound,
     PickedImage,
@@ -56,7 +58,13 @@ from horos.core.selection import kcenter_greedy, random_picks, resolve_count
 from horos.errors import BackendError, HorosError, ProjectError
 
 if TYPE_CHECKING:
-    from horos.backends.base import Event, ImageEmbedder, ImagePrediction, ModelBackend
+    from horos.backends.base import (
+        Event,
+        ImageEmbedder,
+        ImagePrediction,
+        ModelBackend,
+        PromptableSegmenter,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +94,9 @@ __all__ = [
     "skip_images",
     "restore_images",
     "refill_round",
+    "LoopSettings",
+    "get_loop_settings",
+    "update_loop_settings",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -108,6 +119,75 @@ MIN_INSTANCES_PER_CLASS = 5
 #: labeled images, never grown afterwards (round metrics stay comparable)
 VALID_FRACTION = 0.2
 MIN_VALID_IMAGES = 2
+
+
+Shapes = Literal["auto", "box", "polygon"]
+SETTINGS_FILE = "loop.json"
+
+
+class LoopSettings(BaseModel):
+    """What the user can decide once for the whole loop (E10-T19); stored in
+    <root>/loop.json and applied to every round until changed."""
+
+    #: training model key; None = the loop picks detection or segmentation
+    #: from the labels (default_model_for)
+    model: str | None = None
+    #: write the scorer's suggestions on picked photos (pseudo-labels)
+    preannotate: bool = True
+    #: suggestion geometry: "auto" keeps whatever the scorer produced, "box"
+    #: drops polygons to boxes, "polygon" turns boxes into SAM polygons
+    shapes: Shapes = "auto"
+    #: the segmenter used for shapes="polygon"
+    refiner: str = "sam2.1-tiny"
+
+
+def _settings_path(project: Project):
+    return project.root / SETTINGS_FILE
+
+
+@capability(
+    "loop.settings",
+    summary="The loop's standing choices: model, suggestions on/off, box or polygon shapes",
+    web_route="/api/v1/loop/settings",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="'horos loop' prints them with the status.",
+)
+def get_loop_settings(project: Project) -> LoopSettings:
+    path = _settings_path(project)
+    if not path.is_file():
+        return LoopSettings()
+    try:
+        return LoopSettings.model_validate_json(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise ProjectError(f"Corrupt loop settings at {path}: {exc}") from exc
+
+
+@capability(
+    "loop.settings.update",
+    summary="Change the loop's standing choices (partial update)",
+    web_route="/api/v1/loop/settings",
+    web_methods=("PUT",),
+    cli=None,
+    not_cli_because="'horos loop select/train' take the same choices as flags.",
+)
+def update_loop_settings(project: Project, **changes) -> LoopSettings:
+    current = get_loop_settings(project)
+    unknown = set(changes) - set(LoopSettings.model_fields)
+    if unknown:
+        raise ProjectError(f"Unknown loop setting(s): {sorted(unknown)}")
+    try:
+        updated = current.model_copy(update=changes)
+        updated = LoopSettings.model_validate(updated.model_dump())
+    except ValueError as exc:
+        raise ProjectError(f"Invalid loop settings: {exc}") from exc
+    if updated.model is not None:
+        info = get_model_info(updated.model)  # unknown keys raise UnknownModelError
+        if not info.trainable:
+            raise ProjectError(f"Model '{updated.model}' cannot be trained; pick a trainable one")
+    get_model_info(updated.refiner)
+    atomic_write_text(_settings_path(project), updated.model_dump_json(indent=2))
+    return updated
 
 
 #: which of a run's best-checkpoint scores headlines a round, first match wins:
@@ -161,6 +241,7 @@ class LoopStatus(BaseModel):
     next_strategy: SelectionStrategy
     current: LoopRound | None = None
     rounds: list[RoundSummary] = Field(default_factory=list)
+    settings: LoopSettings = Field(default_factory=LoopSettings)
 
 
 # --------------------------------------------------------------- helpers
@@ -303,6 +384,7 @@ def loop_status(project: Project) -> LoopStatus:
         next_strategy=strategy,
         current=active,
         rounds=loop_history(project),
+        settings=get_loop_settings(project),
     )
 
 
@@ -398,6 +480,10 @@ def _preannotate_images(
     cached: dict[int, ImagePrediction] | None = None,
     cancel: CancelEvent | None = None,
     phase: str = "pre-annotating",
+    shapes: Shapes = "auto",
+    refiner: PromptableSegmenter | None = None,
+    refiner_model: str = "sam2.1-tiny",
+    device: str | None = None,
 ) -> Iterator[Event]:
     """Write the scorer's detections on `image_ids` as pending auto pre-labels
     (E10-T7, E10-T11). Predictions in `cached` (from the PAL scoring pass)
@@ -421,14 +507,28 @@ def _preannotate_images(
         pred = (cached or {}).get(image_id)
         if pred is None:
             pred = backend.infer_one(project.image_path(record), threshold=threshold)
-        detections = []
+        detections, polygons = [], []
         for inst in pred.instances:
             name = inst.category_name or name_of.get(inst.category_id)
             if name is None or inst.score < threshold:
                 continue
             detections.append((name, inst.bbox, inst.score))
+            # a segmentation scorer's polygon rides along unless boxes were asked for
+            polygons.append(inst.segmentation[0] if inst.segmentation and shapes != "box" else None)
         cat_ids = _ensure_categories(project, {d[0] for d in detections}) if detections else {}
-        annotations += _write_pending(project, image_id, detections, cat_ids)
+        annotations += _write_pending(project, image_id, detections, cat_ids, polygons)
+        if shapes == "polygon" and detections:
+            # boxes → SAM polygons, pending ones on this image only (E10-T19)
+            from horos.api.segment import _segmenter, boxes_to_polygons
+
+            stored = project.load_annotations(image_id)
+            box_ids = [
+                a.id for a in stored.annotations if a.status == "pending" and not a.segmentation
+            ]
+            if box_ids:
+                refiner = refiner or _segmenter(refiner_model, device)
+                boxes_to_polygons(project, image_id, annotation_ids=box_ids, include_pending=True,
+                                  model=refiner_model, device=device, backend=refiner)
         images += 1
         yield ProgressUpdated(
             current=n + 1, total=len(image_ids), phase=phase,
@@ -450,14 +550,22 @@ def select_round_events(
     detector_label: str | None = None,
     cancel: CancelEvent | None = None,
     seed: int | None = None,
-    preannotate: bool = True,
+    preannotate: bool | None = None,
+    shapes: Shapes | None = None,
+    refiner: PromptableSegmenter | None = None,
 ) -> Iterator[Event]:
     """Open the next round and choose its images, as an R4 event stream.
+    `preannotate` / `shapes` default to the loop settings (E10-T19).
     Ends with RunCompleted(result={"round", "picked", "strategy"}) and the
     round in state "labeling"; on failure the round is closed again so the
     loop is never stuck. `embedder`/`detector` are injectable for tests."""
     from horos.backends.base import ProgressUpdated, RunCompleted, RunFailed, RunStarted
 
+    settings = get_loop_settings(project)
+    if preannotate is None:
+        preannotate = settings.preannotate
+    if shapes is None:
+        shapes = settings.shapes
     images = project.list_images()
     labeled = _labeled_ids(project)
     pool = [r for r in images if _in_pool(r, labeled)]
@@ -475,7 +583,8 @@ def select_round_events(
     yield RunStarted(
         total=wanted,
         config={"round": record.number, "requested": wanted, "percent": percent,
-                "strategy": chosen, "pool": len(pool), "embedding_model": embedding_model},
+                "strategy": chosen, "pool": len(pool), "embedding_model": embedding_model,
+                "preannotate": preannotate, "shapes": shapes},
     )
     try:
         # ---- embeddings (diversity needs them; PAL uses them for RCSP)
@@ -619,13 +728,16 @@ def select_round_events(
                 cached = pool_preds if threshold >= SCORE_THRESHOLD else None
                 summary = yield from _preannotate_images(
                     project, [p.image_id for p in picks], backend, name_of,
-                    threshold=threshold, cached=cached, cancel=cancel,
+                    threshold=threshold, cached=cached, cancel=cancel, shapes=shapes,
+                    refiner=refiner, refiner_model=settings.refiner, device=device,
                 )
-                preannotation = {"scorer": scorer_label, **summary}
+                preannotation = {"scorer": scorer_label, "shapes": shapes, **summary}
             except BackendError as exc:
                 notes.append(f"pre-annotation skipped — scorer unavailable: {exc}")
         elif preannotate:
             notes.append("pre-annotation skipped — the project has no classes yet")
+        else:
+            notes.append("suggestions are off in the loop settings")
         record = record.model_copy(update={
             "selection": SelectionRecord(
                 strategy=chosen, requested=wanted, requested_percent=percent,
@@ -798,9 +910,12 @@ def train_round(
     labeled = _labeled_ids(project)
     lock = _lock_validation(project, labeled, seed=seed)
     if model is None:
-        model, model_reason = default_model_for(project, labeled)
+        model = get_loop_settings(project).model
+        model_reason = "from the loop settings"
     else:
         model_reason = "chosen explicitly"
+    if model is None:
+        model, model_reason = default_model_for(project, labeled)
     config = TrainRunConfig(
         model=model, epochs=epochs, batch_size=batch_size, resolution=resolution,
         device=device, seed=seed, image_ids=sorted(labeled), extra=extra or {},
@@ -891,8 +1006,10 @@ def preannotate_events(
             name_of = dict(enumerate(c.name for c in project.categories))
         else:
             backend, label, name_of, kind = _scorer(project, device)
+        settings = get_loop_settings(project)
         summary = yield from _preannotate_images(
             project, ids, backend, name_of, threshold=PRELABEL_THRESHOLD[kind], cancel=cancel,
+            shapes=settings.shapes, refiner_model=settings.refiner, device=device,
         )
         save_round(project, load_round(project, number).model_copy(
             update={"preannotation": {"scorer": label, **summary}}
@@ -1283,7 +1400,8 @@ def refill_round(
         ))
     notes.append(f"{len(new_picks)} photo(s) added to replace skipped ones")
     preannotation = dict(record.preannotation)
-    if project.categories:
+    settings = get_loop_settings(project)
+    if project.categories and settings.preannotate:
         try:
             if detector is not None:
                 backend, label, name_of, kind = detector, detector_label or detector.family, \
@@ -1292,7 +1410,8 @@ def refill_round(
                 backend, label, name_of, kind = _scorer(project, device)
             gen = _preannotate_images(
                 project, [p.image_id for p in new_picks], backend, name_of,
-                threshold=PRELABEL_THRESHOLD[kind],
+                threshold=PRELABEL_THRESHOLD[kind], shapes=settings.shapes,
+                refiner_model=settings.refiner, device=device,
             )
             summary = None
             while True:

@@ -184,3 +184,16 @@ def refill_round(number: int):
     body = request.get_json(silent=True) or {}
     record = api.refill_round(_project(), number, device=body.get("device") or None)
     return jsonify(record.model_dump())
+
+
+@bp.get("/settings")
+def get_loop_settings():
+    return jsonify(api.get_loop_settings(_project()).model_dump())
+
+
+@bp.put("/settings")
+def update_loop_settings():
+    body = request.get_json(silent=True) or {}
+    if not isinstance(body, dict):
+        raise ProjectError("Send an object with the settings to change")
+    return jsonify(api.update_loop_settings(_project(), **body).model_dump())

@@ -94,6 +94,7 @@ from horos.api.labels import (
     update_category,
 )
 from horos.api.loop import (
+    LoopSettings,
     LoopStatus,
     RoundQueueItem,
     RoundSummary,
@@ -102,6 +103,7 @@ from horos.api.loop import (
     TrainReadiness,
     assign_round,
     close_round,
+    get_loop_settings,
     get_round,
     loop_history,
     loop_status,
@@ -117,6 +119,7 @@ from horos.api.loop import (
     start_round_job,
     train_readiness,
     train_round,
+    update_loop_settings,
 )
 from horos.api.manifest import Capability, get_capability, list_capabilities
 from horos.api.media import (
@@ -182,6 +185,7 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "LoopSettings",
     "LoopStatus",
     "RoundQueueItem",
     "RoundSummary",
@@ -190,6 +194,7 @@ __all__ = [
     "TrainReadiness",
     "assign_round",
     "close_round",
+    "get_loop_settings",
     "get_round",
     "loop_history",
     "loop_status",
@@ -205,6 +210,7 @@ __all__ = [
     "start_round_job",
     "train_readiness",
     "train_round",
+    "update_loop_settings",
     "EmbeddingStatus",
     "embedding_status",
     "start_embedding_job",
