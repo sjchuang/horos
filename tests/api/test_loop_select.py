@@ -153,7 +153,7 @@ def test_big_pools_are_scored_on_a_seeded_sample(tmp_path):
     close_round(project, record.number)
     detector.seen.clear()
     record = _select(project, count=2, detector=detector, score_limit=0)
-    assert len(detector.seen) == 3 + 27  # labeled + the whole pool (round 1's picks stayed unlabeled)
+    assert len(detector.seen) == 3 + 27  # labeled + the whole pool (round 1 stayed unlabeled)
     assert not any("scored" in n and "of" in n for n in record.selection.notes)
 
 
