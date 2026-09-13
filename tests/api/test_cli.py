@@ -420,6 +420,10 @@ def test_loop_status_and_select_from_the_cli(tmp_path, capsys, monkeypatch):
     assert body["next_strategy"] == "pal" and body["rounds"] == []
 
     monkeypatch.setattr("horos.backends.get_backend", fake_get_backend)
+    # 'loop select' is ML-gated (it needs the embedding / scoring models); the
+    # torch-free CI must still exercise the command, so the gate is bypassed
+    # here and the fakes stand in for the models
+    monkeypatch.setattr("horos.cli._ml_preflight", lambda command: None)
     code, body = _run(capsys, "loop", "select", "--project", str(proj),
                       "--count", "1", "--strategy", "diversity")
     assert code == 0 and body["number"] == 1 and body["state"] == "labeling"

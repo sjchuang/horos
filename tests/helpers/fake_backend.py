@@ -371,4 +371,6 @@ def fake_get_backend(key, **kwargs):
     resolve to FakeEmbedder, everything else to FakeDetector."""
     if key in ("fake-embedder", "dinov2-small"):
         return FakeEmbedder()
+    if key.startswith("sam"):
+        return FakePromptableSegmenter()  # the polygon refiner
     return FakeDetector()
