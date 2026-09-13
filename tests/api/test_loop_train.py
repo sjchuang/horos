@@ -93,7 +93,7 @@ def test_readiness_names_every_blocker(tmp_path):
 
     project = _project(tmp_path / "b", total=30, labeled=24)
     ready = train_readiness(project)
-    assert ready.ready and ready.reasons == [] and ready.validation_images == 0
+    assert ready.ready and ready.reasons == [] and ready.validation_images >= 1
     assert ready.instances == {"box": 18, "pallet": 6}
 
 
@@ -119,13 +119,13 @@ def test_round_trains_on_labeled_images_and_holds_out_test_and_valid(tmp_path):
     trained = train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
     assert trained.state == "training" and trained.train_run_id
     hold = trained.training["holdout"]
-    assert hold["test_fraction"] == 0.2 and hold["valid_fraction"] == 0.1
+    assert hold["ratios"] == {"train": 0.7, "valid": 0.1, "test": 0.2} and hold["seed"] == 42
     # ~20 % test, ~10 % valid of 24 labeled photos, at least one each, rest train
     assert 1 <= hold["test_images"] <= 9 and 1 <= hold["validation_images"] <= 6
     assert hold["train_images"] + hold["validation_images"] + hold["test_images"] == 24
-    assert hold["newly_held_out"] == hold["test_images"] + hold["validation_images"]
+    assert hold["newly_held_out"] == 0  # every photo joined its set when it was labeled
     by_id = {r.id: r for r in project.list_images()}
-    assert all(by_id[i].split == "train" for i in range(25, 31))  # the pool is untouched
+    assert all(by_id[i].split is None for i in range(25, 31))  # unlabeled: in no set
     assert loop_status(project).test_images == hold["test_images"]
 
     # the snapshot: 24 labeled images, 24 confirmed boxes, no pending pre-label;
@@ -153,7 +153,7 @@ def test_held_out_sets_grow_with_the_labels_and_never_lose_a_photo(tmp_path):
     first = _open_round(project, count=2)
     first = train_round(project, first.number, entrypoint_override=FAKE, epochs=1)
     _wait(project, first.train_run_id)
-    held_before = {r.id: r.split for r in project.list_images() if r.split != "train"}
+    held_before = {r.id: r.split for r in project.list_images() if r.split in ("valid", "test")}
     close_round(project, first.number)
 
     # 40 more labels arrive; the held-out sets must follow at their share

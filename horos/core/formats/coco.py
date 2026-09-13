@@ -117,7 +117,7 @@ def read_coco(source: Path | str) -> tuple[Dataset, dict[int, Path]]:
                     file_name=str(img["file_name"]),
                     width=int(img["width"]),
                     height=int(img["height"]),
-                    split=split or "train",
+                    split=split,  # None for a flat file: assigned when labeled
                 )
             except (KeyError, ValueError) as exc:
                 raise DatasetFormatError(

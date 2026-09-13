@@ -189,15 +189,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--drop-classes", action="store_true", help="Also delete the class list"
     )
-    p = sub.add_parser("split", help="Re-split images into train/valid/test")
+    p = sub.add_parser(
+        "split",
+        help="Set the train/valid/test ratios and give labeled photos without a split "
+             "their set (only labeled photos belong to a set)",
+    )
     p.add_argument(
         "--project",
         help="Project directory (default: the project containing the current directory)",
     )
-    p.add_argument("--train", type=float, default=0.8)
-    p.add_argument("--valid", type=float, default=0.1)
-    p.add_argument("--test", type=float, default=0.1)
-    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--train", type=float, default=None,
+                   help="share of labeled photos (default 0.7)")
+    p.add_argument("--valid", type=float, default=None,
+                   help="share of labeled photos (default 0.1)")
+    p.add_argument("--test", type=float, default=None,
+                   help="share of labeled photos (default 0.2)")
+    p.add_argument("--seed", type=int, default=None, help="hash seed for the assignment")
+    p.add_argument(
+        "--reshuffle", action="store_true",
+        help="re-draw EVERY labeled photo at random — photos past models trained on may "
+             "land in test, so their learning curve is no longer clean",
+    )
 
     p = sub.add_parser(
         "autolabel", help="Zero-shot pre-labels from text prompts (runs in foreground)"
@@ -708,6 +720,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             counts = api.resplit(
                 _project_arg(args),
                 train=args.train, valid=args.valid, test=args.test, seed=args.seed,
+                reshuffle=args.reshuffle,
             )
             _emit(counts)
         elif args.command == "autolabel":

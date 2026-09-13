@@ -46,6 +46,8 @@ def project_summary():
             "root": str(project.root),
             "name": project.manifest.name,
             "categories": [c.model_dump() for c in project.categories],
+            "split_ratios": project.split_ratios.model_dump(),
+            "split_seed": project.manifest.split_seed,
             "num_images": len(project.list_images()),
         }
     )
@@ -159,12 +161,11 @@ def stats():
 @bp.post("/dataset/split")
 def split():
     body = _body()
+    opt = lambda key, cast: None if body.get(key) is None else cast(body[key])  # noqa: E731
     counts = api.resplit(
         _project(),
-        train=float(body.get("train", 0.8)),
-        valid=float(body.get("valid", 0.1)),
-        test=float(body.get("test", 0.1)),
-        seed=int(body.get("seed", 42)),
+        train=opt("train", float), valid=opt("valid", float), test=opt("test", float),
+        seed=opt("seed", int), reshuffle=bool(body.get("reshuffle", False)),
     )
     return jsonify(counts)
 

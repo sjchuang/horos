@@ -406,31 +406,47 @@ def import_dataset(
             # an overwritten image must not keep its old annotations, so an
             # empty incoming set still saves
             project.save_annotations(
-                new_image_id, annotations, expected_version=current.version
+                new_image_id, annotations, expected_version=current.version,
+                assign_split=False,  # one assignment pass below, not one per photo
             )
 
-    # a source with no split structure lands every image in "train" — give
-    # those imports the default 80/10/10 split instead of leaving valid and
-    # test at 0 (deterministic under seed 42; re-split to change it)
-    incoming_splits = {img.split for img in dataset.images if img.id in image_map}
-    if incoming_splits == {"train"} and len(image_map) >= 3:
-        report.phase("applying default split", total=len(image_map))
-        assignment = _assign_splits(
-            sorted(image_map.values()), train=0.8, valid=0.1, test=0.1, seed=42
-        )
-        project.update_image_splits(assignment)
-        for img in dataset.images:
-            if img.id in image_map:
-                img.split = assignment[image_map[img.id]]
+    # photos whose source named no split join one now if they are labeled —
+    # by the project's stable hash and ratios; unlabeled ones stay in no set
+    # until they are labeled (core/splitting.py)
+    report.phase("assigning splits", total=len(image_map))
+    assigned = project.assign_splits(sorted(image_map.values()))
+    back = {new: old for old, new in image_map.items()}
+    for new_id, split in assigned.items():
+        dataset.image_by_id(back[new_id]).split = split  # type: ignore[assignment]
+    # a source directory may have named a split for photos it never labeled;
+    # only labeled photos are set members, so those leave it
+    by_id = {r.id: r for r in project.list_images()}
+    cleared = {
+        new_id: None for new_id in image_map.values()
+        if by_id[new_id].split is not None and not project._has_confirmed(new_id)
+    }
+    if cleared:
+        project.update_image_splits(cleared)
+        for new_id in cleared:
+            dataset.image_by_id(back[new_id]).split = None
+    unassigned = sum(1 for img in dataset.images if img.id in image_map and img.split is None)
+    if assigned:
+        r = project.split_ratios
         warnings.append(
-            "Source had no train/valid/test split — applied the default "
-            "80/10/10 split (seed 42); use re-split to change it"
+            f"{len(assigned)} labeled photo(s) had no split in the source — assigned "
+            f"train/valid/test {r.train:g}/{r.valid:g}/{r.test:g} by stable hash"
+        )
+    if unassigned:
+        warnings.append(
+            f"{unassigned} photo(s) have no labels and are in no split yet; each joins "
+            f"one when it is first labeled"
         )
 
     split_counts: dict[str, int] = {}
     for image in dataset.images:
         if image.id in image_map:
-            split_counts[image.split] = split_counts.get(image.split, 0) + 1
+            key = image.split or "unassigned"
+            split_counts[key] = split_counts.get(key, 0) + 1
 
     logger.info(
         "imported %s dataset from %s: %d images, %d annotations",
@@ -851,7 +867,8 @@ def dataset_stats(
 
 @capability(
     "dataset.resplit",
-    summary="Re-split images into train/valid/test with a fixed seed",
+    summary="Set the train/valid/test ratios and give labeled photos without a split "
+            "their set; reshuffle=True re-draws every labeled photo",
     web_route="/api/v1/dataset/split",
     web_methods=("POST",),
     cli="split",
@@ -859,26 +876,49 @@ def dataset_stats(
 def resplit(
     project: Project,
     *,
-    train: float = 0.8,
-    valid: float = 0.1,
-    test: float = 0.1,
-    seed: int = 42,
+    train: float | None = None,
+    valid: float | None = None,
+    test: float | None = None,
+    seed: int | None = None,
+    reshuffle: bool = False,
 ) -> dict[str, int]:
-    """Randomly reassign splits (deterministic under `seed`). No symlinks —
-    the split is an attribute on the image record (R7)."""
-    total = train + valid + test
-    if abs(total - 1.0) > 1e-6:
-        raise ProjectError(f"Split ratios must sum to 1.0, got {total}")
+    """Only labeled photos belong to a set. The ratios (and hash seed) given
+    here become the project's policy; then every labeled photo that has no
+    split yet gets one by the stable hash. With `reshuffle`, every labeled
+    photo is re-drawn at random under `seed` instead — that moves photos
+    past models trained on into test, so callers must warn before using it.
+    Unlabeled photos are never assigned. No symlinks: the split is an
+    attribute on the image record (R7)."""
+    from horos.core.splitting import SplitRatios
+
+    current = project.split_ratios
+    try:
+        ratios = SplitRatios(
+            train=current.train if train is None else train,
+            valid=current.valid if valid is None else valid,
+            test=current.test if test is None else test,
+        )
+    except ValueError as exc:
+        raise ProjectError(f"Invalid split ratios: {exc}") from exc
+    project.set_split_policy(ratios, seed)
     images = project.list_images()
     if not images:
         raise ProjectError("Project has no images to split")
-    assignment = _assign_splits(
-        [i.id for i in images], train=train, valid=valid, test=test, seed=seed
-    )
-    project.update_image_splits(assignment)
-    counts: dict[str, int] = {"train": 0, "valid": 0, "test": 0}
-    for split in assignment.values():
-        counts[split] += 1
+    if reshuffle:
+        labeled = [i.id for i in images if project._has_confirmed(i.id)]
+        assignment: dict[int, str | None] = dict(_assign_splits(
+            labeled, train=ratios.train, valid=ratios.valid, test=ratios.test,
+            seed=project.manifest.split_seed,
+        ))
+        for image in images:
+            if image.id not in assignment:
+                assignment[image.id] = None  # unlabeled: in no set
+        project.update_image_splits(assignment)
+    else:
+        project.assign_splits()
+    counts: dict[str, int] = {"train": 0, "valid": 0, "test": 0, "unassigned": 0}
+    for image in project.list_images():
+        counts[image.split or "unassigned"] += 1
     return counts
 
 

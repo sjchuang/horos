@@ -74,7 +74,7 @@ def test_read_rectangles(flat_dataset):
     dataset, image_paths = read_labelme(flat_dataset)
     assert [c.name for c in dataset.categories] == ["bed", "person"]
     assert len(dataset.images) == 2 and len(dataset.annotations) == 3
-    assert all(i.split == "train" for i in dataset.images)  # flat dir → train
+    assert all(i.split is None for i in dataset.images)  # flat dir → no set until labeled
     assert all(i.width == 64 and i.height == 48 for i in dataset.images)
     boxes = {(a.image_id, a.category_id): a.bbox for a in dataset.annotations}
     img1 = next(i.id for i in dataset.images if i.file_name == "img1.jpg")

@@ -201,7 +201,8 @@ def image_queue(
     claims = _load_claims(project)
     items: list[QueueItem] = []
     for record in project.list_images():
-        if split and record.split != split:
+        # "unlabeled" selects the photos in no set (only labeled photos have one)
+        if split and (record.split or "unlabeled") != split:
             continue
         stored = project.load_annotations(record.id)
         holder = claims.get(record.id)

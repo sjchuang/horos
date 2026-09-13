@@ -59,9 +59,10 @@ def test_import_yolo_autodetected(tmp_path):
     assert summary.num_images == 3
 
 
-def test_import_without_split_info_gets_default_split(tmp_path):
+def test_import_without_split_info_assigns_labeled_photos_by_hash(tmp_path):
     # a flat export (no split dirs) must not land every image in "train":
-    # the import applies the default 80/10/10 split and says so in a warning
+    # labeled photos join train/valid/test by the project's stable hash and
+    # ratios (70/10/20), and the import says so in a warning
     from helpers.data import make_image
 
     from horos.core.dataset import Annotation, Category, Dataset, ImageRecord
@@ -90,12 +91,39 @@ def test_import_without_split_info_gets_default_split(tmp_path):
 
     project = create_project(tmp_path / "proj")
     summary = import_dataset(project, src)
-    assert summary.split_counts == {"train": 8, "valid": 1, "test": 1}
-    assert any("80/10/10" in w for w in summary.warnings)
+    assert sum(summary.split_counts.values()) == 10 and "unassigned" not in summary.split_counts
+    assert set(summary.split_counts) == {"train", "valid", "test"}
+    assert any("stable hash" in w for w in summary.warnings)
     counts: dict[str, int] = {}
     for record in project.list_images():
         counts[record.split] = counts.get(record.split, 0) + 1
-    assert counts == {"train": 8, "valid": 1, "test": 1}
+    assert counts == summary.split_counts
+
+
+def test_import_leaves_unlabeled_photos_in_no_set(tmp_path):
+    # even when the source directory is called "train": only labeled photos
+    # are set members
+    from helpers.data import make_image
+
+    from horos.core.dataset import Annotation, Category, Dataset, ImageRecord
+    from horos.core.formats.coco import write_coco
+
+    dataset = Dataset(
+        categories=[Category(id=1, name="forklift", color="#e6194b")],
+        images=[ImageRecord(id=i, file_name=f"img{i}.png", width=64, height=48, split="train")
+                for i in range(1, 5)],
+        annotations=[Annotation(id=1, image_id=1, category_id=1, bbox=(4.0, 4.0, 16.0, 12.0))],
+    )
+    staging = tmp_path / "staging"
+    image_paths = {r.id: make_image(staging / r.file_name, r.width, r.height)
+                   for r in dataset.images}
+    write_coco(dataset, tmp_path / "coco", image_paths=image_paths, split_layout=True,
+               copy_images=True)
+    project = create_project(tmp_path / "proj")
+    summary = import_dataset(project, tmp_path / "coco")
+    assert summary.split_counts == {"train": 1, "unassigned": 3}
+    assert any("no labels" in w for w in summary.warnings)
+    assert [i.split for i in project.list_images()] == ["train", None, None, None]
 
 
 def test_import_explicit_splits_are_preserved(tmp_path):
@@ -104,7 +132,7 @@ def test_import_explicit_splits_are_preserved(tmp_path):
     project = create_project(tmp_path / "proj")
     summary = import_dataset(project, coco_dir)
     assert summary.split_counts == {"train": 2, "valid": 1}
-    assert not any("80/10/10" in w for w in summary.warnings)
+    assert not any("stable hash" in w for w in summary.warnings)
 
 
 def test_import_zip(tmp_path):

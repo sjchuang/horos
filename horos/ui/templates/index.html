@@ -186,6 +186,7 @@
       <div class="card"><div class="num" id="n-annotations">0</div><div class="label">annotations</div></div>
       <div class="card"><div class="num" id="n-categories">0</div><div class="label">classes</div></div>
       <div class="card"><div class="num" id="n-splits">—</div><div class="label">train / valid / test</div></div>
+      <div class="card"><div class="num" id="n-unlabeled">—</div><div class="label">unlabeled · in no set</div></div>
     </div>
     <h2 style="margin-top:18px">Instances per class</h2>
     <table id="class-table">
@@ -193,6 +194,10 @@
       <tbody></tbody>
     </table>
     <h2 style="margin-top:18px">Splits</h2>
+    <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
+      Only labeled photos belong to a set. A photo joins train / valid / test the first time it is
+      labeled, by a stable hash in these shares, and never changes set — so the test set is never
+      trained on. Unlabeled photos are in no set.</p>
     <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
       Training uses this allocation: <code>train</code> trains,
       <code>valid</code> validates and picks the best checkpoint,
@@ -214,9 +219,13 @@
         <span class="stepper narrow"><input type="number" id="split-seed" value="42" min="0" step="1">
           <span class="step-btns"><button data-step="1" data-for="split-seed" tabindex="-1" title="+1"></button>
             <button data-step="-1" data-for="split-seed" tabindex="-1" title="−1"></button></span></span></label>
-      <button id="split-btn" style="background:var(--bg);color:var(--accent);
+      <button id="split-btn" title="Save these shares and give labeled photos without a set their set. Photos already in a set stay."
+              style="background:var(--bg);color:var(--accent);
         border:1px solid var(--accent);border-radius:6px;padding:6px 14px;cursor:pointer">
-        Re-split</button>
+        Assign splits</button>
+      <button id="reshuffle-btn" title="Re-draw every labeled photo at random under this seed. Photos earlier models trained on may land in test, so the learning curve's test line is no longer clean."
+              style="background:var(--bg);color:var(--dim);border:1px solid var(--line);border-radius:6px;padding:6px 10px;cursor:pointer">
+        Reshuffle…</button>
       <span id="split-status" style="color:var(--dim);font-size:13px"></span>
     </div>
   </section>
@@ -275,6 +284,12 @@ async function refreshProject() {
   try {
     const p = await api("/project");
     projectName = p.name;
+    if (p.split_ratios) {  // the project's standing shares drive the steppers
+      $("split-train").value = Math.round(p.split_ratios.train * 100);
+      $("split-valid").value = Math.round(p.split_ratios.valid * 100);
+      $("split-test").value = Math.round(p.split_ratios.test * 100);
+      $("split-seed").value = p.split_seed;
+    }
     $("project-name").textContent = p.name;
     $("project-name").title = p.root;   // full path on hover
     $("danger-panel").classList.toggle("hidden", !(p.num_images > 0 || (p.categories || []).length > 0));
@@ -320,6 +335,7 @@ async function refreshStats() {
   const sc = s.split_counts || {};
   $("n-splits").textContent =
     (sc.train || 0) + " / " + (sc.valid || 0) + " / " + (sc.test || 0);
+  $("n-unlabeled").textContent = s.num_images - ((sc.train || 0) + (sc.valid || 0) + (sc.test || 0));
   const max = Math.max(1, ...s.per_class.map((c) => c.instances));
   $("class-table").querySelector("tbody").innerHTML = s.per_class
     .map((c) => `<tr><td>${c.name}</td><td>${c.instances}</td><td>${c.images}</td>
@@ -568,7 +584,7 @@ zone.addEventListener("drop", (e) => {
   if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
 });
 
-$("split-btn").addEventListener("click", async () => {
+async function applySplits(reshuffle) {
   const pct = (id) => Number($(id).value) || 0;
   const total = pct("split-train") + pct("split-valid") + pct("split-test");
   const status = $("split-status");
@@ -576,8 +592,11 @@ $("split-btn").addEventListener("click", async () => {
     status.textContent = `percentages sum to ${total}, need 100`;
     return;
   }
-  if (!confirm("Re-assign every image to a new split? Existing splits are replaced.")) return;
-  status.textContent = "re-splitting…";
+  if (reshuffle && !confirm(
+    "Re-draw every labeled photo at random?\n\nPhotos that earlier models trained on may land in " +
+    "test, so the learning curve's test line will no longer be clean. Unlabeled photos stay in no set."
+  )) return;
+  status.textContent = reshuffle ? "reshuffling…" : "assigning…";
   try {
     const counts = await api("/dataset/split", {
       method: "POST",
@@ -587,15 +606,18 @@ $("split-btn").addEventListener("click", async () => {
         valid: pct("split-valid") / 100,
         test: pct("split-test") / 100,
         seed: Number($("split-seed").value) || 42,
+        reshuffle,
       }),
     });
     status.textContent =
-      `done: ${counts.train} / ${counts.valid} / ${counts.test}`;
+      `${counts.train} / ${counts.valid} / ${counts.test} · ${counts.unassigned} unlabeled in no set`;
     await refreshStats();
   } catch (e) {
     status.textContent = "failed: " + e.message;
   }
-});
+}
+$("split-btn").addEventListener("click", () => applySplits(false));
+$("reshuffle-btn").addEventListener("click", () => applySplits(true));
 
 api("/models").then((models) => {
   $("models-table").querySelector("tbody").innerHTML = models

@@ -59,6 +59,7 @@ def test_import_dataset_reports_every_phase_in_order(tmp_path):
         "checking for duplicates",
         "copying images",
         "saving annotations",
+        "assigning splits",
     ]
     # counted phases end on current == total
     for phase in ("checking for duplicates", "copying images", "saving annotations"):
@@ -70,12 +71,14 @@ def test_import_dataset_reports_every_phase_in_order(tmp_path):
     assert all(dump_event(e) for e in events)
 
 
-def test_flat_source_reports_the_default_split_phase(tmp_path):
+def test_flat_source_reports_the_split_assignment_phase(tmp_path):
+    # labeled photos whose source named no split join one by stable hash
     coco_dir = write_sample_coco_dir(tmp_path / "coco", split_layout=False)
     project = create_project(tmp_path / "proj")
     events = []
-    import_dataset(project, coco_dir, progress=events.append)
-    assert "applying default split" in {e.phase for e in events if e.type == "progress"}
+    summary = import_dataset(project, coco_dir, progress=events.append)
+    assert "assigning splits" in {e.phase for e in events if e.type == "progress"}
+    assert any("stable hash" in w for w in summary.warnings)
 
 
 def test_reader_warnings_surface_as_warning_events(tmp_path):

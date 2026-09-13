@@ -259,6 +259,7 @@
       <option value="train">train</option>
       <option value="valid">valid</option>
       <option value="test">test</option>
+      <option value="unlabeled">unlabeled · in no set</option>
     </select>
     <select id="per-page">
       <option value="20">20 / page</option>
@@ -918,7 +919,7 @@ const Page = {
     this._updateNavButtons();
     const item = this.queue[idx];
     $("editor-filename").textContent =
-      `${item.image.file_name} · ${item.image.split} · ${idx + 1}/${this.queue.length}`;
+      `${item.image.file_name} · ${item.image.split || "no set yet"} · ${idx + 1}/${this.queue.length}`;
     this._setSaveState("", "");
     const [view] = await Promise.all([
       api(`/images/${item.image.id}/annotations`), this._claim(item.image.id),

@@ -243,6 +243,12 @@ def _run_completed_epochs(run_dir: Path) -> int | None:
     return max(completed) if completed else None
 
 
+def _in_a_set(dataset):
+    """Drop photos with no split: only labeled photos are set members, and a
+    photo outside every set is neither a training example nor a negative."""
+    return subset_dataset(dataset, image_ids=[i.id for i in dataset.images if i.split])
+
+
 def _snapshot_class_names(checkpoint: Path) -> list[str] | None:
     """Class list for a checkpoint inside a horos run
     (runs/<id>/checkpoints/x.pth → runs/<id>/dataset/train/...);
@@ -482,9 +488,9 @@ def derive_hyperparameters(
         # the rules must see the data this run will actually train on
         from horos.core.stats import compute_stats
 
-        full = subset_dataset(
+        full = _in_a_set(subset_dataset(
             project.to_dataset(), image_ids=config.image_ids, confirmed_only=True
-        )
+        ))
         filtered = filter_dataset_categories(
             full, config.categories, include_background=config.include_background
         )
@@ -556,10 +562,12 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
 
     busy = any(r.state in ACTIVE_STATES for r in list_runs(project))
 
-    # pending pre-labels are unreviewed machine output — never ground truth
-    dataset = subset_dataset(
+    # pending pre-labels are unreviewed machine output — never ground truth;
+    # a labeled photo that somehow has no set yet gets one first
+    project.assign_splits()
+    dataset = _in_a_set(subset_dataset(
         project.to_dataset(), image_ids=config.image_ids, confirmed_only=True
-    )
+    ))
     if config.categories is not None:
         dataset = filter_dataset_categories(
             dataset, config.categories, include_background=config.include_background

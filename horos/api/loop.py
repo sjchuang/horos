@@ -127,8 +127,6 @@ MIN_INSTANCES_PER_CLASS = 5
 #: sets grow in proportion to the labels and a photo never changes split:
 #: test is never trained on (the learning curve's honest line), valid is what
 #: the trainer selects its checkpoint on
-TEST_FRACTION = 0.2
-VALID_FRACTION = 0.1
 
 
 Shapes = Literal["auto", "box", "polygon"]
@@ -152,11 +150,6 @@ class LoopSettings(BaseModel):
     #: stop-when-reached value of the headline metric (mAP flavours are in
     #: [0, 1]); None = keep going until the pool is empty or gains flatten
     target: float | None = Field(default=None, gt=0.0)
-    #: share of labeled photos held out as test (never trained on) and as
-    #: valid (checkpoint selection); assigned per photo by a stable hash so the
-    #: sets grow with the labels and never lose a member
-    test_fraction: float = Field(default=TEST_FRACTION, ge=0.0, le=0.5)
-    valid_fraction: float = Field(default=VALID_FRACTION, ge=0.0, le=0.5)
 
 
 def _settings_path(project: Project):
@@ -300,7 +293,8 @@ def _labeled_ids(project: Project) -> set[int]:
 
 
 def _in_pool(record, labeled: set[int]) -> bool:
-    return not record.excluded and record.id not in labeled and record.split == "train"
+    # unlabeled photos are in no set; held-out photos are labeled, so never here
+    return not record.excluded and record.id not in labeled
 
 
 def _latest_completed_run(project: Project, model: str | None = None):
@@ -448,7 +442,7 @@ def loop_status(project: Project) -> LoopStatus:
         labeled_images=len(labeled),
         skipped_images=sum(1 for r in images if r.excluded),
         pool_size=len(pool),
-        validation_images=sum(1 for r in images if r.split == "valid"),
+        validation_images=sum(1 for r in images if r.split == "valid" and r.id in labeled),
         test_images=sum(1 for r in images if r.split == "test" and r.id in labeled),
         categories=[c.name for c in project.categories],
         has_model=_latest_completed_run(project) is not None,
@@ -909,59 +903,20 @@ def train_readiness(
     )
 
 
-def _bucket(seed: int, image_id: int) -> float:
-    """A stable position in [0, 1) for a photo — the same on every platform
-    and every run, so a photo's split never changes once labeled."""
-    import hashlib
-
-    digest = hashlib.sha256(f"{seed}:{image_id}".encode()).digest()
-    return int.from_bytes(digest[:8], "big") / 2**64
-
-
-def _assign_holdouts(
-    project: Project,
-    labeled: set[int],
-    *,
-    seed: int,
-    test_fraction: float,
-    valid_fraction: float,
-) -> dict:
-    """Put every labeled photo that is still in the train split into test /
-    valid / train by its hash bucket. Photos already held out stay where they
-    are, so the held-out sets only ever grow — in proportion to the labels —
-    and the test set is never trained on. Each held-out set gets at least one
-    photo once there are three or more labeled ones."""
+def _assign_holdouts(project: Project, labeled: set[int]) -> dict:
+    """Make sure every labeled photo is in a set before training. Splits are
+    assigned when a photo is first labeled (Project.assign_splits, by the
+    project's ratios and stable hash); this pass catches any that slipped
+    through and reports the sizes the round trains and tests on."""
+    moves = project.assign_splits(sorted(labeled))
     by_id = {r.id: r for r in project.list_images()}
-    fresh = sorted(i for i in labeled if by_id[i].split == "train")
-    moves: dict[int, str] = {}
-    for image_id in fresh:
-        b = _bucket(seed, image_id)
-        if b < test_fraction:
-            moves[image_id] = "test"
-        elif b < test_fraction + valid_fraction:
-            moves[image_id] = "valid"
-    counts = {split: sum(1 for i in labeled if by_id[i].split == split) for split in
-              ("train", "valid", "test")}
-    for split, fraction in (("test", test_fraction), ("valid", valid_fraction)):
-        have = counts[split] + sum(1 for v in moves.values() if v == split)
-        if fraction > 0 and have == 0 and len(labeled) >= 3:
-            # the lowest-bucket photo not yet claimed becomes the first member
-            free = [i for i in fresh if i not in moves]
-            if free:
-                moves[min(free, key=lambda i: _bucket(seed, i))] = split
-    # never hold out everything: training needs at least one photo
-    if len(fresh) - len(moves) < 1 and moves:
-        keep = max(moves, key=lambda i: _bucket(seed, i))
-        del moves[keep]
-    if moves:
-        project.update_image_splits(moves)
-    by_id = {r.id: r for r in project.list_images()}
+    ratios = project.split_ratios
     return {
-        "newly_held_out": len(moves),
+        "newly_held_out": sum(1 for v in moves.values() if v != "train"),
         "test_images": sum(1 for i in labeled if by_id[i].split == "test"),
         "validation_images": sum(1 for i in labeled if by_id[i].split == "valid"),
         "train_images": sum(1 for i in labeled if by_id[i].split == "train"),
-        "test_fraction": test_fraction, "valid_fraction": valid_fraction, "seed": seed,
+        "ratios": ratios.model_dump(), "seed": project.manifest.split_seed,
     }
 
 
@@ -1027,10 +982,7 @@ def train_round(
         raise ProjectError("Not ready to train: " + "; ".join(readiness.reasons))
     labeled = _labeled_ids(project)
     settings = get_loop_settings(project)
-    holdout = _assign_holdouts(
-        project, labeled, seed=seed,
-        test_fraction=settings.test_fraction, valid_fraction=settings.valid_fraction,
-    )
+    holdout = _assign_holdouts(project, labeled)
     if model is None:
         model = settings.model
         model_reason = "from the loop settings"

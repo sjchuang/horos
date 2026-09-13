@@ -94,7 +94,10 @@ Evaluate, Experiments and Lab.
 
 Import by dropping a zip (COCO / YOLO / VOC / Darknet / VIA / LabelMe — format
 is auto-detected), get a validation report with actionable errors, per-class
-statistics, and train/valid/test re-splitting.
+statistics, and train / valid / test sets that only labeled photos belong to: a
+photo joins a set the first time it is labeled, by a stable hash in the shares
+you choose (70 / 10 / 20 by default), and never changes set — so the test set
+is never trained on. Unlabeled photos are in no set.
 
 <img src="docs/assets/screens/dataset.png" alt="Dataset page" width="100%">
 

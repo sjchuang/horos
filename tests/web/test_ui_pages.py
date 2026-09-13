@@ -135,9 +135,12 @@ def test_lab_serve_offers_every_artifact_format_from_the_capability_list(client)
 def test_annotator_has_the_sam_tool(client):
     html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html
-    # SAM-T5: several objects per Enter — a "Next object" control and the
-    # queue in the tool's state
-    assert 'id="sam-next"' in html and "queued: []" in html
+    # SAM-T5: Space confirms like Enter (no Next button); several objects are
+    # still queued implicitly when a new box is dragged over a live mask, and
+    # Clear shows its shortcut
+    assert 'id="sam-next"' not in html and "queued: []" in html
+    assert 'case "Enter": case "NumpadEnter": case "Space":' in html
+    assert "Clear (Esc)" in html
     # a finished shape never gets a made-up class: the page asks instead
     assert 'id="label-modal"' in html and 'id="label-input"' in html
     assert '|| "object"' not in html

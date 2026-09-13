@@ -88,7 +88,7 @@ def fingerprint_dataset(dataset: Dataset) -> DatasetFingerprint:
         anns = sorted(by_image.get(image.id, []), key=json.dumps)
         num_images += 1
         num_annotations += len(anns)
-        split_records.setdefault(image.split, []).append(
+        split_records.setdefault(image.split or "unassigned", []).append(
             [image.file_name, image.width, image.height, anns]
         )
     splits: dict[str, str] = {}

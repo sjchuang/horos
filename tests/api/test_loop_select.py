@@ -33,13 +33,16 @@ from horos.errors import BackendError, ProjectError
 
 def _project(tmp_path, layout: list[tuple[str, str]], *, labeled: dict[int, str] | None = None):
     """`layout` = [(colour, split), ...] in image-id order (ids start at 1);
-    `labeled` = {image_id: class_name} confirmed boxes to add."""
+    `labeled` = {image_id: class_name} confirmed boxes to add. Only labeled
+    photos belong to a set, so the layout's split is applied to those alone
+    (as an importer keeps a source's split for the photos it labeled)."""
     project = create_project(tmp_path / "proj")
     project.set_categories([Category(id=1, name="box"), Category(id=2, name="pallet")])
     for n, (colour, split) in enumerate(layout, start=1):
         # size varies a little so the fake embedder separates images within a colour
         path = make_image(tmp_path / "src" / f"{n}.png", 64 + n, 48, COLOURS[colour])
-        project.add_image(path, width=64 + n, height=48, split=split)
+        project.add_image(path, width=64 + n, height=48,
+                          split=split if n in (labeled or {}) else None)
     for image_id, name in (labeled or {}).items():
         cat = next(c for c in project.categories if c.name == name)
         project.save_annotations(
@@ -83,12 +86,18 @@ def test_cold_start_uses_diversity_and_spreads_over_colours(tmp_path):
     assert status.rounds[0].picked == 3 and status.rounds[0].labeled == 0
 
 
-def test_pool_excludes_labeled_validation_and_test_images(tmp_path):
-    layout = [("red", "train"), ("green", "valid"), ("blue", "test"), ("grey", "train"),
-              ("red", "train")]
-    project = _project(tmp_path, layout, labeled={1: "box"})
+def test_pool_excludes_labeled_images_whatever_their_set(tmp_path):
+    """Only labeled photos belong to a set, so the pool is simply every
+    unlabeled, unskipped photo — including ones a source once filed under
+    valid/ or test/ (they are in no set until labeled)."""
+    layout = [("red", "train"), ("green", "valid"), ("blue", "test"), ("grey", "valid"),
+              ("red", "test")]
+    project = _project(tmp_path, layout, labeled={1: "box", 2: "box", 3: "pallet"})
+    by_id = {r.id: r for r in project.list_images()}
+    assert {by_id[i].split for i in (1, 2, 3)} == {"train", "valid", "test"}  # labeled: in sets
+    assert by_id[4].split is None and by_id[5].split is None  # unlabeled: in none
     record = _select(project, count=10, strategy="diversity")
-    assert sorted(record.selection.image_ids) == [4, 5]  # never 1 (labeled), 2, 3
+    assert sorted(record.selection.image_ids) == [4, 5]  # never a labeled photo
     assert record.selection.requested == 2  # clamped to the pool
 
 

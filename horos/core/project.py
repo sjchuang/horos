@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from horos.core.dataset import Annotation, Category, ImageRecord, default_color
 from horos.core.fsutil import atomic_write_text
+from horos.core.splitting import DEFAULT_SPLIT_SEED, SplitRatios
 from horos.errors import AnnotationConflictError, ProjectError
 
 MANIFEST_NAME = "horos.json"
@@ -49,11 +50,22 @@ class ProjectManifest(BaseModel):
     structure_version: int = STRUCTURE_VERSION
     created_at: float = Field(default_factory=time.time)
     categories: list[Category] = Field(default_factory=list)
+    #: how labeled photos are shared out over train / valid / test, and the
+    #: seed of the stable hash that does it (core/splitting.py)
+    split_ratios: SplitRatios = Field(default_factory=SplitRatios)
+    split_seed: int = DEFAULT_SPLIT_SEED
+
+
+#: image index files written before splits became "labeled photos only"
+#: carry no version; on first load their unlabeled "train" photos lose the
+#: split they never earned
+IMAGE_INDEX_VERSION = 2
 
 
 class ImageIndex(BaseModel):
     next_image_id: int = 1
     images: list[ImageRecord] = Field(default_factory=list)
+    version: int = 1
 
 
 class AnnotationFile(BaseModel):
@@ -113,7 +125,7 @@ class Project:
         manifest = ProjectManifest(name=name or root.name)
         project = cls(root, manifest)
         project.save_manifest()
-        project._save_image_index(ImageIndex())
+        project._save_image_index(ImageIndex(version=IMAGE_INDEX_VERSION))
         return project
 
     @classmethod
@@ -176,7 +188,24 @@ class Project:
     # ------------------------------------------------------------------ images
     def _load_image_index(self) -> ImageIndex:
         path = self.root / IMAGE_INDEX_NAME
-        return ImageIndex.model_validate_json(path.read_text(encoding="utf-8"))
+        index = ImageIndex.model_validate_json(path.read_text(encoding="utf-8"))
+        if index.version < IMAGE_INDEX_VERSION:
+            index = self._migrate_image_index(index)
+        return index
+
+    def _migrate_image_index(self, index: ImageIndex) -> ImageIndex:
+        """Older projects gave every photo split="train" on arrival. Only
+        labeled photos are set members now, so a photo without a confirmed
+        annotation leaves its set. Saved once, with the new version."""
+        for record in index.images:
+            if record.split is not None and not self._has_confirmed(record.id):
+                record.split = None
+        index.version = IMAGE_INDEX_VERSION
+        self._save_image_index(index)
+        return index
+
+    def _has_confirmed(self, image_id: int) -> bool:
+        return any(a.status == "confirmed" for a in self.load_annotations(image_id).annotations)
 
     def _save_image_index(self, index: ImageIndex) -> None:
         _write_json_atomic(self.root / IMAGE_INDEX_NAME, index.model_dump_json(indent=2))
@@ -196,11 +225,13 @@ class Project:
         *,
         width: int,
         height: int,
-        split: str = "train",
+        split: str | None = None,
         copy: bool = True,
         _index: ImageIndex | None = None,
     ) -> ImageRecord:
         """Register one image, copying the file into the project by default.
+        A photo arrives in no set (`split=None`) unless its source said
+        otherwise; it joins one when it is first labeled (assign_splits).
 
         With copy=False the project stores an absolute-path reference instead
         (fast, but the project breaks if the source moves). `_index` lets bulk
@@ -231,7 +262,7 @@ class Project:
         *,
         width: int,
         height: int,
-        split: str = "train",
+        split: str | None = None,
         copy: bool = True,
         _index: ImageIndex | None = None,
     ) -> ImageRecord:
@@ -303,12 +334,75 @@ class Project:
         self._save_image_index(index)
         return changed
 
-    def update_image_splits(self, split_by_id: dict[int, str]) -> None:
+    def update_image_splits(self, split_by_id: dict[int, str | None]) -> None:
         index = self._load_image_index()
         for record in index.images:
             if record.id in split_by_id:
                 record.split = split_by_id[record.id]  # type: ignore[assignment]
         self._save_image_index(index)
+
+    # ------------------------------------------------------------------ splits
+    @property
+    def split_ratios(self) -> SplitRatios:
+        return self.manifest.split_ratios
+
+    def set_split_policy(self, ratios: SplitRatios | None = None, seed: int | None = None) -> None:
+        """Change the shares (and/or hash seed) used for photos labeled from
+        now on; photos already in a set stay where they are."""
+        if ratios is not None:
+            self.manifest.split_ratios = ratios
+        if seed is not None:
+            self.manifest.split_seed = int(seed)
+        self.save_manifest()
+
+    def assign_splits(
+        self, image_ids: list[int] | None = None, *, _index: ImageIndex | None = None
+    ) -> dict[int, str]:
+        """Give every labeled photo that has no set yet its set, by the stable
+        hash bucket (core/splitting.py). Returns {image_id: split} for the
+        photos that changed. Never moves a photo already in a set.
+
+        Two guards keep small projects trainable: once three or more photos
+        are labeled, each of valid and test gets at least one member; and the
+        train set is never left empty."""
+        from horos.core.splitting import bucket, split_for
+
+        index = _index if _index is not None else self._load_image_index()
+        wanted = set(image_ids) if image_ids is not None else None
+        labeled = [
+            r for r in index.images
+            if (wanted is None or r.id in wanted) and self._has_confirmed(r.id)
+        ]
+        fresh = sorted(r.id for r in labeled if r.split is None)
+        if not fresh:
+            return {}
+        ratios, seed = self.manifest.split_ratios, self.manifest.split_seed
+        moves = {image_id: split_for(image_id, ratios, seed) for image_id in fresh}
+        # totals over every labeled photo in the project, not only this batch
+        labeled_all = [r for r in index.images if r.split is not None or self._has_confirmed(r.id)]
+        counts = {
+            split: sum(1 for r in labeled_all if r.split == split)
+            + sum(1 for v in moves.values() if v == split)
+            for split in ("train", "valid", "test")
+        }
+        if len(labeled_all) >= 3:
+            for split, share in (("test", ratios.test), ("valid", ratios.valid)):
+                if share > 0 and counts[split] == 0:
+                    free = [i for i in fresh if moves[i] == "train"]
+                    if free:
+                        chosen = min(free, key=lambda i: bucket(seed, i))
+                        moves[chosen] = split
+                        counts[split] += 1
+                        counts["train"] -= 1
+        if counts["train"] == 0:
+            chosen = max(fresh, key=lambda i: bucket(seed, i))
+            moves[chosen] = "train"
+        for record in index.images:
+            if record.id in moves:
+                record.split = moves[record.id]  # type: ignore[assignment]
+        if _index is None:
+            self._save_image_index(index)
+        return dict(moves)
 
     def _free_file_name(self, name: str, index: ImageIndex) -> str:
         taken = {i.file_name for i in index.images}
@@ -351,12 +445,18 @@ class Project:
         annotations: list[Annotation],
         *,
         expected_version: int,
+        assign_split: bool = True,
     ) -> AnnotationFile:
         """Optimistic-locked write (E2-T8 foundation).
 
         `expected_version` must equal the stored version; otherwise someone
         else wrote first and the caller gets AnnotationConflictError with the
         current state to re-base on.
+
+        A photo saved with a confirmed annotation for the first time joins
+        train / valid / test (`assign_split`); bulk importers pass False and
+        call `assign_splits` once at the end instead of rewriting the image
+        index per photo.
         """
         current = self.load_annotations(image_id)
         if current.version != expected_version:
@@ -373,4 +473,11 @@ class Project:
         _write_json_atomic(
             self._annotation_path(image_id), updated.model_dump_json(indent=2)
         )
+        if assign_split and any(a.status == "confirmed" for a in annotations):
+            # the photo is labeled now: it joins train / valid / test, once
+            index = self._load_image_index()
+            record = next((r for r in index.images if r.id == image_id), None)
+            if record is not None and record.split is None:
+                self.assign_splits([image_id], _index=index)
+                self._save_image_index(index)
         return updated

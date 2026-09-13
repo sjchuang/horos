@@ -46,7 +46,9 @@ class ImageRecord(BaseModel):
     file_name: str  # POSIX-style path relative to the project's images/ dir (R7)
     width: int = Field(gt=0)
     height: int = Field(gt=0)
-    split: Split = "train"
+    #: the set a labeled photo belongs to; None until it carries a confirmed
+    #: annotation (see core/splitting.py) — unlabeled photos are in no set
+    split: Split | None = None
     #: Absolute path for images referenced in place (import with copy=False).
     #: None for images owned by the project (the default).
     external_path: str | None = None

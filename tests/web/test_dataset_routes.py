@@ -139,9 +139,9 @@ def test_images_delete_route_requires_ids(client):
 def test_split_route(client):
     body = client.post(
         "/api/v1/dataset/split",
-        json={"train": 1.0, "valid": 0.0, "test": 0.0, "seed": 5},
+        json={"train": 1.0, "valid": 0.0, "test": 0.0, "seed": 5, "reshuffle": True},
     ).get_json()
-    assert body == {"train": 3, "valid": 0, "test": 0}
+    assert body == {"train": 3, "valid": 0, "test": 0, "unassigned": 0}
 
 
 def test_upload_route(tmp_path):

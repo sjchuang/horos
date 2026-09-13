@@ -21,9 +21,11 @@ IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
 _SPLIT_BY_DIR = {"train": "train", "valid": "valid", "val": "valid", "test": "test"}
 
 
-def split_from_dir_name(name: str) -> str:
-    """Map a containing-directory name to a split, defaulting to train."""
-    return _SPLIT_BY_DIR.get(name.lower(), "train")
+def split_from_dir_name(name: str) -> str | None:
+    """Map a containing-directory name to a split; None when the directory is
+    not one of train / valid / val / test — the source said nothing, so the
+    photo joins a set only once it is labeled (core/splitting.py)."""
+    return _SPLIT_BY_DIR.get(name.lower())
 
 
 def _looks_like_voc(root: Path) -> bool:

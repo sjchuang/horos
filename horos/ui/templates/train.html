@@ -549,9 +549,12 @@ async function updateDataSummary() {
   try { s = await api("/dataset/stats" + (subset ? "?" + q : "")); }
   catch (e) { el.textContent = ""; return; }
   const sc = s.split_counts || {};
-  let text = `Training data: <strong>${s.num_images}</strong> images ` +
-    `(${sc.train || 0} train · ${sc.valid || 0} valid · ${sc.test || 0} test) · ` +
-    `<strong>${s.num_annotations}</strong> annotations · ${s.num_categories} class` +
+  const inSets = (sc.train || 0) + (sc.valid || 0) + (sc.test || 0);
+  const noSet = s.num_images - inSets;  // unlabeled photos belong to no set and are not trained on
+  let text = `Training data: <strong>${inSets}</strong> images ` +
+    `(${sc.train || 0} train · ${sc.valid || 0} valid · ${sc.test || 0} test)` +
+    (noSet > 0 ? ` · ${noSet} unlabeled in no set` : "") +
+    ` · <strong>${s.num_annotations}</strong> annotations · ${s.num_categories} class` +
     `${s.num_categories === 1 ? "" : "es"}`;
   if (subset && fullStats) {
     const background = includeBackground()
@@ -1415,7 +1418,7 @@ async function init() {
       `Data allocation (from the <a href="/" style="color:var(--accent)">Dataset</a> ` +
       `page splits): <strong>${sc.train || 0}</strong> train · ` +
       `<strong>${sc.valid || 0}</strong> valid · <strong>${test}</strong> test ` +
-      `(never trained on)` +
+      `(never trained on) — only labeled photos belong to a set` +
       (test === 0
         ? ' — <span class="note">no test split: keep one for unbiased final numbers</span>'
         : "");

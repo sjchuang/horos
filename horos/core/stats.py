@@ -90,7 +90,8 @@ def compute_stats(dataset: Dataset) -> DatasetStats:
     split_counts: dict[str, int] = {}
     size_counts: dict[tuple[int, int], int] = {}
     for image in dataset.images:
-        split_counts[image.split] = split_counts.get(image.split, 0) + 1
+        if image.split is not None:  # unlabeled photos are in no set
+            split_counts[image.split] = split_counts.get(image.split, 0) + 1
         key = (image.width, image.height)
         size_counts[key] = size_counts.get(key, 0) + 1
 

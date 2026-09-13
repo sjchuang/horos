@@ -28,7 +28,7 @@ def test_full_workflow(tmp_path, capsys):
     code, body = _run(capsys, "stats", "--project", str(proj))
     assert code == 0 and body["num_annotations"] == 4
 
-    code, body = _run(capsys, "split", "--project", str(proj),
+    code, body = _run(capsys, "split", "--project", str(proj), "--reshuffle",
                       "--train", "1.0", "--valid", "0.0", "--test", "0.0")
     assert code == 0 and body["train"] == 3
 
