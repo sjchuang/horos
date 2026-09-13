@@ -574,7 +574,7 @@ Decisions confirmed on 2026-09-13:
 
 - The **canvas engine** (E2-T1..T8: zoom, draw, polygon, shortcuts, optimistic lock) is kept and embedded; the page shell, autolabel page and review page are rebuilt as the loop page
 - Cold-start similarity uses **DINOv2 small** (Apache 2.0, code and weights) as a new `horos/backends/dinov2/` backend; selection is k-center greedy in embedding space
-- With a trained model, selection is **hybrid**: diverse candidates first, then ranked by prediction uncertainty. Every picked image carries a score and a reason string
+- With a trained model, selection follows **Portable Active Learning (PAL)** — Sharma, Bersamin & Subramanian, CVPR 2026, arXiv 2605.10349 — as the default acquisition metric: per-class logistic classifiers on (raw-candidate support, confidence) give a true-positive probability whose entropy is the instance uncertainty (LIUS); class-weighted image entropy, rare-class diversity and a rank-conditioned similarity penalty over embeddings (GUIDE) refine the ranking with α = 0.9, β = 0.04, γ = 0.02; annotation budget is split by class rarity. Backends therefore report raw `candidates` and, where available, `class_probs` on every prediction. Every picked image carries a score and a reason string; details the paper leaves open are decided and documented in `horos/core/pal.py`
 - With no trained model but named classes, **OWLv2 zero-shot** is the round-0 pre-annotator and uncertainty source; the user is never asked to pick a model
 - The **validation split is locked** at the first training of the loop and never grows; later rounds feed train only, so round metrics stay comparable (E7-T2)
 - Batch size per round defaults to a **fixed number**; a percentage of the unlabeled pool is selectable
@@ -600,7 +600,7 @@ Decisions confirmed on 2026-09-13:
 | E10-T2 | `ImageEmbedder` interface in `backends/base.py` + DINOv2 backend + registry entry with both licenses | `tests/api/test_backend_dinov2.py` |
 | E10-T3 | Project embedding store: per model, incremental, invalidated when an image file changes, progress events (R4) | `tests/api/test_embedding_store.py` |
 | E10-T4 | Diversity selection (k-center greedy) with a reason per pick | `tests/unit/test_selection_diversity.py` |
-| E10-T5 | Uncertainty scoring from predictions + hybrid selection with reasons | `tests/unit/test_selection_uncertainty.py` |
+| E10-T5 | PAL acquisition (LIUS + GUIDE, class budgets) with a reason per pick; backends report raw candidates | `tests/unit/test_selection_uncertainty.py` |
 | E10-T6 | Round selection API: count or percent; strategy auto-chosen from model availability; pool excludes labeled and validation images | `tests/api/test_loop_select.py` |
 | E10-T7 | Round pre-annotation: own model when a completed run exists, else OWLv2 from class names; written pending with score | `tests/api/test_loop_preannotate.py` |
 | E10-T8 | Round training: readiness threshold, quick derived config, validation split locked at first training | `tests/api/test_loop_train.py` |
@@ -634,7 +634,7 @@ Decisions already made; no need to ask again:
 - Auto-labeling uses **OWLv2 open-vocabulary zero-shot** (Apache 2.0)
 - First-version priority: annotate → train → evaluate → deploy
 - Hyperparameter adaptation is **rule-based**; search-based is left as a later extension
-- **Active learning loop (E10)**: canvas engine kept, DINOv2 small for cold-start similarity, OWLv2 as the round-0 pre-annotator, fixed per-round count by default, multi-annotator assignment required
+- **Active learning loop (E10)**: canvas engine kept, DINOv2 small for cold-start similarity, PAL (arXiv 2605.10349) as the default uncertainty metric once labels exist, OWLv2 as the round-0 pre-annotator, fixed per-round count by default, multi-annotator assignment required
 
 ### Definition of done for a task
 

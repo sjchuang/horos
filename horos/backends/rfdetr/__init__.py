@@ -93,6 +93,11 @@ def _train_kwargs(spec: TrainSpec) -> dict[str, Any]:
     return kwargs
 
 
+#: confidence floor for the raw candidate boxes reported next to the final
+#: detections (see infer_one); below it a DETR query is noise, not a proposal
+CANDIDATE_FLOOR = 0.05
+
+
 def _detections_to_instances(
     detections: Any, class_names: list[str] | None = None
 ) -> list[PredictedInstance]:
@@ -495,19 +500,27 @@ class RFDETRBackend(ModelBackend):
 
     # -------------------------------------------------------------- inference
     def infer_one(self, image: Path, *, threshold: float = 0.5) -> ImagePrediction:
+        """One forward pass at a low floor: the boxes at or above `threshold`
+        are the instances, everything the query set proposed down to
+        CANDIDATE_FLOOR is reported as `candidates` — the raw proposals the
+        active-learning scorer counts as support (E10-T5). RF-DETR has no
+        NMS, so its "pre-NMS boxes" are simply its low-confidence queries."""
         model = self._load()
         with translate_backend_errors(self.family):
             from PIL import Image
 
             with Image.open(image) as im:
                 width, height = im.size
-            detections = model.predict(str(image), threshold=threshold)
+            floor = min(threshold, CANDIDATE_FLOOR)
+            detections = model.predict(str(image), threshold=floor, include_source_image=False)
             class_names = list(getattr(model, "class_names", None) or [])
+            candidates = _detections_to_instances(detections, class_names or None)
             return ImagePrediction(
                 image=str(image),
                 width=width,
                 height=height,
-                instances=_detections_to_instances(detections, class_names or None),
+                instances=[c for c in candidates if c.score >= threshold],
+                candidates=candidates,
             )
 
     def infer_batch(

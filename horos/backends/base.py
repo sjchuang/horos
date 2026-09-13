@@ -41,6 +41,11 @@ class PredictedInstance(BaseModel):
     category_id: int
     category_name: str | None = None
     segmentation: list[list[float]] | None = None
+    #: the detector's full per-class probability vector for this box (same
+    #: order as the backend's class list), when the architecture exposes one.
+    #: Feeds the class-weighted image entropy of the active-learning scorer
+    #: (E10-T5); None means "only `score` is known".
+    class_probs: list[float] | None = None
 
 
 class ImagePrediction(BaseModel):
@@ -48,6 +53,13 @@ class ImagePrediction(BaseModel):
     width: int | None = None
     height: int | None = None
     instances: list[PredictedInstance] = Field(default_factory=list)
+    #: every raw box the detector considered before its confidence threshold
+    #: (and NMS, where the architecture has one), down to a low floor. The
+    #: active-learning scorer counts how many of these support each final
+    #: detection — the "pre-NMS box count" feature of PAL (E10-T5). Backends
+    #: that cannot expose raw candidates leave this empty; the scorer then
+    #: falls back to confidence alone and says so.
+    candidates: list[PredictedInstance] = Field(default_factory=list)
 
 
 # --------------------------------------------------------------------------- events

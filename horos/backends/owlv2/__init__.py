@@ -33,6 +33,11 @@ if TYPE_CHECKING:
     from horos.core.registry import ModelInfo
 
 
+#: confidence floor for the raw candidate boxes reported next to the final
+#: detections; the active-learning scorer counts them as support (E10-T5)
+CANDIDATE_FLOOR = 0.05
+
+
 class OWLv2Backend(OpenVocabularyBackend):
     family = "owlv2"
 
@@ -96,25 +101,38 @@ class OWLv2Backend(OpenVocabularyBackend):
                 ).to(self.device)
                 with torch.no_grad():
                     outputs = self._model(**inputs)
+                # threshold 0 keeps every query, in query order, so the rows
+                # line up with the raw per-prompt probabilities below
                 results = self._processor.post_process_grounded_object_detection(
                     outputs,
-                    threshold=threshold,
+                    threshold=0.0,
                     target_sizes=torch.tensor([[height, width]]).to(self.device),
                 )[0]
-            instances = []
-            for box, score, label in zip(
+                probs = torch.sigmoid(outputs.logits[0]).detach().cpu().numpy()
+            candidates = []
+            floor = min(threshold, CANDIDATE_FLOOR)
+            for q, (box, score, label) in enumerate(zip(
                 results["boxes"], results["scores"], results["labels"], strict=True
-            ):
+            )):
+                if float(score) < floor:
+                    continue
                 x1, y1, x2, y2 = (float(v) for v in box)
-                instances.append(
+                candidates.append(
                     PredictedInstance(
                         bbox=(x1, y1, max(x2 - x1, 0.0), max(y2 - y1, 0.0)),
                         score=float(score),
                         category_id=int(label),
+                        # per-prompt probabilities feed the class-weighted image
+                        # entropy of the active-learning scorer (E10-T5)
+                        class_probs=[float(v) for v in probs[q]] if q < len(probs) else None,
                     )
                 )
             return ImagePrediction(
-                image=str(image_path), width=width, height=height, instances=instances
+                image=str(image_path),
+                width=width,
+                height=height,
+                instances=[c for c in candidates if c.score >= threshold],
+                candidates=candidates,
             )
 
     # -------------------------------------------------------------- interface
