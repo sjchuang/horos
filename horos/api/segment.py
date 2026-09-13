@@ -282,8 +282,10 @@ def segment_image(
 # A box annotation is already a good SAM prompt: the user (or OWLv2) said
 # "the object is in here". Rewriting boxes as polygons therefore needs no
 # clicks — one embedding per image, one decoder pass per box. The annotation
-# keeps its id, class, status and score; only the geometry changes, and a
-# box SAM cannot segment stays a box (counted as skipped, never dropped).
+# keeps its id and class; the geometry changes and, because a machine drew
+# it, the annotation becomes a pending auto pre-label scored with SAM's
+# predicted IoU (E10-T11). A box SAM cannot segment stays a box, unchanged
+# (counted as skipped, never dropped).
 
 
 class ConvertResult(BaseModel):
@@ -361,9 +363,11 @@ def boxes_to_polygons(
 ) -> ConvertResult:
     """Turn the image's box-only annotations (optionally just `annotation_ids`
     or `categories`, ids or names) into polygons: each box prompts the
-    segmenter against the image's cached embedding. Written through the
-    ordinary versioned save; `expected_version` guards against a concurrent
-    editor (E2-T8)."""
+    segmenter against the image's cached embedding. Converted annotations
+    come back as pending auto pre-labels with SAM's predicted IoU as score —
+    machine geometry is never stored as confirmed human work (E10-T11).
+    Written through the ordinary versioned save; `expected_version` guards
+    against a concurrent editor (E2-T8)."""
     from horos.backends.base import SegmentPrompt
 
     record = project.get_image(image_id)
@@ -393,8 +397,17 @@ def boxes_to_polygons(
             out.append(a)
             continue
         polygon = [float(v) for v in result.polygon]
+        # The polygon is machine-made, so the annotation stops counting as
+        # human work: it becomes ("auto", "pending") carrying the segmenter's
+        # predicted IoU as its score, and a person accepts it in review
+        # (E10-T11). The 2026-09-13 QC of demo_project found ~14 % of such
+        # polygons wrong while they were stored as confirmed manual labels.
         new = clamp_to_image(
-            a.model_copy(update={"segmentation": [polygon], "bbox": tuple(result.bbox)}),
+            a.model_copy(update={
+                "segmentation": [polygon], "bbox": tuple(result.bbox),
+                "source": "auto", "status": "pending",
+                "score": round(float(result.score), 4),
+            }),
             record.width, record.height,
         )
         out.append(new)

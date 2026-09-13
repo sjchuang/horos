@@ -1,6 +1,8 @@
 """SAM-T6: box annotations are prompts — one image at a time, or the whole
-project as a job — and become polygons in place, keeping id, class, status
-and score. A box the segmenter cannot mask stays a box."""
+project as a job — and become polygons in place, keeping id and class. The
+polygon is machine-made, so the annotation becomes a pending auto pre-label
+scored with SAM's predicted IoU (E10-T11). A box the segmenter cannot mask
+stays a box, unchanged."""
 
 from __future__ import annotations
 
@@ -69,8 +71,10 @@ def test_boxes_become_polygons_in_place_with_one_embedding(project):
         x, y, w, h = original.bbox
         assert new.segmentation == [[x, y, x + w, y, x + w, y + h, x, y + h]]
         assert new.bbox == original.bbox
-        assert (new.category_id, new.status, new.source, new.score) == (
-            original.category_id, original.status, original.source, original.score)
+        assert new.category_id == original.category_id
+        # machine geometry → pending auto pre-label with the segmenter's score (E10-T11)
+        assert (new.status, new.source) == ("pending", "auto")
+        assert new.score == pytest.approx(0.9)
     assert len(stored.annotations) == len(before.annotations)  # nothing dropped or added
 
     # nothing left to convert: no write, same version, no decoder call
@@ -122,7 +126,8 @@ def test_pending_prelabels_can_be_left_alone_and_conflicts_surface(project):
     with_pending = boxes_to_polygons(project, 1, backend=fake)
     assert with_pending.converted == 1  # just the pending one now
     converted = next(a for a in with_pending.annotations if a.id == pending.id)
-    assert converted.status == "pending" and converted.score == 0.4 and converted.segmentation
+    assert converted.status == "pending" and converted.source == "auto"
+    assert converted.score == pytest.approx(0.9) and converted.segmentation  # SAM's IoU
 
     # E2-T8: a stale version is a conflict, not a silent overwrite
     fresh = create_project(project.root.parent / "other")
