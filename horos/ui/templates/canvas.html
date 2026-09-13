@@ -1,0 +1,2577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg?v=2">
+<link rel="stylesheet" href="/static/controls.css?v=1">
+<script src="/static/controls.js?v=1" defer></script>
+<title>horos — canvas</title>
+<style>
+  :root {
+    --bg: #101418; --panel: #1a2129; --line: #2a333e;
+    --text: #e6edf3; --dim: #8b98a5; --accent: #0a84ff; --ok: #51cf66; --err: #ff6b6b;
+    --warn: #fcc419;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  a { color: var(--dim); text-decoration: none; }
+  a:hover { color: var(--accent); }
+  .btn { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+         border-radius: 8px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
+  .btn:hover:not(:disabled) { border-color: var(--accent); }
+  .btn:disabled { opacity: .45; cursor: default; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .btn.danger { border-color: var(--err); color: var(--err); }
+  select, input[type=text], input[type=number] { background: var(--panel);
+    color: var(--text); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 8px; font-size: 12px; }
+  select:focus, input[type=text]:focus, input[type=number]:focus {
+    outline: none; border-color: var(--accent); }
+  /* number inputs: no browser spinners, monospace value */
+  input[type=number] { appearance: textfield; -moz-appearance: textfield;
+    font-family: ui-monospace, SFMono-Regular, monospace; text-align: center; }
+  input[type=number]::-webkit-inner-spin-button,
+  input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  /* range sliders: thin themed track, accent thumb */
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 4px;
+    border-radius: 2px; background: var(--line); outline: none; cursor: pointer; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none;
+    width: 14px; height: 14px; border-radius: 50%; background: var(--accent);
+    border: 3px solid var(--panel); box-shadow: 0 0 0 1px var(--accent); }
+  input[type=range]::-moz-range-thumb { width: 14px; height: 14px;
+    border-radius: 50%; background: var(--accent); border: 3px solid var(--panel);
+    box-shadow: 0 0 0 1px var(--accent); }
+  /* min-width: 0 on the flex items — a range input has a large intrinsic
+     minimum width and would otherwise push the number box out of the panel */
+  .conf-control { display: flex; align-items: center; gap: 10px; flex: 1;
+                  min-width: 0; }
+  .conf-control input[type=range] { flex: 1; min-width: 0; }
+  .conf-control .stepper { flex: none; }
+  .conf-control .stepper input[type=number] { width: 60px; padding: 4px 6px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+          padding: 14px; }
+  h4 { margin: 0 0 8px; font-size: 11px; color: var(--dim); text-transform: uppercase;
+       letter-spacing: .08em; }
+  .topbar { display: flex; align-items: center; gap: 10px; padding: 10px 16px;
+            border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .site-header { position: sticky; top: 0; z-index: 40; background: var(--bg);
+                 display: flex; align-items: center; gap: 14px;
+                 padding: 10px 24px; border-bottom: 1px solid var(--line);
+                 /* the annotator body runs at 13px for density; the shared
+                    header must render identically on every page */
+                 font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .site-header h1 { font-size: 18px; margin: 0; letter-spacing: .04em; }
+  .site-header .project { color: var(--dim); }
+  .site-header .page-nav { margin-left: auto; }
+  .page-nav { display: flex; gap: 8px; }
+  .page-nav a { position: relative; display: flex; align-items: center;
+                justify-content: center; width: 34px; height: 34px;
+                border: 1px solid var(--line); border-radius: 8px;
+                color: var(--dim); }
+  .page-nav a:hover { border-color: var(--accent); color: var(--accent); }
+  .page-nav a[aria-current] { color: var(--text); border-color: var(--accent);
+                              background: rgba(77, 171, 247, .12); }
+  .page-nav a::after { content: attr(data-tip); position: absolute;
+                       top: calc(100% + 8px); right: 0; z-index: 30;
+                       background: var(--panel); border: 1px solid var(--line);
+                       border-radius: 6px; padding: 3px 10px; font-size: 12px;
+                       color: var(--text); white-space: nowrap; opacity: 0;
+                       pointer-events: none; transition: opacity .12s; }
+  .page-nav a:hover::after { opacity: 1; }
+  .page-nav svg { width: 18px; height: 18px; }
+  #pagination { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  #pagination .pager-gap { color: var(--dim); padding: 0 2px; }
+  #pagination .pager-jump { color: var(--dim); font-size: 12px; margin-left: 8px;
+                            display: inline-flex; align-items: center; gap: 4px; }
+  #pagination .pager-jump input { width: 56px; padding: 3px 6px; font-size: 12px;
+                                  background: var(--bg); color: var(--text);
+                                  border: 1px solid var(--line); border-radius: 6px; }
+
+  /* ---- grid view ---- */
+  #grid-view { padding: 0 16px 16px; }
+  #progress-line { color: var(--dim); font-size: 12px; margin: 10px 2px; }
+  #progress-line b { color: var(--ok); }
+  .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 10px; }
+  .thumb { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+           overflow: hidden; cursor: pointer; position: relative; }
+  .thumb:hover { border-color: var(--accent); }
+  .thumb .pick { position: absolute; top: 6px; left: 6px; z-index: 2; margin: 0;
+                 cursor: pointer; display: none; background: var(--panel); }
+  .thumb:hover .pick, .image-grid.selecting .pick { display: block; }
+  .thumb.selected { border-color: var(--accent);
+                    box-shadow: 0 0 0 1px var(--accent) inset; }
+  .thumb img { width: 100%; height: 100px; object-fit: cover; display: block;
+               background: #000; }
+  .thumb .meta { display: flex; align-items: center; gap: 6px; padding: 5px 8px;
+                 font-size: 11px; color: var(--dim); }
+  .thumb .meta .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .thumb .badge { flex: none; }
+  .pagination { display: flex; gap: 4px; justify-content: center; margin-top: 14px; }
+  .pagination button { min-width: 30px; }
+  .pagination button.on { border-color: var(--accent); color: var(--accent); }
+
+  /* ---- editor view ---- */
+  #editor-view { display: none; }
+  .editor-body { display: grid; grid-template-columns: 1fr 280px; gap: 12px;
+                 padding: 0 16px 16px;
+                 /* viewport minus the site header (~55px) and the editor topbar */
+                 height: calc(100vh - 112px); }
+  .canvas-wrap { background: var(--panel); border: 1px solid var(--line);
+                 border-radius: 10px; overflow: hidden; position: relative;
+                 display: flex; align-items: center; justify-content: center; }
+  #anno-canvas { display: block; }
+  .sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0;
+             overflow-y: auto; }
+  .tools { display: flex; gap: 6px; }
+  .tool-btn { width: 40px; height: 36px; font-size: 16px; background: var(--bg);
+              color: var(--dim); border: 1px solid var(--line); border-radius: 6px;
+              cursor: pointer; }
+  .tool-btn:hover { border-color: var(--accent); }
+  .tool-btn.active { color: var(--accent); border-color: var(--accent); }
+  .tool-btn.ai { color: var(--ok); }
+  .tool-btn.ai.active { color: var(--ok); border-color: var(--ok); }
+  .prompt-row { display: flex; gap: 6px; margin-bottom: 6px; }
+  .prompt-row input:first-child { width: 110px; }
+  .prompt-row input:last-child { flex: 1; }
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+          border: 1px solid var(--line); border-radius: 20px; cursor: pointer;
+          font-size: 11px; color: var(--dim); background: var(--bg); }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .zoom-hint { color: var(--dim); font-size: 11px; margin-top: 10px; }
+  .shapes-card { flex: 1; display: flex; flex-direction: column; min-height: 120px; }
+  #shapes-list { flex: 1; overflow-y: auto; margin-bottom: 10px; }
+  .shape-item { display: flex; align-items: center; justify-content: space-between;
+                padding: 4px 7px; margin-bottom: 2px; border-radius: 5px;
+                cursor: pointer; font-size: 12px; }
+  .shape-item:hover { background: var(--bg); }
+  .shape-item.on { background: rgba(77, 171, 247, .14); color: var(--accent); }
+  .shape-item .dot { display: inline-block; width: 10px; height: 10px;
+                     border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .shape-item small { color: var(--dim); }
+  .shape-item .del { background: none; border: none; color: var(--err);
+                     cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .switch-row { display: flex; align-items: center; justify-content: space-between;
+                margin-bottom: 8px; }
+  .switch-row label { font-size: 11px; color: var(--dim); display: flex;
+                      align-items: center; gap: 6px; cursor: pointer; }
+  #save-state { color: var(--dim); font-size: 12px; }
+  #save-state.saving { color: var(--warn); }
+  #save-state.saved { color: var(--ok); }
+  #save-state.conflict { color: var(--err); }
+
+  /* embedded in the loop page (E10-T13): no site header above the editor */
+  body.embed .editor-body { height: calc(100vh - 57px); }
+  body.embed .editor-body, body.embed #grid-view { padding-left: 10px; padding-right: 10px; }
+
+  /* ---- shared ---- */
+  #toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+           background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+           padding: 8px 16px; display: none; z-index: 1200; }
+  #toast.warn { border-color: var(--warn); color: var(--warn); }
+  #toast.err { border-color: var(--err); color: var(--err); }
+  #toast.ok { border-color: var(--ok); color: var(--ok); }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none;
+           align-items: center; justify-content: center; z-index: 1000; }
+  .modal .card { width: 460px; max-height: 80vh; overflow-y: auto; }
+  /* the class manager keeps one height whatever the class count: the list
+     scrolls, the header, merge row and add row stay put */
+  .modal .card.class-card { height: min(560px, 80vh); display: flex; flex-direction: column;
+                            overflow: hidden; }
+  .class-scroll { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid var(--line);
+                  border-radius: 6px; scrollbar-width: thin; }
+  .class-scroll thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
+  .modal table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  .modal th, .modal td { text-align: left; padding: 6px 8px;
+                         border-bottom: 1px solid var(--line); }
+  .modal th { color: var(--dim); font-weight: 500; }
+  #help-modal td { padding: 3px 14px 3px 0; color: var(--dim); border: none; }
+  #help-modal td:first-child { color: var(--text); font-family: ui-monospace, monospace; }
+</style>
+</head>
+<body>
+
+<!-- ============================ site header ============================= -->
+<header class="site-header">
+  <h1 style="display:flex;align-items:center;gap:9px">
+    <svg width="20" height="20" viewBox="0 0 32 32" aria-hidden="true">
+      <path d="M7 22 L7 9 Q7 7 9 7 L22 7" fill="none" stroke="#e6edf3"
+            stroke-width="4.6" stroke-linecap="round"/>
+      <rect x="17" y="17" width="9" height="9" rx="2.2" fill="#4dabf7"/></svg>
+    horos</h1>
+  <span class="project" id="project-name">—</span>
+  <nav class="page-nav">
+    <a href="/" data-tip="Dataset">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <ellipse cx="12" cy="5" rx="8" ry="3"/>
+        <path d="M4 5v14c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/>
+        <path d="M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3"/></svg></a>
+    <a href="/annotate" data-tip="Annotate" aria-current="page">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+        <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></a>
+    <a href="/train" data-tip="Training">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></a>
+    <a href="/evaluate" data-tip="Evaluate">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="12" y1="1" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="1" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="23" y2="12"/></svg></a>
+    <a href="/experiments" data-tip="Experiments">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="5" height="9" rx="1"/>
+        <rect x="9.5" y="4" width="5" height="16" rx="1"/>
+        <rect x="16" y="8" width="5" height="12" rx="1"/></svg></a>
+    <a href="/lab" data-tip="Lab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 3h6"/><path d="M10 3v6.5L4.6 18.4A2 2 0 0 0 6.3 21h11.4a2 2 0 0 0 1.7-2.6L14 9.5V3"/>
+        <path d="M7.5 14h9"/></svg></a>
+  </nav>
+</header>
+
+<!-- ============================== grid view ============================== -->
+<div id="grid-view">
+  <div class="topbar">
+    <span id="progress-line"></span>
+    <span style="margin-left:auto"></span>
+    <select id="queue-mode">
+      <option value="unannotated_first">To do first</option>
+      <option value="file_name">By name</option>
+      <option value="unannotated">To do</option>
+      <option value="annotated">Done</option>
+      <option value="pending">To review</option>
+    </select>
+    <select id="split-filter">
+      <option value="">All splits</option>
+      <option value="train">train</option>
+      <option value="valid">valid</option>
+      <option value="test">test</option>
+    </select>
+    <select id="per-page">
+      <option value="20">20 / page</option>
+      <option value="50" selected>50 / page</option>
+      <option value="100">100 / page</option>
+      <option value="200">200 / page</option>
+    </select>
+    <button class="btn" id="btn-select-page" title="Select / deselect every image on this page">Select page</button>
+    <button class="btn danger" id="btn-delete-selected" style="display:none">Delete selected</button>
+    <button class="btn" id="btn-classes">Classes</button>
+    <button class="btn" id="btn-autolabel">Auto-label</button>
+  </div>
+  <div class="image-grid" id="image-grid"></div>
+  <div class="pagination" id="pagination"></div>
+</div>
+
+<!-- ============================= editor view ============================= -->
+<div id="editor-view">
+  <div class="topbar">
+    <button class="btn" id="btn-back">‹ All</button>
+    <span id="editor-filename" style="color:var(--dim);font-size:12px"></span>
+    <span id="claim-note" style="color:var(--warn);font-size:12px"></span>
+    <span style="margin-left:auto"></span>
+    <span id="save-state">—</span>
+    <button class="btn" id="btn-manage-2">Classes</button>
+    <button class="btn" id="btn-skip" title="Skip this photo — it will not be used for training (S)">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px">
+        <path d="M17.9 17.9A10.9 10.9 0 0 1 12 20c-7 0-11-8-11-8a20.3 20.3 0 0 1 5.1-6"/><path d="M9.9 4.2A10.9 10.9 0 0 1 12 4c7 0 11 8 11 8a20.4 20.4 0 0 1-2.2 3.2"/>
+        <path d="M14.1 14.1a3 3 0 1 1-4.2-4.2"/><line x1="1" y1="1" x2="23" y2="23"/></svg> Skip</button>
+    <button class="btn" id="btn-prev">‹</button>
+    <button class="btn" id="btn-next">›</button>
+    <a href="#" id="help-link" title="Keyboard shortcuts" aria-label="Keyboard shortcuts"
+       style="display:inline-flex;align-items:center">
+      <svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor"
+           stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9"></circle>
+        <line x1="12" y1="11" x2="12" y2="16.5"></line>
+        <circle cx="12" cy="7.6" r="0.4" fill="currentColor"></circle>
+      </svg>
+    </a>
+  </div>
+  <div class="editor-body">
+    <div class="canvas-wrap"><canvas id="anno-canvas"></canvas></div>
+    <div class="sidebar">
+      <div class="card">
+        <h4>Tools</h4>
+        <div class="tools">
+          <button class="tool-btn active" data-tool="select"
+            title="Select & edit — click a shape to select, drag to move, drag a vertex to reshape, Delete to remove. (shortcut 1)">✎</button>
+          <button class="tool-btn" data-tool="rect"
+            title="Rectangle — drag from one corner to the opposite corner. (shortcut 2)">▭</button>
+          <button class="tool-btn" data-tool="poly"
+            title="Polygon — click to add each vertex; double-click or click the first point to finish. (shortcut 3)">⬠</button>
+          <button class="tool-btn ai" data-tool="ai-text"
+            title="AI text prompt — type object names (e.g. helmet, vest), then Apply. OWLv2 pre-labels them on this image. (shortcut 4)">T</button>
+          <button class="tool-btn ai" data-tool="sam"
+            title="SAM — left-click an object, right-click (or Shift+click) what is NOT it, or drag a rough box; a mask preview appears. Space keeps it and starts the next object, Enter accepts them all. Right-drag still pans. (shortcut 5)">✦</button>
+        </div>
+        <div id="sam-panel" style="display:none;margin-top:10px">
+          <div style="font-size:11px;color:var(--dim);line-height:1.5">
+            Click the object, right-click what is not. <b>Space</b> next object,
+            <b>Enter</b> accept as <span id="sam-class-echo" style="color:var(--text)">object</span>,
+            <b>Esc</b> clear.</div>
+          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
+            <span>Output</span>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+              <input type="radio" name="sam-output" value="polygon" checked> Polygon
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"
+                   title="The mask's bounding box, for detection-only projects">
+              <input type="radio" name="sam-output" value="bbox"> Box
+            </label>
+            <select id="sam-model" style="margin-left:auto;font-size:11px;min-width:0;max-width:150px"
+                    title="Which segmenter runs (all Apache 2.0)"></select>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn primary" id="sam-accept" style="flex:1" disabled>Accept</button>
+            <button class="btn" id="sam-next" disabled
+                    title="Keep this mask and start the next object (Space)">Next</button>
+            <button class="btn" id="sam-clear" disabled>Clear</button>
+          </div>
+          <button class="btn" id="sam-convert-all" style="width:100%;margin-top:6px" disabled
+                  title="Every box on this image becomes the prompt for its own SAM mask and is rewritten as a polygon (keeps class, status and score); a box SAM cannot segment stays a box. One box: the ⬠ button in the Shapes list, or P with it selected.">
+            Boxes to polygons</button>
+          <div id="sam-status" style="font-size:11px;color:var(--dim);margin-top:4px;min-height:14px"></div>
+        </div>
+        <div id="assist-panel" style="display:none;margin-top:10px">
+          <input type="text" id="assist-input" placeholder="e.g. helmet, vest, person"
+                 style="width:100%" title="Comma-separated object names — each becomes a class">
+          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
+            <span>Output</span>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
+              <input type="radio" name="assist-output" value="bbox" checked> Box
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"
+                   title="Runs each box through SAM for an editable polygon">
+              <input type="radio" name="assist-output" value="polygon"> Polygon
+            </label>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--dim)">
+            <span>Confidence</span>
+            <div class="conf-control">
+              <input type="range" id="assist-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
+              <span class="stepper narrow"><input type="number" id="assist-conf" min="0.01" max="1" step="0.05" value="0.10">
+                <span class="step-btns"><button type="button" data-step="1" title="+0.05"></button>
+                  <button type="button" data-step="-1" title="−0.05"></button></span></span>
+            </div>
+          </div>
+          <button class="btn primary" id="assist-run" style="width:100%;margin-top:8px">Apply</button>
+          <div id="assist-status" style="font-size:11px;color:var(--warn);margin-top:4px"></div>
+        </div>
+        <h4 style="margin-top:14px">Class</h4>
+        <input type="text" id="class-input" placeholder="e.g. car, person" style="width:100%">
+        <div class="chips" id="class-chips"></div>
+        <div class="zoom-hint">Wheel to zoom · right-drag to pan</div>
+      </div>
+      <div class="card" id="review-card" style="display:none">
+        <h4>Suggestions</h4>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)">
+          <span id="review-count"></span>
+          <span style="flex:1"></span>
+          <span id="review-threshold-label">≥ 0.00</span>
+        </div>
+        <input type="range" id="review-threshold" min="0" max="1" step="0.01" value="0"
+               style="width:100%;margin:6px 0">
+        <div style="display:flex;gap:6px">
+          <button class="btn primary" id="review-accept" style="flex:1">Accept</button>
+          <button class="btn danger" id="review-reject" style="flex:1">Reject</button>
+        </div>
+      </div>
+      <div class="card shapes-card">
+        <div class="switch-row">
+          <h4 style="margin:0">Shapes</h4>
+          <label><input type="checkbox" id="auto-save" checked> Auto-save</label>
+        </div>
+        <div id="shapes-list"><p style="color:var(--dim);font-size:12px">No shapes</p></div>
+        <button class="btn primary" id="btn-save" style="width:100%">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<!-- skip sheet (E10-T16): this photo, and the ones that look like it -->
+<div class="modal" id="skip-modal">
+  <div class="card" style="width:560px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h4 style="margin:0">Skip this photo</h4>
+      <button class="btn" id="skip-close">✕</button>
+    </div>
+    <p class="muted" style="margin:0 0 10px;font-size:12px;color:var(--dim)">
+      It stays in the project but will not be picked or trained on.</p>
+    <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim)">
+      <span>Also skip look-alikes</span>
+      <input type="range" id="skip-threshold" min="0.80" max="0.99" step="0.01" value="0.92" style="flex:1">
+      <span id="skip-threshold-label" style="min-width:34px;text-align:right">0.92</span>
+    </div>
+    <div id="skip-similar" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:6px;
+         margin-top:10px;max-height:260px;overflow-y:auto"></div>
+    <div id="skip-note" style="font-size:12px;color:var(--dim);margin-top:8px;min-height:16px"></div>
+    <div style="display:flex;gap:6px;margin-top:12px">
+      <button class="btn primary" id="skip-confirm" style="flex:1">Skip 1 photo</button>
+      <button class="btn" id="skip-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- class manager modal -->
+<div class="modal" id="class-modal">
+  <div class="card class-card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h4 style="margin:0">Classes</h4>
+      <button class="btn" id="class-modal-close">✕</button>
+    </div>
+    <div class="class-scroll">
+    <table>
+      <thead><tr><th></th><th>Class Name</th><th>Count</th><th style="width:130px">Actions</th>
+        <th title="Tick the classes to fold into another one">Merge</th></tr></thead>
+      <tbody id="class-tbody"></tbody>
+    </table>
+    </div>
+    <div id="merge-row" style="display:none;gap:6px;align-items:center;margin-top:10px;
+         padding:8px 10px;border:1px solid var(--accent);border-radius:6px;
+         background:rgba(77,171,247,.08);font-size:12px;flex-wrap:wrap">
+      <span id="merge-label">Merge 1 class into</span>
+      <select id="merge-target" style="flex:1;min-width:120px"></select>
+      <button class="btn" id="btn-merge">Merge</button>
+    </div>
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <input type="text" id="new-class-name" placeholder="New class name" style="flex:1">
+      <button class="btn" id="btn-add-class">Add</button>
+    </div>
+  </div>
+</div>
+
+<!-- autolabel modal -->
+<div class="modal" id="autolabel-modal">
+  <div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h4 style="margin:0">Auto-label with text prompts</h4>
+      <button class="btn" id="autolabel-close">✕</button>
+    </div>
+    <div id="autolabel-form">
+      <p style="color:var(--dim);font-size:12px;margin:0 0 8px">
+        One row per class. Prompts are comma-separated synonyms OWLv2 will look for.</p>
+      <div id="prompt-rows"></div>
+      <button class="btn" id="add-prompt-row" style="width:100%;margin:6px 0">+ add class</button>
+      <div style="display:flex;align-items:center;gap:14px;font-size:12px;color:var(--dim);margin:10px 0 6px">
+        <span>Output</span>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer">
+          <input type="radio" name="autolabel-output" value="bbox" checked> Box
+        </label>
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer"
+               title="Runs each detected box through SAM and writes the mask outline as an editable polygon">
+          <input type="radio" name="autolabel-output" value="polygon"> Polygon (SAM)
+        </label>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;font-size:12px;color:var(--dim);margin:0 0 6px">
+        <span>Confidence</span>
+        <div class="conf-control">
+          <input type="range" id="autolabel-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
+          <span class="stepper narrow"><input type="number" id="autolabel-conf" min="0.01" max="1" step="0.05" value="0.10">
+                <span class="step-btns"><button type="button" data-step="1" title="+0.05"></button>
+                  <button type="button" data-step="-1" title="−0.05"></button></span></span>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--dim);margin-bottom:10px">
+        <input type="checkbox" id="autolabel-unannotated" checked> only unannotated images
+      </label>
+      <button class="btn primary" id="autolabel-start" style="width:100%">Start</button>
+      <div style="border-top:1px solid var(--line);margin:14px 0 10px"></div>
+      <h4 style="margin:0 0 6px;font-size:13px">Boxes → polygons (SAM)</h4>
+      <p style="color:var(--dim);font-size:12px;margin:0 0 8px">
+        Every box annotation of the chosen class becomes the prompt for a SAM mask and is
+        rewritten as a polygon — class, status and score stay. A box SAM cannot segment stays a box.</p>
+      <div style="display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dim);margin-bottom:6px">
+        <span>Class</span>
+        <select id="b2p-class" style="flex:1;min-width:0"><option value="">all classes</option></select>
+        <select id="b2p-model" style="max-width:150px;min-width:0" title="Which segmenter runs (all Apache 2.0)"></select>
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:var(--dim);margin-bottom:10px">
+        <input type="checkbox" id="b2p-pending" checked> include pending pre-labels
+      </label>
+      <button class="btn" id="b2p-start" style="width:100%">Convert boxes to polygons</button>
+    </div>
+    <div id="autolabel-progress" style="display:none">
+      <div id="job-bar" style="background:var(--line);height:8px;border-radius:4px;overflow:hidden;margin:10px 0">
+        <div style="background:var(--accent);height:100%;width:0"></div>
+      </div>
+      <div id="job-text" title=""
+           style="font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
+        starting…</div>
+      <button class="btn danger" id="autolabel-cancel" style="width:100%;margin-top:10px">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- class prompt: a new shape drawn with an empty Object Class (no silent "object") -->
+<div class="modal" id="label-modal">
+  <div class="card" style="width:360px">
+    <h4 style="margin:0 0 6px">Which class?</h4>
+    <p style="color:var(--dim);font-size:12px;margin:0 0 8px">Names this shape and becomes the current class.</p>
+    <input type="text" id="label-input" list="label-datalist" placeholder="e.g. car, person"
+           style="width:100%" autocomplete="off">
+    <datalist id="label-datalist"></datalist>
+    <div id="label-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+    <div style="display:flex;gap:6px;margin-top:10px">
+      <button class="btn primary" id="label-ok" style="flex:1">Use</button>
+      <button class="btn" id="label-cancel">Discard</button>
+    </div>
+  </div>
+</div>
+
+<!-- shortcuts modal -->
+<div class="modal" id="help-modal">
+  <div class="card">
+    <h4>Keyboard shortcuts</h4>
+    <table>
+      <tr><td>1 / 2 / 3 / 4 / 5</td><td>Select ✎ / Rectangle ▭ / Polygon ⬠ / AI prompt T / SAM ✦ tool</td></tr>
+      <tr><td>Space / Enter</td><td>SAM: keep this mask and start the next object / accept all</td></tr>
+      <tr><td>P</td><td>selected box → polygon (SAM uses the box as its prompt)</td></tr>
+      <tr><td>A / D</td><td>previous / next image</td></tr>
+      <tr><td>S</td><td>skip this photo (and look-alikes)</td></tr>
+      <tr><td>Ctrl+S</td><td>save annotations</td></tr>
+      <tr><td>Ctrl+Z</td><td>undo</td></tr>
+      <tr><td>Ctrl+C / Ctrl+V</td><td>copy / paste selected shape</td></tr>
+      <tr><td>Delete / Backspace</td><td>delete selected shape</td></tr>
+      <tr><td>Esc</td><td>cancel drawing / deselect</td></tr>
+      <tr><td>double-click</td><td>finish polygon (or click its first point)</td></tr>
+      <tr><td>wheel</td><td>zoom to cursor</td></tr>
+      <tr><td>right-drag</td><td>pan a zoomed image</td></tr>
+    </table>
+    <p style="color:var(--dim)">Click anywhere to close.</p>
+  </div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = (path, opts) => fetch("/api/v1" + path, opts).then(async (r) => {
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    const err = new Error((data.error && data.error.message) || r.statusText);
+    err.code = data.error && data.error.code;
+    err.status = r.status;
+    throw err;
+  }
+  return data;
+});
+const json = (method, body) => ({
+  method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+});
+// E10-T13: the loop page embeds this annotator in an iframe:
+//   /annotate?embed=1&round=<n>[&annotator=<name>]
+// `embed` hides the site header, `round` swaps the project queue for the
+// round's picks (this annotator's share plus unassigned images) and reports
+// labeling progress to the parent window; the canvas engine is untouched.
+const urlParams = new URLSearchParams(location.search);
+const EMBED = urlParams.get("embed") === "1";
+const ROUND = Number(urlParams.get("round")) || null;
+const ANNOTATOR = urlParams.get("annotator") || null;
+const session = (() => {
+  let s = null;
+  try { s = localStorage.getItem("horos_session"); } catch (e) {}
+  if (!s) {
+    s = Math.random().toString(36).slice(2) + Date.now().toString(36);
+    try { localStorage.setItem("horos_session", s); } catch (e) {}
+  }
+  return s;
+})();
+function paintRange(slider) {
+  const pct = ((slider.value - slider.min) / (slider.max - slider.min)) * 100;
+  slider.style.background =
+    `linear-gradient(to right, var(--accent) ${pct}%, var(--line) ${pct}%)`;
+}
+function bindConf(sliderId, numberId) {
+  const slider = $(sliderId), num = $(numberId);
+  slider.oninput = () => {
+    num.value = Number(slider.value).toFixed(2);
+    paintRange(slider);
+  };
+  num.addEventListener("change", () => {
+    const v = Math.min(Math.max(Number(num.value) || Number(slider.min),
+                                Number(slider.min)), Number(slider.max));
+    num.value = v.toFixed(2);
+    slider.value = v;
+    paintRange(slider);
+  });
+  paintRange(slider);
+}
+function toast(msg, cls = "warn", ms = 2400) {
+  const el = $("toast");
+  el.textContent = msg; el.className = cls; el.style.display = "block";
+  clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = "none"; }, ms);
+}
+
+const Page = {
+  categories: [], queue: [], page: 1, perPage: 50, selected: new Set(),
+  currentIdx: -1, version: 0,
+  editorImage: null, editorShapes: [], selectedShapeIdx: -1, flashShapeIdx: -1,
+  hoverShapeIdx: -1, hoverVertexIdx: -1, hoverVertexShapeIdx: -1,
+  activeTool: "select", isDrawing: false, currentPoints: [], mousePos: [0, 0],
+  dragMode: null, dragStart: null,
+  panX: 0, panY: 0, zoom: 1, baseScale: 1,
+  panDragging: false, panDragStart: null, panOrigin: null,
+  history: [], clipboardShape: null,
+  autoSave: true, isDirty: false, _saveTimer: null, _claimTimer: null,
+  classCounts: {}, sessionNames: new Set(),
+  reviewThreshold: 0, _jobTimer: null,
+
+  // ------------------------------------------------------------------ boot
+  async init() {
+    const project = await api("/project");
+    this.categories = project.categories;
+    $("project-name").textContent = project.name;
+    $("project-name").title = project.root;   // full path on hover
+    if (EMBED) {
+      document.body.classList.add("embed");
+      document.querySelector(".site-header").style.display = "none";
+    }
+    if (ROUND) {
+      // the round decides what is in the queue; the project-wide filters do not apply
+      for (const id of ["queue-mode", "split-filter", "btn-autolabel", "btn-delete-selected", "btn-select-page"]) {
+        $(id).style.display = "none";
+      }
+      $("btn-back").textContent = "← Round overview";
+    }
+    try {
+      const stats = await api("/dataset/stats");
+      stats.per_class.forEach((c) => { this.classCounts[c.name] = c.instances; });
+    } catch (e) {}
+    $("queue-mode").onchange = () => this.loadImages(1);
+    $("split-filter").onchange = () => this.loadImages(1);
+    $("per-page").onchange = (e) => { this.perPage = Number(e.target.value); this.loadImages(1); };
+    $("btn-classes").onclick = () => this.openClassManager();
+    $("btn-manage-2").onclick = () => this.openClassManager();
+    $("btn-select-page").onclick = () => this.togglePageSelection();
+    $("btn-delete-selected").onclick = () => this.deleteSelected();
+    $("class-modal-close").onclick = () => { $("class-modal").style.display = "none"; };
+    $("btn-add-class").onclick = () => this.addClassFromManager();
+    $("btn-merge").onclick = () => this.mergeClasses();
+    $("btn-back").onclick = () => this.closeEditor();
+    $("btn-prev").onclick = () => this.prevImage();
+    $("btn-next").onclick = () => this.nextImage();
+    $("btn-skip").onclick = () => this.openSkip();
+    $("skip-close").onclick = () => this.closeSkip();
+    $("skip-cancel").onclick = () => this.closeSkip();
+    $("skip-confirm").onclick = () => this.confirmSkip();
+    $("skip-threshold").oninput = (e) => {
+      $("skip-threshold-label").textContent = Number(e.target.value).toFixed(2);
+      paintRange(e.target);
+      this._loadSimilar();
+    };
+    $("skip-modal").onclick = (e) => { if (e.target === $("skip-modal")) this.closeSkip(); };
+    $("btn-save").onclick = () => this.saveAnnotations();
+    $("auto-save").onchange = (e) => this.toggleAutoSave(e.target.checked);
+    document.querySelectorAll(".tool-btn").forEach((b) => {
+      // blur after click, or the browser focus ring stays on the last
+      // mouse-clicked button when tools are later switched via number keys
+      b.onclick = () => { this.setTool(b.dataset.tool, true); b.blur(); };
+    });
+    $("btn-autolabel").onclick = () => this.openAutolabelModal();
+    $("autolabel-close").onclick = () => this.closeAutolabelModal();
+    $("add-prompt-row").onclick = () => this.addPromptRow();
+    $("autolabel-start").onclick = () => this.startAutolabel();
+    $("autolabel-cancel").onclick = () => this.cancelAutolabel();
+    $("assist-run").onclick = () => this.runAssist();
+    $("sam-accept").onclick = () => this._samAccept();
+    $("sam-next").onclick = () => this._samQueue();
+    $("sam-clear").onclick = () => this._samClear();
+    $("sam-convert-all").onclick = () => this.boxToPolygon(
+      this.editorShapes.map((s, i) => (s.shape_type === "rectangle" ? i : -1)).filter((i) => i >= 0));
+    $("b2p-start").onclick = () => this.startBoxesToPolygons();
+    document.querySelectorAll('input[name="sam-output"]').forEach((r) => {
+      r.onchange = () => { if (this.sam.points.length || this.sam.box) this._samQuery(); };
+    });
+    $("sam-model").onchange = () => {
+      try { localStorage.setItem("horos_sam_model", $("sam-model").value); } catch (e) {}
+      this._samReset(true);
+      if (this.activeTool === "sam") this._samPrefetch();
+    };
+    $("class-input").addEventListener("input", () => this._samSyncButtons());
+    this._samLoadModels();
+    $("assist-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); this.runAssist(); }
+    });
+    bindConf("autolabel-conf-slider", "autolabel-conf");
+    bindConf("assist-conf-slider", "assist-conf");
+    $("review-threshold").oninput = (e) => {
+      this.reviewThreshold = Number(e.target.value);
+      paintRange(e.target);
+      this._syncReviewBar();
+      this._drawCanvas();
+    };
+    paintRange($("review-threshold"));
+    $("review-accept").onclick = () => this.reviewAll("accept");
+    $("review-reject").onclick = () => this.reviewAll("reject");
+    $("help-link").onclick = (e) => { e.preventDefault(); $("help-modal").style.display = "flex"; };
+    $("help-modal").onclick = () => { $("help-modal").style.display = "none"; };
+    const saved = (() => { try { return localStorage.getItem("horos_autosave"); } catch (e) { return null; } })();
+    if (saved !== null) { this.autoSave = saved === "true"; $("auto-save").checked = this.autoSave; }
+    this._updateSaveButtonState();
+    this._initCanvasEvents();
+    this._bindClassInput();
+    window.addEventListener("resize", () => {
+      if ($("editor-view").style.display === "block") this._resizeCanvas();
+    });
+    window.addEventListener("beforeunload", (e) => {
+      if (this.currentIdx >= 0) this._releaseClaim();
+      if (this.isDirty && !this.autoSave && $("editor-view").style.display === "block") {
+        e.preventDefault(); e.returnValue = "";
+      }
+    });
+    await this.loadImages(1);
+    if (ROUND && !location.hash && this.queue.length) {
+      // straight into the first image that still needs work
+      const first = this.queue.findIndex((item) => !item.annotated && !item.excluded);
+      this.openEditor(first >= 0 ? first : 0);
+    }
+    // #<image_id> deep-links straight into the editor on that image;
+    // #<image_id>:<annotation_id> also selects that shape and blinks it twice
+    // (the Dataset page's validation issues link here)
+    const [hashImage, hashAnnotation] = location.hash.slice(1).split(":")
+      .map((v) => Number(decodeURIComponent(v)));
+    if (hashImage) {
+      const idx = this.queue.findIndex((item) => item.image.id === hashImage);
+      if (idx >= 0) this.openEditor(idx, hashAnnotation || null);
+      else toast(`Image ${hashImage} is not in the current queue (check the split filter)`, "err", 4200);
+    }
+  },
+
+  async loadImages(page) {
+    if (ROUND) {
+      const q = new URLSearchParams({ session });
+      if (ANNOTATOR) q.set("annotator", ANNOTATOR);
+      // RoundQueueItem carries the same fields the grid and editor read
+      this.queue = (await api(`/loop/rounds/${ROUND}/queue?` + q)).map((item) => ({
+        ...item, num_annotations: item.annotated ? 1 : 0,
+      }));
+      this.page = page;
+      this.renderGrid();
+      const done = this.queue.filter((item) => item.annotated || item.excluded).length;
+      $("progress-line").innerHTML =
+        `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} done`;
+      this._notifyRound(done);
+      return;
+    }
+    const q = new URLSearchParams({ mode: $("queue-mode").value, session });
+    if ($("split-filter").value) q.set("split", $("split-filter").value);
+    this.queue = (await api("/queue?" + q)).filter((item) => !item.excluded || $("queue-mode").value === "annotated");
+    // drop selections that left the queue (deleted, or filtered out)
+    const alive = new Set(this.queue.map((item) => item.image.id));
+    this.selected = new Set([...this.selected].filter((id) => alive.has(id)));
+    this.page = page;
+    this.renderGrid();
+    const p = await api("/progress");
+    $("progress-line").innerHTML =
+      `<b>${p.annotated_images}</b> / ${p.total_images} images annotated · ` +
+      `${p.total_annotations} annotations`;
+  },
+
+  renderGrid() {
+    const start = (this.page - 1) * this.perPage;
+    const items = this.queue.slice(start, start + this.perPage);
+    $("image-grid").innerHTML = items.map((item, i) => `
+      <div class="thumb" data-i="${start + i}">
+        <input type="checkbox" class="pick" data-id="${item.image.id}"
+               title="Select for deletion" aria-label="Select ${item.image.file_name}">
+        <img loading="lazy" src="/api/v1/images/${item.image.id}/file" alt="">
+        <div class="meta">
+          <span class="badge">${item.excluded ? `<span title="skipped" style="color:var(--dim)">⊘</span>`
+            : item.claimed_by ? "🔒"
+            : item.num_pending ? `<span style="color:var(--warn)">◌${item.num_pending}</span>`
+            : item.annotated ? "✓" : "·"}</span>
+          <span class="fname" title="${item.image.file_name}">${item.image.file_name}</span>
+        </div>
+      </div>`).join("");
+    [...$("image-grid").children].forEach((el) => {
+      el.onclick = () => this.openEditor(Number(el.dataset.i));
+      const pick = el.querySelector(".pick");
+      pick.onclick = (e) => e.stopPropagation();  // select, don't open
+      pick.onchange = () => {
+        const id = Number(pick.dataset.id);
+        if (pick.checked) this.selected.add(id); else this.selected.delete(id);
+        this._syncSelectionUI();
+      };
+    });
+    this._renderPager();
+    this._syncSelectionUI();
+  },
+
+  // compact pager: first/prev, the current page ±2 with ellipses, next/last,
+  // and a "page N of M" box — 91 pages must not mean 91 buttons
+  _renderPager() {
+    const pages = Math.max(1, Math.ceil(this.queue.length / this.perPage));
+    const cur = Math.min(Math.max(1, this.page), pages);
+    this.page = cur;
+    const nums = new Set([1, pages]);
+    for (let p = cur - 2; p <= cur + 2; p++) if (p >= 1 && p <= pages) nums.add(p);
+    const ordered = [...nums].sort((a, b) => a - b);
+    const btn = (label, target, extra = "") =>
+      `<button class="btn ${extra}" data-p="${target}" ${target < 1 || target > pages || target === cur && !extra ? "disabled" : ""}>${label}</button>`;
+    const parts = [btn("«", 1), btn("‹", cur - 1)];
+    let prev = 0;
+    for (const p of ordered) {
+      if (p - prev > 1) parts.push(`<span class="pager-gap">…</span>`);
+      parts.push(`<button class="btn ${p === cur ? "on" : ""}" data-p="${p}">${p}</button>`);
+      prev = p;
+    }
+    parts.push(btn("›", cur + 1), btn("»", pages));
+    parts.push(`<span class="pager-jump">page
+      <span class="stepper narrow"><input type="number" id="page-jump" min="1" max="${pages}"
+             value="${cur}" step="1" aria-label="Go to page">
+        <span class="step-btns"><button type="button" data-step="1" title="next page"></button>
+          <button type="button" data-step="-1" title="previous page"></button></span></span>
+      of ${pages} · ${this.queue.length} images</span>`);
+    $("pagination").innerHTML = parts.join("");
+    if (window.horosControls) horosControls.wire($("pagination"));
+    $("pagination").querySelectorAll("button[data-p]").forEach((el) => {
+      el.onclick = () => { this.page = Number(el.dataset.p); this.renderGrid(); };
+    });
+    const jump = $("page-jump");
+    const go = () => {
+      const p = Math.min(Math.max(1, Number(jump.value) || 1), pages);
+      if (p !== this.page) { this.page = p; this.renderGrid(); } else jump.value = p;
+    };
+    jump.onchange = go;
+    jump.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); go(); } };
+  },
+
+  _syncSelectionUI() {
+    $("image-grid").classList.toggle("selecting", this.selected.size > 0);
+    [...$("image-grid").children].forEach((el) => {
+      const pick = el.querySelector(".pick");
+      const on = this.selected.has(Number(pick.dataset.id));
+      pick.checked = on;
+      el.classList.toggle("selected", on);
+    });
+    const btn = $("btn-delete-selected");
+    btn.style.display = this.selected.size ? "" : "none";
+    btn.textContent = `Delete selected (${this.selected.size})`;
+  },
+
+  togglePageSelection() {
+    const start = (this.page - 1) * this.perPage;
+    const ids = this.queue.slice(start, start + this.perPage)
+      .map((item) => item.image.id);
+    const allOn = ids.length && ids.every((id) => this.selected.has(id));
+    ids.forEach((id) => allOn ? this.selected.delete(id) : this.selected.add(id));
+    this._syncSelectionUI();
+  },
+
+  async deleteSelected() {
+    const ids = [...this.selected];
+    if (!ids.length) return;
+    if (!confirm(`Delete ${ids.length} image(s) and their annotations? `
+                 + "This cannot be undone.")) return;
+    try {
+      const res = await api("/images/delete", json("POST", { ids, session }));
+      this.selected.clear();
+      if (res.skipped_claimed.length) {
+        toast(`Deleted ${res.deleted.length} image(s) — skipped `
+              + `${res.skipped_claimed.length} claimed by another session`, "warn", 4200);
+      } else {
+        toast(`Deleted ${res.deleted.length} image(s)`, "ok");
+      }
+      await this.loadImages(this.page);
+      // the page may no longer exist after the deletion shrank the queue
+      const pages = Math.max(1, Math.ceil(this.queue.length / this.perPage));
+      if (this.page > pages) { this.page = pages; this.renderGrid(); }
+    } catch (e) { toast(e.message, "err"); }
+  },
+
+  // ---------------------------------------------------------------- editor
+  async openEditor(idx, focusAnnotationId = null) {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+    if (this.currentIdx >= 0) this._releaseClaim();
+    this.currentIdx = idx;
+    $("grid-view").style.display = "none";
+    $("editor-view").style.display = "block";
+    this.zoom = 1; this.history = []; this.isDirty = false;
+    this.editorShapes = []; this.selectedShapeIdx = -1;
+    this.hoverShapeIdx = -1; this.hoverVertexIdx = -1; this.hoverVertexShapeIdx = -1;
+    this.setTool(this.activeTool || "select");
+    this._updateNavButtons();
+    const item = this.queue[idx];
+    $("editor-filename").textContent =
+      `${item.image.file_name} · ${item.image.split} · ${idx + 1}/${this.queue.length}`;
+    this._setSaveState("", "");
+    const [view] = await Promise.all([
+      api(`/images/${item.image.id}/annotations`), this._claim(item.image.id),
+    ]);
+    // another session (or a background job) may have added classes since this
+    // page loaded — refresh before an unknown id would render as a number
+    const known = new Set(this.categories.map((c) => c.id));
+    if (view.annotations.some((a) => !known.has(a.category_id))) {
+      this.categories = (await api("/project")).categories;
+    }
+    this.version = view.version;
+    this.editorImage = new Image();
+    this.editorImage.onload = () => {
+      this.zoom = 1;
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      this.isDirty = false;
+      this.reviewThreshold = 0;
+      $("review-threshold").value = 0;
+      paintRange($("review-threshold"));
+      this._resizeCanvas();
+      this._setSaveState("", "");
+      this._syncReviewBar();
+      this.renderChips();
+      if (focusAnnotationId != null) {
+        const sIdx = this.editorShapes.findIndex((sh) => sh.id === focusAnnotationId);
+        if (sIdx !== -1) { this.selectShape(sIdx); this._flashShape(sIdx); }
+        else toast(`Annotation ${focusAnnotationId} is no longer on this image`, "err", 4200);
+      }
+    };
+    this.editorImage.src = `/api/v1/images/${item.image.id}/file`;
+  },
+
+  // blink a shape twice (white halo on/off) so the eye finds it on a busy image
+  _flashShape(idx) {
+    const steps = [true, false, true, false];
+    let k = 0;
+    const tick = () => {
+      this.flashShapeIdx = steps[k] && this.editorShapes[idx] ? idx : -1;
+      this._drawCanvas();
+      k += 1;
+      if (k < steps.length) setTimeout(tick, 230);
+    };
+    tick();
+  },
+
+  async closeEditor() {
+    if (!await this._checkUnsaved()) return;
+    if (this.currentIdx >= 0) this._releaseClaim();
+    this.currentIdx = -1;
+    $("editor-view").style.display = "none";
+    $("grid-view").style.display = "block";
+    this.editorShapes = []; this.editorImage = null; this.history = [];
+    this.loadImages(this.page);
+  },
+
+  async prevImage() {
+    if (this.currentIdx > 0) {
+      if (!await this._checkUnsaved()) return;
+      this.openEditor(this.currentIdx - 1);
+    }
+  },
+  async nextImage() {
+    if (this.currentIdx < this.queue.length - 1) {
+      if (!await this._checkUnsaved()) return;
+      this.openEditor(this.currentIdx + 1);
+    } else if (ROUND) {
+      const left = this.queue.filter((item) => !item.annotated && !item.excluded).length;
+      if (left) toast(`${left} image(s) of this round still need labels`, "warn", 3000);
+      else { toast("Round complete — every image is labeled", "ok", 3000); this._notifyRound(this.queue.length, true); }
+    }
+  },
+  // tell the loop page how far this round is (it draws the progress ring)
+  _notifyRound(done, finished = false) {
+    if (!ROUND || window.parent === window) return;
+    window.parent.postMessage({ type: "horos-round", round: ROUND, labeled: done,
+                                total: this.queue.length, done: finished }, "*");
+  },
+  _updateNavButtons() {
+    $("btn-prev").disabled = this.currentIdx <= 0;
+    $("btn-next").disabled = this.currentIdx >= this.queue.length - 1;
+  },
+
+  // shapes {label, shape_type, points[[x,y],..], status, score} <-> annotations
+  _toShape(a) {
+    const cat = this.categories.find((c) => c.id === a.category_id);
+    const label = cat ? cat.name : String(a.category_id);
+    const meta = { id: a.id, status: a.status || "confirmed",
+                   source: a.source || "manual", score: a.score ?? null };
+    if (a.segmentation && a.segmentation.length) {
+      const pts = [];
+      for (let k = 0; k < a.segmentation[0].length; k += 2)
+        pts.push([a.segmentation[0][k], a.segmentation[0][k + 1]]);
+      return { label, shape_type: "polygon", points: pts, ...meta };
+    }
+    const [x, y, w, h] = a.bbox;
+    return { label, shape_type: "rectangle",
+             points: [[x, y], [x + w, y + h]], ...meta };
+  },
+  async _toAnnotations() {
+    const anns = [];
+    for (const s of this.editorShapes) {
+      const cat = await this._resolveCategory(s.label);
+      // status/source/score survive edits — moving a pending pre-label must
+      // not silently confirm it; accepting is an explicit review action
+      const meta = { status: s.status || "confirmed",
+                     source: s.source || "manual", score: s.score ?? null };
+      if (s.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = s.points;
+        anns.push({ ...meta, category_id: cat.id,
+          bbox: [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)],
+          segmentation: [] });
+      } else {
+        anns.push({ ...meta, category_id: cat.id, segmentation: [s.points.flat()] });
+      }
+    }
+    return anns;
+  },
+  async _resolveCategory(name) {
+    name = (name || "").trim();
+    if (!name) throw new Error("A shape has no class — select it and type one in Object Class");
+    this.sessionNames.add(name);
+    let cat = this.categories.find((c) => c.name === name);
+    if (!cat) {
+      cat = await api("/categories", json("POST", { name }));
+      this.categories.push(cat);
+      this.renderChips();
+    }
+    return cat;
+  },
+  _getColor(label) {
+    const cat = this.categories.find((c) => c.name === label);
+    if (cat && cat.color) return cat.color;
+    let hash = 0;
+    for (let i = 0; i < label.length; i++) hash = label.charCodeAt(i) + ((hash << 5) - hash);
+    return `hsl(${Math.abs(hash) % 360}, 75%, 55%)`;
+  },
+
+  // ---------------------------------------------------------------- saving
+  _pushHistory() {
+    this.history.push(JSON.stringify(this.editorShapes));
+    if (this.history.length > 50) this.history.shift();
+  },
+  _undo() {
+    if (!this.history.length) return;
+    this.editorShapes = JSON.parse(this.history.pop());
+    this.selectedShapeIdx = -1;
+    this._triggerChange();
+    this._drawCanvas();
+  },
+  _triggerChange() {
+    this.isDirty = true;
+    this._setSaveState("saving", "unsaved");
+    if (this.autoSave) {
+      if (this._saveTimer) clearTimeout(this._saveTimer);
+      this._saveTimer = setTimeout(() => this.saveAnnotations(true), 500);
+    }
+  },
+  toggleAutoSave(checked) {
+    this.autoSave = checked;
+    try { localStorage.setItem("horos_autosave", checked); } catch (e) {}
+    this._updateSaveButtonState();
+    if (checked && this.isDirty) this.saveAnnotations();
+  },
+  _updateSaveButtonState() {
+    $("btn-save").disabled = !!this.autoSave;
+    $("btn-save").title = this.autoSave ? "Auto Save is on" : "";
+  },
+  async _flushPendingSave() {
+    if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+    if (this.isDirty && this.autoSave) await this.saveAnnotations(true);
+  },
+  async _checkUnsaved() {
+    if (!this.isDirty) return true;
+    if (this.autoSave) { await this._flushPendingSave(); return true; }
+    return confirm("You have unsaved changes. Continue without saving?");
+  },
+  async saveAnnotations(isAuto = false) {
+    if (this.currentIdx < 0) return;
+    const item = this.queue[this.currentIdx];
+    this._setSaveState("saving", "saving…");
+    try {
+      const annotations = await this._toAnnotations();
+      const view = await api(`/images/${item.image.id}/annotations`,
+        json("PUT", { expected_version: this.version, annotations }));
+      this.version = view.version;
+      this.isDirty = false;
+      // rebuild from the server response so shape ids stay in sync for the
+      // per-shape review actions (order is preserved, selection stays valid)
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      const confirmed = view.annotations.filter((a) => a.status === "confirmed");
+      item.num_annotations = confirmed.length;
+      item.annotated = confirmed.length > 0;
+      item.num_pending = view.annotations.length - confirmed.length;
+      this._setSaveState("saved", "saved");
+      this._syncReviewBar();
+      this._drawCanvas();
+      if (ROUND) {
+        const done = this.queue.filter((q) => q.annotated || q.excluded).length;
+        $("progress-line").innerHTML =
+          `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} done`;
+        this._notifyRound(done, done === this.queue.length);
+      }
+    } catch (e) {
+      if (e.code === "annotation_conflict") {
+        const view = await api(`/images/${item.image.id}/annotations`);
+        this.editorShapes = view.annotations.map((a) => this._toShape(a));
+        this.version = view.version;
+        this.selectedShapeIdx = -1; this.history = []; this.isDirty = false;
+        this._setSaveState("conflict", "conflict — reloaded");
+        toast("Someone else saved this image first. Reloaded their version; redo your change.", "err", 4200);
+        this._drawCanvas();
+      } else {
+        this._setSaveState("conflict", "save failed");
+        if (!isAuto) toast("Save failed: " + e.message, "err", 4200);
+      }
+    }
+  },
+  _setSaveState(cls, text) { const el = $("save-state"); el.className = cls; el.textContent = text; },
+
+  // ---------------------------------------------------------------- claims
+  async _claim(imageId) {
+    try {
+      await api(`/images/${imageId}/claim`, json("POST", { session }));
+      $("claim-note").textContent = "";
+    } catch (e) {
+      if (e.status === 409) {
+        $("claim-note").textContent = "⚠ someone else is annotating this image";
+        toast("Another session is annotating this image — your saves may conflict.", "warn");
+      }
+    }
+    clearInterval(this._claimTimer);
+    this._claimTimer = setInterval(() => {
+      api(`/images/${imageId}/claim`, json("POST", { session })).catch(() => {});
+    }, 120000);
+  },
+  _releaseClaim() {
+    clearInterval(this._claimTimer);
+    const item = this.queue[this.currentIdx];
+    if (!item) return;
+    fetch(`/api/v1/images/${item.image.id}/claim`,
+      { ...json("DELETE", { session }), keepalive: true }).catch(() => {});
+  },
+
+  // ------------------------------------------------------------------ skip
+  // E10-T16: a photo unfit for training leaves the pool, statistics and every
+  // snapshot; look-alikes (embedding similarity) can go with it. Undo via toast.
+  _skip: { similar: [], picked: new Set(), open: false },
+  async openSkip() {
+    const item = this.queue[this.currentIdx];
+    if (!item || this._skip.open) return;
+    if (!await this._checkUnsaved()) return;
+    this._skip = { similar: [], picked: new Set(), open: true };
+    $("skip-modal").style.display = "flex";
+    paintRange($("skip-threshold"));
+    await this._loadSimilar();
+  },
+  closeSkip() { this._skip.open = false; $("skip-modal").style.display = "none"; },
+  async _loadSimilar() {
+    const item = this.queue[this.currentIdx];
+    if (!item) return;
+    const t = Number($("skip-threshold").value);
+    $("skip-note").textContent = "looking for look-alikes…";
+    try {
+      const similar = await api(`/images/${item.image.id}/similar?threshold=${t}&limit=48`);
+      this._skip.similar = similar;
+      this._skip.picked = new Set(similar.map((s) => s.image.id));
+      $("skip-note").textContent = similar.length ? "" : "no look-alikes at this level";
+    } catch (e) {
+      this._skip.similar = []; this._skip.picked = new Set();
+      $("skip-note").textContent = /embedding/i.test(e.message)
+        ? "look-alikes need the loop's first selection to run" : e.message;
+    }
+    this._renderSimilar();
+  },
+  _renderSimilar() {
+    $("skip-similar").innerHTML = this._skip.similar.map((s) => `
+      <label class="thumb" style="cursor:pointer;position:relative" title="similarity ${s.similarity.toFixed(2)}">
+        <input type="checkbox" class="pick" data-id="${s.image.id}" style="display:block"
+               ${this._skip.picked.has(s.image.id) ? "checked" : ""}>
+        <img loading="lazy" src="/api/v1/images/${s.image.id}/file" alt="" style="height:72px">
+      </label>`).join("");
+    $("skip-similar").querySelectorAll("input").forEach((box) => {
+      box.onchange = () => {
+        const id = Number(box.dataset.id);
+        if (box.checked) this._skip.picked.add(id); else this._skip.picked.delete(id);
+        this._syncSkipButton();
+      };
+    });
+    this._syncSkipButton();
+  },
+  _syncSkipButton() {
+    const n = 1 + this._skip.picked.size;
+    $("skip-confirm").textContent = n === 1 ? "Skip 1 photo" : `Skip ${n} photos`;
+  },
+  async confirmSkip() {
+    const item = this.queue[this.currentIdx];
+    if (!item) return;
+    const ids = [item.image.id, ...this._skip.picked];
+    try {
+      await api("/images/skip", json("POST", { image_ids: ids }));
+    } catch (e) { toast(e.message, "err", 4000); return; }
+    this.closeSkip();
+    const skipped = new Set(ids);
+    // the round keeps its picks (shown as skipped); the free queue drops them
+    if (ROUND) this.queue.forEach((q) => { if (skipped.has(q.image.id)) q.excluded = true; });
+    else this.queue = this.queue.filter((q) => !skipped.has(q.image.id));
+    this._undoToast(ids);
+    this._notifyRound(this.queue.filter((q) => q.annotated || q.excluded).length,
+                      this.queue.every((q) => q.annotated || q.excluded));
+    // move on to the next photo that still needs work
+    const next = this.queue.findIndex((q, i) => i > this.currentIdx && !q.annotated && !q.excluded);
+    const fallback = this.queue.findIndex((q) => !q.annotated && !q.excluded);
+    const target = next >= 0 ? next : fallback;
+    if (target >= 0) this.openEditor(target);
+    else if (this.queue.length && ROUND) this.openEditor(Math.min(this.currentIdx, this.queue.length - 1));
+    else this.closeEditor();
+  },
+  _undoToast(ids) {
+    const el = $("toast");
+    el.className = "ok"; el.style.display = "block";
+    el.innerHTML = `Skipped ${ids.length} photo${ids.length === 1 ? "" : "s"} ·
+      <a href="#" id="skip-undo" style="color:var(--accent);font-weight:600">Undo</a>`;
+    $("skip-undo").onclick = async (e) => {
+      e.preventDefault();
+      try {
+        await api("/images/restore", json("POST", { image_ids: ids }));
+        el.style.display = "none";
+        await this.loadImages(this.page);
+        toast("Restored", "ok", 1200);
+      } catch (err) { toast(err.message, "err"); }
+    };
+    clearTimeout(el._t); el._t = setTimeout(() => { el.style.display = "none"; }, 8000);
+  },
+
+  // ------------------------------------------------------------- shortcuts
+  // Matched on e.code (the PHYSICAL key), not e.key — e.key changes with the
+  // keyboard layout / IME, which breaks shortcuts under a Chinese IME.
+  _bindKeys() {
+    window.addEventListener("keydown", (e) => {
+      if ($("editor-view").style.display !== "block") return;
+      if (this._labelPrompt) return;  // naming a shape: the prompt owns the keyboard
+      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
+      if (e.isComposing) return;
+      const code = e.code;
+      const ctrl = e.ctrlKey || e.metaKey;
+      if (ctrl) {
+        if (code === "KeyS") { e.preventDefault(); this.saveAnnotations(); }
+        else if (code === "KeyZ") { e.preventDefault(); this._undo(); }
+        else if (code === "KeyC") {
+          if (this.selectedShapeIdx !== -1) {
+            this.clipboardShape = JSON.parse(JSON.stringify(this.editorShapes[this.selectedShapeIdx]));
+            toast("Copied", "warn", 900);
+          }
+        } else if (code === "KeyV") {
+          if (this.clipboardShape) {
+            this._pushHistory();
+            const s = JSON.parse(JSON.stringify(this.clipboardShape));
+            // a pasted copy is the user's own shape, not a pre-label
+            s.status = "confirmed"; s.source = "manual"; s.score = null; delete s.id;
+            const off = 20 / (this.baseScale * this.zoom);
+            s.points = s.points.map((p) => [p[0] + off, p[1] + off]);
+            this._clampShapePoints(s);
+            this.editorShapes.push(s);
+            this._triggerChange();
+            this.selectShape(this.editorShapes.length - 1);
+          }
+        }
+        return;
+      }
+      switch (code) {
+        case "KeyA": e.preventDefault(); this.prevImage(); break;
+        case "KeyD": e.preventDefault(); this.nextImage(); break;
+        case "KeyS": e.preventDefault(); this.openSkip(); break;
+        case "Digit1": case "Numpad1": this.setTool("select"); break;
+        case "Digit2": case "Numpad2": this.setTool("rect"); break;
+        case "Digit3": case "Numpad3": this.setTool("poly"); break;
+        case "Digit4": case "Numpad4":
+          e.preventDefault();  // focus moves into the prompt — don't type the "4"
+          this.setTool("ai-text", true);
+          break;
+        case "Digit5": case "Numpad5": this.setTool("sam"); break;
+        case "Enter": case "NumpadEnter":
+          if (this.activeTool === "sam" && (this.sam.candidate || this.sam.queued.length)) {
+            e.preventDefault(); this._samAccept();
+          }
+          break;
+        case "Space":
+          // multi-object flow (SAM-T5): park this mask, prompt the next one
+          if (this.activeTool === "sam" && this.sam.candidate) { e.preventDefault(); this._samQueue(); }
+          break;
+        case "KeyP": {
+          // SAM-T6: the selected box becomes the prompt for its own polygon
+          const sel = this.editorShapes[this.selectedShapeIdx];
+          if (sel && sel.shape_type === "rectangle") { e.preventDefault(); this.boxToPolygon(this.selectedShapeIdx); }
+          break;
+        }
+        case "Delete": case "Backspace":
+          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box)) {
+            e.preventDefault(); this._samUndoPoint();
+          } else if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
+          break;
+        case "Escape":
+          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box || this.sam.queued.length)) {
+            this._samClear();
+          } else if (this.isDrawing) { this.isDrawing = false; this.currentPoints = []; }
+          else this.selectShape(-1);
+          this._drawCanvas();
+          break;
+      }
+    });
+  },
+
+  // ---------------------------------------------------------------- tools
+  setTool(tool, focusAssist = false) {
+    this.activeTool = tool;
+    document.querySelectorAll(".tool-btn").forEach((b) =>
+      b.classList.toggle("active", b.dataset.tool === tool));
+    $("assist-panel").style.display = tool === "ai-text" ? "block" : "none";
+    $("sam-panel").style.display = tool === "sam" ? "block" : "none";
+    // focus only on an explicit tool pick — openEditor re-applies the tool on
+    // every image switch, and focusing there makes the browser type the A/D
+    // navigation keystroke into the prompt input
+    if (tool === "ai-text" && focusAssist) $("assist-input").focus();
+    this.isDrawing = false;
+    this.currentPoints = [];
+    this._samReset(false, true);
+    if (tool === "sam") this._samPrefetch();
+    if (tool !== "select") this.selectedShapeIdx = -1;
+    this._updateCursor();
+    this._drawCanvas();
+  },
+  _updateCursor() {
+    const canvas = $("anno-canvas");
+    if (this.panDragging) canvas.style.cursor = "grabbing";
+    else if (this.activeTool !== "select") canvas.style.cursor = "crosshair";
+    else if (this.hoverVertexIdx !== -1) canvas.style.cursor = "pointer";
+    else if (this.hoverShapeIdx !== -1) canvas.style.cursor = "move";
+    else canvas.style.cursor = "default";
+  },
+  selectShape(idx) {
+    this.selectedShapeIdx = idx;
+    this._labelEditBase = null;
+    if (idx !== -1) {
+      this.setTool("select");
+      $("class-input").value = this.editorShapes[idx].label;
+      this.renderChips();
+    }
+    this._drawCanvas();
+  },
+  deleteShape(idx) {
+    this._pushHistory();
+    this.editorShapes.splice(idx, 1);
+    if (this.selectedShapeIdx === idx) this.selectedShapeIdx = -1;
+    else if (this.selectedShapeIdx > idx) this.selectedShapeIdx--;
+    this._triggerChange();
+    this._drawCanvas();
+  },
+
+  _bindClassInput() {
+    // Typing while a shape is selected relabels it live on canvas (exVision
+    // behavior), but the change is only committed (saved, category created)
+    // on blur/Enter — otherwise a 500ms typing pause would autosave a
+    // half-typed name and create a junk category.
+    const input = $("class-input");
+    input.addEventListener("input", (e) => {
+      if (this.selectedShapeIdx !== -1) {
+        if (!this._labelEditBase) {
+          this._labelEditBase = JSON.stringify(this.editorShapes);
+        }
+        const typed = e.target.value.trim();
+        if (typed) this.editorShapes[this.selectedShapeIdx].label = typed;
+        this._drawCanvas();
+      }
+      this.renderChips();
+    });
+    const commit = () => {
+      if (this._labelEditBase) {
+        this.history.push(this._labelEditBase);
+        if (this.history.length > 50) this.history.shift();
+        this._labelEditBase = null;
+        this._triggerChange();
+      }
+    };
+    input.addEventListener("change", commit);
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { input.blur(); }
+    });
+  },
+  // A class shows a chip only if it has annotations somewhere, was created or
+  // used this session, or is on the current image — stale empty classes stay
+  // hidden from the annotation palette.
+  _visibleCategories() {
+    const onCanvas = new Set(this.editorShapes.map((s) => s.label));
+    return this.categories.filter((c) =>
+      (this.classCounts[c.name] || 0) > 0 ||
+      this.sessionNames.has(c.name) || onCanvas.has(c.name));
+  },
+  renderChips() {
+    const current = $("class-input").value.trim();
+    $("class-chips").innerHTML = this._visibleCategories().map((c) => `
+      <span class="chip ${c.name === current ? "on" : ""}" data-name="${c.name}">
+        <span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
+    [...$("class-chips").children].forEach((el) => {
+      el.onclick = () => {
+        $("class-input").value = el.dataset.name;
+        $("class-input").dispatchEvent(new Event("input"));
+        $("class-input").dispatchEvent(new Event("change"));
+      };
+    });
+  },
+
+  // ------------------------------------------------------------ geometry
+  _clamp(v, lo, hi) { return Math.min(Math.max(v, lo), hi); },
+  _clampPoint([x, y]) {
+    return [this._clamp(x, 0, this.editorImage.naturalWidth),
+            this._clamp(y, 0, this.editorImage.naturalHeight)];
+  },
+  _clampShapePoints(shape) {
+    shape.points = shape.points.map((p) => this._clampPoint(p));
+    if (shape.shape_type === "rectangle" && shape.points.length >= 2) {
+      const [x1, y1] = shape.points[0], [x2, y2] = shape.points[1];
+      shape.points = [[Math.min(x1, x2), Math.min(y1, y2)],
+                      [Math.max(x1, x2), Math.max(y1, y2)]];
+    }
+  },
+  _clampShapeDelta(shape, dx, dy) {
+    const xs = shape.points.map((p) => p[0]), ys = shape.points.map((p) => p[1]);
+    return [
+      this._clamp(dx, -Math.min(...xs), this.editorImage.naturalWidth - Math.max(...xs)),
+      this._clamp(dy, -Math.min(...ys), this.editorImage.naturalHeight - Math.max(...ys)),
+    ];
+  },
+  _getPos(e, canvas) {
+    const rect = canvas.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const scale = this.baseScale * this.zoom;
+    return [(cx - this.panX) / scale, (cy - this.panY) / scale, cx, cy];
+  },
+  _hitTestVertex(x, y, shape) {
+    const thresh = 8 / (this.baseScale * this.zoom);
+    for (let i = 0; i < shape.points.length; i++)
+      if (Math.hypot(shape.points[i][0] - x, shape.points[i][1] - y) < thresh) return i;
+    return -1;
+  },
+  // vertices are grabbable on EVERY shape, not just the selected one —
+  // topmost shape wins, and its selected-shape vertices take priority
+  _hitTestAnyVertex(x, y) {
+    if (this.selectedShapeIdx !== -1) {
+      const v = this._hitTestVertex(x, y, this.editorShapes[this.selectedShapeIdx]);
+      if (v !== -1) return [this.selectedShapeIdx, v];
+    }
+    for (let i = this.editorShapes.length - 1; i >= 0; i--) {
+      if (i === this.selectedShapeIdx) continue;
+      const v = this._hitTestVertex(x, y, this.editorShapes[i]);
+      if (v !== -1) return [i, v];
+    }
+    return null;
+  },
+  _hitTestShape(x, y) {
+    for (let i = this.editorShapes.length - 1; i >= 0; i--) {
+      const s = this.editorShapes[i];
+      if (s.shape_type === "rectangle" && s.points.length === 2) {
+        const [x1, y1] = s.points[0], [x2, y2] = s.points[1];
+        if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) &&
+            y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return i;
+      } else if (s.shape_type === "polygon" && s.points.length > 2) {
+        let inside = false;
+        for (let j = 0, k = s.points.length - 1; j < s.points.length; k = j++) {
+          const [xj, yj] = s.points[j], [xk, yk] = s.points[k];
+          if ((yj > y) !== (yk > y) && x < ((xk - xj) * (y - yj)) / (yk - yj) + xj)
+            inside = !inside;
+        }
+        if (inside) return i;
+      }
+    }
+    return -1;
+  },
+
+  // ---------------------------------------------------------- canvas view
+  _resizeCanvas() {
+    const canvas = $("anno-canvas");
+    if (!this.editorImage) return;
+    const wrap = canvas.parentElement;
+    const w = Math.max(320, wrap.clientWidth - 2);
+    const h = Math.max(240, wrap.clientHeight - 2);
+    canvas.width = w; canvas.height = h;
+    // always fit the viewport — small images scale up too, so every image
+    // opens filling the canvas
+    this.baseScale = Math.min(w / this.editorImage.naturalWidth,
+                              h / this.editorImage.naturalHeight);
+    this._centerImage();
+    this._drawCanvas();
+  },
+  _centerImage() {
+    const canvas = $("anno-canvas");
+    const scale = this.baseScale * this.zoom;
+    this.panX = Math.round((canvas.width - this.editorImage.naturalWidth * scale) / 2);
+    this.panY = Math.round((canvas.height - this.editorImage.naturalHeight * scale) / 2);
+  },
+  _clampPan() {
+    const canvas = $("anno-canvas");
+    const scale = this.baseScale * this.zoom;
+    const iw = this.editorImage.naturalWidth * scale;
+    const ih = this.editorImage.naturalHeight * scale;
+    this.panX = iw <= canvas.width
+      ? Math.round((canvas.width - iw) / 2) : this._clamp(this.panX, canvas.width - iw, 0);
+    this.panY = ih <= canvas.height
+      ? Math.round((canvas.height - ih) / 2) : this._clamp(this.panY, canvas.height - ih, 0);
+  },
+
+  _drawCanvas() {
+    const canvas = $("anno-canvas");
+    if (!canvas || !this.editorImage) { this.renderShapesList(); return; }
+    const ctx = canvas.getContext("2d");
+    const scale = this.baseScale * this.zoom;
+    this._clampPan();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.translate(this.panX, this.panY);
+    ctx.scale(scale, scale);
+    ctx.drawImage(this.editorImage, 0, 0);
+    const inv = 1 / scale;
+
+    const drawPoint = (x, y, isHovered, faint) => {
+      const r = (isHovered ? 7 : faint ? 4 : 5) * inv;
+      ctx.globalAlpha = faint ? 0.45 : 1;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = isHovered ? "#ffffff" : "#4dabf7"; ctx.fill();
+      ctx.lineWidth = 1 * inv; ctx.strokeStyle = "#111111"; ctx.stroke();
+      ctx.globalAlpha = 1;
+    };
+
+    this.editorShapes.forEach((shape, i) => {
+      const isSelected = i === this.selectedShapeIdx;
+      const isHovered = i === this.hoverShapeIdx;
+      const isFlashing = i === this.flashShapeIdx;
+      const isPending = shape.status === "pending";
+      // pre-labels under the review threshold ghost out (E3-S2)
+      const ghosted = isPending && (shape.score ?? 0) < this.reviewThreshold;
+      const color = this._getColor(shape.label);
+      const alphaScale = ghosted ? 0.25 : 1;
+      const fillAlpha = (isSelected ? 0.38 : isHovered ? 0.3 : 0.2) * alphaScale;
+      const lineW = (isSelected ? 3.5 : isHovered ? 3 : 2) * inv;
+      const stroke = () => {
+        ctx.globalAlpha = ghosted ? 0.35 : 1;
+        ctx.lineWidth = lineW; ctx.strokeStyle = color;
+        if (isPending) ctx.setLineDash([6 * inv, 4 * inv]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        if (isFlashing) {  // the blink: a thick white halo over the outline
+          ctx.globalAlpha = 1; ctx.lineWidth = 7 * inv; ctx.strokeStyle = "#ffffff";
+          ctx.stroke();
+        }
+      };
+      if (shape.shape_type === "rectangle" && shape.points.length === 2) {
+        const [x1, y1] = shape.points[0], [x2, y2] = shape.points[1];
+        ctx.beginPath(); ctx.rect(x1, y1, x2 - x1, y2 - y1);
+        ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
+      } else if (shape.shape_type === "polygon" && shape.points.length) {
+        ctx.beginPath();
+        shape.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
+      }
+      ctx.globalAlpha = ghosted ? 0.35 : 1;
+      ctx.font = `600 ${14 * inv}px system-ui, sans-serif`;
+      const text = isPending && shape.score != null
+        ? `${shape.label} ${Number(shape.score).toFixed(2)}` : shape.label;
+      const lx = shape.points[0][0], ly = shape.points[0][1] - 6 * inv;
+      const tw = ctx.measureText(text).width;
+      ctx.fillStyle = "rgba(0,0,0,0.66)";
+      ctx.fillRect(lx - 4 * inv, ly - 13 * inv, tw + 8 * inv, 18 * inv);
+      ctx.fillStyle = isSelected ? "#ffffff" : color;
+      ctx.fillText(text, lx, ly);
+      ctx.globalAlpha = 1;
+      const faint = !isSelected;
+      shape.points.forEach((p, j) =>
+        drawPoint(p[0], p[1],
+          this.hoverVertexShapeIdx === i && this.hoverVertexIdx === j, faint));
+    });
+
+    if (this.activeTool === "sam") this._samDraw(ctx, inv);
+
+    if (this.pendingShape) {  // finished, waiting for its class
+      const p = this.pendingShape;
+      ctx.strokeStyle = "#9aa0a6"; ctx.lineWidth = 2 * inv; ctx.setLineDash([6 * inv, 4 * inv]);
+      ctx.beginPath();
+      if (p.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = p.points;
+        ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      } else {
+        p.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+      }
+      ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (this.isDrawing && this.currentPoints.length) {
+      const cls = $("class-input").value.trim();
+      ctx.strokeStyle = cls ? this._getColor(cls) : "#9aa0a6";
+      ctx.lineWidth = 2 * inv;
+      if (this.activeTool === "rect" && this.currentPoints.length === 2) {
+        const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
+        ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
+        // control points visible while drawing, not only after finishing
+        drawPoint(x1, y1, false, false);
+        drawPoint(x2, y2, true, false);
+      } else if (this.activeTool === "poly") {
+        ctx.beginPath();
+        this.currentPoints.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        const [mx, my] = this._clampPoint([
+          (this.mousePos[0] - this.panX) / scale, (this.mousePos[1] - this.panY) / scale]);
+        ctx.lineTo(mx, my); ctx.stroke();
+        // every placed vertex stays visible; the first one lights up when the
+        // cursor is close enough to close the polygon
+        this.currentPoints.forEach(([px, py], j) => {
+          const closing = j === 0 && this.currentPoints.length > 2 &&
+            Math.hypot(mx - px, my - py) < 12 * inv;
+          drawPoint(px, py, closing, false);
+        });
+      }
+    }
+    this.renderShapesList();
+  },
+
+  renderShapesList() {
+    const el = $("shapes-list");
+    if (!this.editorShapes.length) {
+      el.innerHTML = '<p style="color:var(--dim);font-size:12px">No shapes</p>';
+      if ($("sam-convert-all")) $("sam-convert-all").disabled = true;
+      return;
+    }
+    el.innerHTML = this.editorShapes.map((s, i) => `
+      <div class="shape-item ${i === this.selectedShapeIdx ? "on" : ""}" data-i="${i}">
+        <span><span class="dot" style="background:${this._getColor(s.label)}"></span>
+          ${s.label} <small>${s.status === "pending"
+            ? `pending ${s.score != null ? Number(s.score).toFixed(2) : ""}`
+            : `(${s.shape_type})`}</small></span>
+        <span style="display:flex;gap:2px">
+          ${s.shape_type === "rectangle"
+            ? `<button class="del" data-poly="${i}" title="Box → polygon: SAM uses this box as its prompt (P)">⬠</button>`
+            : ""}
+          ${s.status === "pending" && s.id
+            ? `<button class="del" style="color:var(--ok)" data-accept="${s.id}" title="Accept">✓</button>`
+            : ""}
+          <button class="del" data-i="${i}" title="Delete">×</button>
+        </span>
+      </div>`).join("");
+    if ($("sam-convert-all")) {
+      $("sam-convert-all").disabled = !this.editorShapes.some((s) => s.shape_type === "rectangle");
+    }
+    [...el.children].forEach((row) => {
+      row.onclick = () => this.selectShape(Number(row.dataset.i));
+      row.querySelector("[data-i]").onclick = (e) => {
+        e.stopPropagation(); this.deleteShape(Number(e.currentTarget.dataset.i));
+      };
+      const poly = row.querySelector("[data-poly]");
+      if (poly) poly.onclick = (e) => {
+        e.stopPropagation(); this.boxToPolygon(Number(poly.dataset.poly));
+      };
+      const accept = row.querySelector("[data-accept]");
+      if (accept) accept.onclick = (e) => {
+        e.stopPropagation(); this.reviewOne(Number(accept.dataset.accept), "accept");
+      };
+    });
+  },
+
+  // ---------------------------------------------------------- canvas events
+  _initCanvasEvents() {
+    const canvas = $("anno-canvas");
+    const wrap = canvas.parentElement;
+
+    const zoomWheel = (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (!this.editorImage) return;
+      const rect = canvas.getBoundingClientRect();
+      const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+      const oldScale = this.baseScale * this.zoom;
+      const ix = (mx - this.panX) / oldScale, iy = (my - this.panY) / oldScale;
+      const next = this._clamp(this.zoom * Math.exp(-e.deltaY * 0.0012), 1, 16);
+      if (Math.abs(next - this.zoom) < 1e-4) return;
+      this.zoom = next;
+      const s = this.baseScale * this.zoom;
+      this.panX = mx - ix * s; this.panY = my - iy * s;
+      this._clampPan(); this._drawCanvas();
+    };
+    wrap.addEventListener("wheel", zoomWheel, { passive: false });
+
+    canvas.onmousedown = (e) => {
+      if (!this.editorImage) return;
+      if (e.button === 2) {
+        e.preventDefault();
+        // right-DRAG pans; in the SAM tool a right-CLICK (no movement) is a
+        // negative point — decided on mouseup from how far the mouse moved
+        this.panDragging = true;
+        this.panDragStart = [e.clientX, e.clientY];
+        this.panOrigin = [this.panX, this.panY];
+        this._updateCursor();
+        return;
+      }
+      if (e.button !== 0) { if (e.button === 1) e.preventDefault(); return; }
+      const [x, y] = this._getPos(e, canvas);
+      if (this.activeTool === "select") {
+        const anyVtx = this._hitTestAnyVertex(x, y);
+        if (anyVtx) {
+          const [sIdx, vIdx] = anyVtx;
+          this._pushHistory();
+          if (sIdx !== this.selectedShapeIdx) this.selectShape(sIdx);
+          this.dragMode = "vertex";
+          this.hoverVertexShapeIdx = sIdx;
+          this.hoverVertexIdx = vIdx;
+          return;
+        }
+        const sIdx = this._hitTestShape(x, y);
+        this.selectShape(sIdx);
+        if (sIdx !== -1) {
+          this._pushHistory();
+          this.dragMode = "shape"; this.dragStart = [x, y];
+        }
+      } else if (this.activeTool === "rect") {
+        this.isDrawing = true;
+        const p = this._clampPoint([x, y]);
+        this.currentPoints = [p, p];
+      } else if (this.activeTool === "sam") {
+        this.sam.down = this._clampPoint([x, y]);
+        this.sam.dragBox = null;
+        this._samShift = e.shiftKey;
+      } else if (this.activeTool === "poly") {
+        if (!this.isDrawing) {
+          this.isDrawing = true;
+          this.currentPoints = [this._clampPoint([x, y])];
+        } else {
+          if (this.currentPoints.length > 2) {
+            const [fx, fy] = this.currentPoints[0];
+            if (Math.hypot(x - fx, y - fy) < 12 / (this.baseScale * this.zoom)) {
+              this._finishPolygon(); return;
+            }
+          }
+          this.currentPoints.push(this._clampPoint([x, y]));
+        }
+        this._drawCanvas();
+      }
+    };
+
+    canvas.onmousemove = (e) => {
+      if (this.panDragging) {
+        e.preventDefault();
+        this.panX = this.panOrigin[0] + e.clientX - this.panDragStart[0];
+        this.panY = this.panOrigin[1] + e.clientY - this.panDragStart[1];
+        this._clampPan(); this._drawCanvas();
+        return;
+      }
+      if (!this.editorImage) return;
+      const [x, y, cx, cy] = this._getPos(e, canvas);
+      this.mousePos = [cx, cy];
+      if (this.activeTool === "select") {
+        if (this.dragMode === "vertex" && this.selectedShapeIdx !== -1) {
+          this.editorShapes[this.selectedShapeIdx].points[this.hoverVertexIdx] =
+            this._clampPoint([x, y]);
+          this._drawCanvas(); return;
+        }
+        if (this.dragMode === "shape" && this.dragStart && this.selectedShapeIdx !== -1) {
+          const shape = this.editorShapes[this.selectedShapeIdx];
+          const [dx, dy] = this._clampShapeDelta(
+            shape, x - this.dragStart[0], y - this.dragStart[1]);
+          shape.points = shape.points.map((p) => [p[0] + dx, p[1] + dy]);
+          this.dragStart = [this.dragStart[0] + dx, this.dragStart[1] + dy];
+          this._drawCanvas(); return;
+        }
+        let hoverVtx = -1, hoverVtxShape = -1, hoverShape = -1;
+        const anyVtx = this._hitTestAnyVertex(x, y);
+        if (anyVtx) [hoverVtxShape, hoverVtx] = anyVtx;
+        else hoverShape = this._hitTestShape(x, y);
+        if (hoverShape !== this.hoverShapeIdx || hoverVtx !== this.hoverVertexIdx ||
+            hoverVtxShape !== this.hoverVertexShapeIdx) {
+          this.hoverShapeIdx = hoverShape;
+          this.hoverVertexIdx = hoverVtx;
+          this.hoverVertexShapeIdx = hoverVtxShape;
+          this._drawCanvas();
+        }
+        this._updateCursor();
+      } else if (this.activeTool === "rect" && this.isDrawing) {
+        this.currentPoints[1] = this._clampPoint([x, y]);
+        this._drawCanvas();
+      } else if (this.activeTool === "poly" && this.isDrawing) {
+        this._drawCanvas();
+      } else if (this.activeTool === "sam" && this.sam.down) {
+        const [dx, dy] = this.sam.down;
+        const cur = this._clampPoint([x, y]);
+        // a real drag (not a wobbly click) previews a box prompt
+        if (this.sam.dragBox || Math.hypot(cur[0] - dx, cur[1] - dy) > 6 / (this.baseScale * this.zoom)) {
+          this.sam.dragBox = [this.sam.down, cur];
+          this._drawCanvas();
+        }
+      }
+    };
+
+    canvas.onmouseup = (e) => {
+      if (this.panDragging) {
+        const moved = this.panDragStart
+          ? Math.hypot(e.clientX - this.panDragStart[0], e.clientY - this.panDragStart[1]) : 99;
+        this.panDragging = false; this.panDragStart = null; this.panOrigin = null;
+        this._updateCursor();
+        if (e.button === 2 && moved < 4 && this.activeTool === "sam" && this.editorImage) {
+          const [x, y] = this._getPos(e, canvas);
+          this.sam.points.push(this._clampPoint([x, y]));
+          this.sam.labels.push(0);
+          this._samQuery();
+          this._drawCanvas();
+        }
+        return;
+      }
+      if (this.activeTool === "select") {
+        if (this.dragMode) {
+          if (this.selectedShapeIdx !== -1)
+            this._clampShapePoints(this.editorShapes[this.selectedShapeIdx]);
+          this._triggerChange();
+        }
+        this.dragMode = null; this.dragStart = null;
+      } else if (this.activeTool === "sam" && this.sam.down) {
+        const down = this.sam.down;
+        this.sam.down = null;
+        if (this.sam.dragBox) {
+          const [[x1, y1], [x2, y2]] = this.sam.dragBox;
+          this.sam.dragBox = null;
+          const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
+          if (w > 2 && h > 2) {
+            // a fresh box always means another object: park the current mask
+            // (only with a class typed — asking mid-drag would lose the new box)
+            if (this.sam.candidate && (this.sam.points.length || this.sam.box)
+                && $("class-input").value.trim()) this._samQueue(false);
+            this.sam.box = [Math.min(x1, x2), Math.min(y1, y2), w, h];
+          }
+        } else {
+          this.sam.points.push(down);
+          this.sam.labels.push(this._samShift ? 0 : 1);
+        }
+        this._samQuery();
+        this._drawCanvas();
+      } else if (this.activeTool === "rect" && this.isDrawing) {
+        this.isDrawing = false;
+        const [x1, y1] = this.currentPoints[0], [x2, y2] = this.currentPoints[1];
+        const min = 5 / (this.baseScale * this.zoom);
+        this.currentPoints = [];
+        if (Math.abs(x2 - x1) > min && Math.abs(y2 - y1) > min) {
+          this._addShape({
+            shape_type: "rectangle",
+            points: [[Math.min(x1, x2), Math.min(y1, y2)],
+                     [Math.max(x1, x2), Math.max(y1, y2)]],
+          });
+        }
+        this._drawCanvas();
+      }
+    };
+
+    canvas.onmouseleave = () => {
+      if (this.panDragging) {
+        this.panDragging = false; this.panDragStart = null; this.panOrigin = null;
+        this._updateCursor();
+      }
+    };
+    // Right-click is reserved for panning; just suppress the context menu.
+    canvas.oncontextmenu = (e) => e.preventDefault();
+    canvas.onauxclick = (e) => { if (e.button === 1) e.preventDefault(); };
+    // Finish a polygon with a double-click (each click added a vertex at ~the
+    // same spot; drop the duplicate before closing, keep at least 3 points).
+    canvas.ondblclick = (e) => {
+      if (this.activeTool === "poly" && this.isDrawing) {
+        e.preventDefault();
+        if (this.currentPoints.length > 3) this.currentPoints.pop();
+        this._finishPolygon();
+      }
+    };
+  },
+
+  // ------------------------------------------------------------- SAM tool
+  // Prompt state lives here; the server answers with a CANDIDATE shape that
+  // is only written when the user accepts it (through the ordinary save).
+  sam: { points: [], labels: [], box: null, candidate: null, down: null, dragBox: null, seq: 0,
+         queued: [] },  // queued: masks kept with Space, written together on Enter (SAM-T5)
+
+  _samModel() { return $("sam-model").value || "sam2.1-tiny"; },
+  _samOutput() {
+    const picked = document.querySelector('input[name="sam-output"]:checked');
+    return picked ? picked.value : "polygon";
+  },
+  _samSetStatus(text, warn = false) {
+    $("sam-status").textContent = text;
+    $("sam-status").style.color = warn ? "var(--warn)" : "var(--dim)";
+  },
+  _samSyncButtons() {
+    const has = this.sam.points.length || this.sam.box;
+    const live = !!(this.sam.candidate && this.sam.candidate.points.length);
+    const total = this.sam.queued.length + (live ? 1 : 0);
+    $("sam-accept").disabled = !total;
+    $("sam-accept").textContent = total > 1 ? `Accept ${total} (Enter)` : "Accept (Enter)";
+    $("sam-next").disabled = !live;
+    $("sam-clear").disabled = !(has || this.sam.queued.length);
+    $("sam-class-echo").textContent = $("class-input").value.trim() || "the class you will be asked for";
+  },
+  _samReset(redraw, dropQueue = false) {
+    this.sam.points = []; this.sam.labels = []; this.sam.box = null;
+    this.sam.candidate = null; this.sam.down = null; this.sam.dragBox = null;
+    if (dropQueue) this.sam.queued = [];
+    this.sam.seq++;
+    if ($("sam-panel")) { this._samSyncButtons(); if (this.activeTool !== "sam") this._samSetStatus(""); }
+    if (redraw) this._drawCanvas();
+  },
+  // Esc: first the prompts of the object being worked on, then the queue
+  _samClear() {
+    if (this.sam.points.length || this.sam.box) { this._samReset(true); this._samQueueStatus(); return; }
+    if (this.sam.queued.length) {
+      const n = this.sam.queued.length;
+      this._samReset(true, true);
+      toast(`Dropped ${n} queued object${n > 1 ? "s" : ""}`, "", 900);
+    }
+  },
+  _samQueueStatus() {
+    const n = this.sam.queued.length;
+    if (n) this._samSetStatus(`${n} object${n > 1 ? "s" : ""} queued — prompt the next one, Enter accepts all`);
+  },
+  // Space / a new box: keep the current mask with its class, prompt the next object
+  async _samQueue(redraw = true) {
+    const cand = this.sam.candidate;
+    if (!cand || !cand.points.length) return;
+    const seq = this.sam.seq;
+    const cls = await this._labelFor();
+    if (!cls || seq !== this.sam.seq || this.sam.candidate !== cand) return;  // changed meanwhile
+    this.sam.queued.push({ label: cls, shape_type: cand.shape_type,
+                           points: cand.points.map((p) => [p[0], p[1]]) });
+    this._samReset(redraw);
+    this._samQueueStatus();
+  },
+  async _samPrefetch() {
+    if (this.currentIdx < 0 || !this.queue[this.currentIdx]) return;
+    const image = this.queue[this.currentIdx].image;
+    this._samSetStatus("preparing the image (encoder runs once; first use downloads the model)…");
+    try {
+      const r = await api(`/images/${image.id}/segment/prefetch`, json("POST", { model: this._samModel() }));
+      if (this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === image.id) {
+        this._samSetStatus(r.embedding_cached ? "ready" : `ready (${Math.round(r.elapsed_ms)} ms)`);
+      }
+    } catch (e) { this._samSetStatus(e.message, true); }
+  },
+  async _samQuery() {
+    const image = this.queue[this.currentIdx].image;
+    const seq = ++this.sam.seq;
+    if (!this.sam.points.length && !this.sam.box) { this.sam.candidate = null; this._samSyncButtons(); return; }
+    this._samSetStatus("segmenting…");
+    try {
+      const cand = await api(`/images/${image.id}/segment`, json("POST", {
+        points: this.sam.points, labels: this.sam.labels, box: this.sam.box,
+        output: this._samOutput(), model: this._samModel(),
+      }));
+      if (seq !== this.sam.seq) return;  // the user clicked again meanwhile
+      this.sam.candidate = cand.points.length ? cand : null;
+      this._samSetStatus(cand.points.length
+        ? `mask ${Math.round(cand.area)} px² · confidence ${cand.score.toFixed(2)} · ${Math.round(cand.elapsed_ms)} ms${cand.embedding_cached ? "" : " (encoder)"}`
+        : "no mask for this prompt — add a point inside the object", !cand.points.length);
+    } catch (e) {
+      if (seq !== this.sam.seq) return;
+      this.sam.candidate = null;
+      this._samSetStatus(e.message, true);
+    }
+    this._samSyncButtons();
+    this._drawCanvas();
+  },
+  _samUndoPoint() {
+    if (this.sam.points.length) { this.sam.points.pop(); this.sam.labels.pop(); }
+    else this.sam.box = null;
+    this._samQuery();
+    this._drawCanvas();
+  },
+  async _samAccept() {
+    const cand = this.sam.candidate;
+    const items = [...this.sam.queued];
+    if (cand && cand.points.length) {
+      const seq = this.sam.seq;
+      const label = await this._labelFor();
+      if (!label || seq !== this.sam.seq) return;  // discarded, or the prompt changed
+      items.push({ label, shape_type: cand.shape_type, points: cand.points });
+    }
+    if (!items.length) return;
+    this._pushHistory();  // one undo step for the whole batch
+    for (const item of items) {
+      const shape = { label: item.label, shape_type: item.shape_type,
+                      points: item.points.map((p) => this._clampPoint([p[0], p[1]])) };
+      this._clampShapePoints(shape);
+      this.editorShapes.push(shape);
+      this.sessionNames.add(item.label);
+    }
+    this._triggerChange();
+    this.renderChips();
+    toast(items.length === 1
+      ? `Added ${items[0].label} (${items[0].shape_type})`
+      : `Added ${items.length} objects`, "ok", 900);
+    this._samReset(true, true);  // stay in the tool: the next object is one click away
+  },
+  // SAM-T6: existing boxes are prompts. Each rectangle shape is sent as a box
+  // prompt (embedding cached server-side, so this is one decoder pass per
+  // box) and rewritten in place as a polygon — label, status, score and id
+  // stay; a box without a mask stays a box. Works on unsaved shapes too:
+  // the result goes through the ordinary save, like any edit.
+  async boxToPolygon(indices) {
+    const list = (Array.isArray(indices) ? indices : [indices])
+      .filter((i) => this.editorShapes[i] && this.editorShapes[i].shape_type === "rectangle");
+    if (!list.length || !this.editorImage || this.currentIdx < 0) return;
+    const image = this.queue[this.currentIdx].image;
+    const model = this._samModel();
+    // an autosave may rebuild editorShapes (same order) while we await the
+    // server, so re-read the shape by index each time and stop if the user
+    // switched image
+    const onImage = () => this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === image.id;
+    this._pushHistory();
+    let done = 0, kept = 0;
+    if (list.length > 1) toast(`SAM: converting ${list.length} boxes…`, "", 1500);
+    for (const i of list) {
+      if (!onImage()) return;
+      const s = this.editorShapes[i];
+      if (!s || s.shape_type !== "rectangle") continue;
+      const [[x1, y1], [x2, y2]] = s.points;
+      const box = [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)];
+      try {
+        const cand = await api(`/images/${image.id}/segment`,
+          json("POST", { box, output: "polygon", model }));
+        if (!onImage()) return;
+        const target = this.editorShapes[i];
+        if (!target || target.shape_type !== "rectangle") continue;
+        if (!cand.points.length) { kept++; continue; }
+        target.shape_type = "polygon";
+        target.points = cand.points.map((p) => this._clampPoint([p[0], p[1]]));
+        this._clampShapePoints(target);
+        done++;
+        this._drawCanvas();
+      } catch (e) { toast(e.message, "err", 4000); break; }
+    }
+    if (done) this._triggerChange();
+    this._drawCanvas();
+    this.renderShapesList();
+    toast(`${done} box${done === 1 ? "" : "es"} → polygon`
+      + (kept ? ` · ${kept} kept as box (no mask)` : ""), done ? "ok" : "warn", 2500);
+  },
+  _samDraw(ctx, inv) {
+    const liveClass = $("class-input").value.trim();
+    // parked objects: their own class colour, solid thin edge (not yet written)
+    for (const q of this.sam.queued) {
+      ctx.beginPath();
+      if (q.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = q.points;
+        ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      } else {
+        q.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+      }
+      ctx.fillStyle = this._getColor(q.label); ctx.globalAlpha = 0.22; ctx.fill();
+      ctx.globalAlpha = 1; ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    }
+    const color = liveClass ? this._getColor(liveClass) : "#9aa0a6";
+    const cand = this.sam.candidate;
+    if (cand && cand.points.length) {
+      ctx.beginPath();
+      if (cand.shape_type === "rectangle") {
+        const [[x1, y1], [x2, y2]] = cand.points;
+        ctx.rect(x1, y1, x2 - x1, y2 - y1);
+      } else {
+        cand.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+      }
+      ctx.fillStyle = color; ctx.globalAlpha = 0.32; ctx.fill();
+      ctx.globalAlpha = 1; ctx.lineWidth = 2.5 * inv; ctx.strokeStyle = "#ffffff";
+      ctx.setLineDash([6 * inv, 4 * inv]); ctx.stroke(); ctx.setLineDash([]);
+    }
+    const box = this.sam.dragBox
+      ? [Math.min(this.sam.dragBox[0][0], this.sam.dragBox[1][0]),
+         Math.min(this.sam.dragBox[0][1], this.sam.dragBox[1][1]),
+         Math.abs(this.sam.dragBox[1][0] - this.sam.dragBox[0][0]),
+         Math.abs(this.sam.dragBox[1][1] - this.sam.dragBox[0][1])]
+      : this.sam.box;
+    if (box) {
+      ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#4dabf7";
+      ctx.setLineDash([4 * inv, 4 * inv]); ctx.strokeRect(box[0], box[1], box[2], box[3]);
+      ctx.setLineDash([]);
+    }
+    this.sam.points.forEach(([x, y], i) => {
+      const positive = this.sam.labels[i] === 1;
+      ctx.beginPath(); ctx.arc(x, y, 6 * inv, 0, Math.PI * 2);
+      ctx.fillStyle = positive ? "#51cf66" : "#ff6b6b"; ctx.fill();
+      ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#101418"; ctx.stroke();
+      ctx.fillStyle = "#101418"; ctx.font = `700 ${9 * inv}px system-ui, sans-serif`;
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(positive ? "+" : "−", x, y + 0.5 * inv);
+      ctx.textAlign = "start"; ctx.textBaseline = "alphabetic";
+    });
+  },
+  async _samLoadModels() {
+    try {
+      const models = (await api("/models")).filter((m) => m.task === "instance_segmentation");
+      let saved = null;
+      try { saved = localStorage.getItem("horos_sam_model"); } catch (e) {}
+      const options = models.map((m) =>
+        `<option value="${m.key}" title="${m.latency_hint} · ${m.license}">${m.display_name.replace(/ \(.*\)$/, "")}</option>`).join("");
+      $("sam-model").innerHTML = options;
+      $("b2p-model").innerHTML = options;
+      const wanted = saved && models.some((m) => m.key === saved) ? saved
+        : models.some((m) => m.key === "sam2.1-tiny") ? "sam2.1-tiny" : (models[0] || {}).key;
+      if (wanted) { $("sam-model").value = wanted; $("b2p-model").value = wanted; }
+    } catch (e) { /* the default key still works server-side */ }
+  },
+
+  _finishPolygon() {
+    this.isDrawing = false;
+    const points = this.currentPoints.map((p) => this._clampPoint(p));
+    this.currentPoints = [];
+    if (points.length > 2) this._addShape({ shape_type: "polygon", points });
+    this._drawCanvas();
+  },
+  // A finished shape is added WITHOUT switching to the select tool — the
+  // annotator keeps drawing the next one — and never gets a made-up class:
+  // with Object Class empty, the class is asked for (and remembered).
+  async _addShape(shape) {
+    // guard by image, not by array identity: an autosave finishing while the
+    // class prompt is open rebuilds editorShapes from the server response
+    const imageId = this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id;
+    this.pendingShape = shape;  // drawn in grey while the class is being asked
+    this._drawCanvas();
+    const label = await this._labelFor();
+    this.pendingShape = null;
+    const still = this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === imageId;
+    if (!still) return;  // the image changed meanwhile
+    if (!label) { toast("Shape discarded — no class given", "warn", 1500); this._drawCanvas(); return; }
+    this._pushHistory();
+    this.editorShapes.push({ label, ...shape });
+    this.sessionNames.add(label);
+    this._triggerChange();
+    this.renderShapesList();
+    this.renderChips();
+    this._drawCanvas();
+  },
+  // the class for a new shape: what is typed in Object Class, else ask
+  async _labelFor() {
+    const typed = $("class-input").value.trim();
+    if (typed) return typed;
+    const name = await this._askLabel();
+    if (name) {
+      $("class-input").value = name;
+      this.sessionNames.add(name);
+      this.renderChips();
+      this._samSyncButtons();
+    }
+    return name;
+  },
+  _askLabel() {
+    return new Promise((resolve) => {
+      const modal = $("label-modal"), input = $("label-input");
+      $("label-datalist").innerHTML = this.categories.map((c) => `<option value="${c.name}">`).join("");
+      $("label-chips").innerHTML = this._visibleCategories().map((c) => `
+        <span class="chip" data-name="${c.name}"><span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
+      const cleanup = () => {
+        input.removeEventListener("keydown", onKey);
+        $("label-ok").onclick = null; $("label-cancel").onclick = null;
+      };
+      const finish = (value) => { modal.style.display = "none"; this._labelPrompt = false; cleanup(); resolve(value); };
+      const ok = () => { const v = input.value.trim(); if (!v) { input.focus(); return; } finish(v); };
+      const onKey = (e) => {
+        e.stopPropagation();  // the editor's shortcuts must not fire while naming
+        if (e.key === "Enter") { e.preventDefault(); ok(); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(null); }
+      };
+      [...$("label-chips").children].forEach((el) => { el.onclick = () => finish(el.dataset.name); });
+      $("label-ok").onclick = ok;
+      $("label-cancel").onclick = () => finish(null);
+      input.addEventListener("keydown", onKey);
+      input.value = "";
+      this._labelPrompt = true;
+      modal.style.display = "flex";
+      input.focus();
+    });
+  },
+
+  // ------------------------------------------------------ review + assist
+  async _refetch() {
+    const item = this.queue[this.currentIdx];
+    const view = await api(`/images/${item.image.id}/annotations`);
+    const known = new Set(this.categories.map((c) => c.id));
+    if (view.annotations.some((a) => !known.has(a.category_id))) {
+      this.categories = (await api("/project")).categories;
+    }
+    this.version = view.version;
+    this.editorShapes = view.annotations.map((a) => this._toShape(a));
+    const confirmed = view.annotations.filter((a) => a.status === "confirmed");
+    item.num_annotations = confirmed.length;
+    item.annotated = confirmed.length > 0;
+    item.num_pending = view.annotations.length - confirmed.length;
+    this.selectedShapeIdx = -1; this.history = []; this.isDirty = false;
+    this._syncReviewBar();
+    this.renderChips();
+    this._drawCanvas();
+  },
+  _pendingShapes() {
+    return this.editorShapes.filter((s) => s.status === "pending");
+  },
+  _syncReviewBar() {
+    const pendings = this._pendingShapes();
+    $("review-card").style.display = pendings.length ? "block" : "none";
+    if (!pendings.length) return;
+    const keep = pendings.filter((s) => (s.score ?? 0) >= this.reviewThreshold).length;
+    $("review-count").textContent =
+      `${pendings.length} pending · ${keep} above threshold`;
+    $("review-threshold-label").textContent = `≥ ${this.reviewThreshold.toFixed(2)}`;
+    $("review-accept").textContent =
+      this.reviewThreshold > 0 ? `Accept ≥ ${this.reviewThreshold.toFixed(2)}` : "Accept all";
+  },
+  async reviewAll(action) {
+    const item = this.queue[this.currentIdx];
+    if (!item) return;
+    const body = { action };
+    if (action === "accept" && this.reviewThreshold > 0)
+      body.min_score = this.reviewThreshold;
+    try {
+      await api(`/images/${item.image.id}/review`, json("POST", body));
+      await this._refetch();
+    } catch (e) { toast(e.message, "err"); }
+  },
+  async reviewOne(annId, action) {
+    const item = this.queue[this.currentIdx];
+    try {
+      await api(`/images/${item.image.id}/review`,
+        json("POST", { action, ann_ids: [annId] }));
+      await this._refetch();
+    } catch (e) { toast(e.message, "err"); }
+  },
+
+  _parsePrompts(text) {
+    // "helmet, safety vest" — each term is both the class name and its prompt
+    const prompts = {};
+    text.split(",").map((t) => t.trim()).filter(Boolean)
+      .forEach((term) => { prompts[term] = [term]; });
+    return prompts;
+  },
+  async runAssist() {
+    const item = this.queue[this.currentIdx];
+    const prompts = this._parsePrompts($("assist-input").value);
+    if (!item || !Object.keys(prompts).length) return;
+    const btn = $("assist-run");
+    btn.disabled = true;
+    $("assist-status").textContent =
+      "running… (the first call loads the model and may download weights)";
+    try {
+      const result = await api(`/images/${item.image.id}/assist`, json("POST", {
+        prompts, threshold: Number($("assist-conf").value) || 0.1,
+        output: document.querySelector('input[name="assist-output"]:checked').value,
+      }));
+      const project = await api("/project");
+      this.categories = project.categories;  // assist may have created classes
+      this.version = result.version;
+      this.editorShapes = result.annotations.map((a) => this._toShape(a));
+      const n = this._pendingShapes().length;
+      $("assist-status").textContent = n ? "" : "no objects found — lower the confidence?";
+      await this._refetch();
+    } catch (e) {
+      $("assist-status").textContent = e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  },
+
+  // -------------------------------------------------------- autolabel job
+  openAutolabelModal() {
+    $("b2p-class").innerHTML = '<option value="">all classes</option>'
+      + (this.categories || []).map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+    $("autolabel-modal").style.display = "flex";
+    $("autolabel-form").style.display = "block";
+    $("autolabel-progress").style.display = "none";
+    if (!$("prompt-rows").children.length) this.addPromptRow();
+  },
+  closeAutolabelModal() {
+    clearTimeout(this._jobTimer);
+    $("autolabel-modal").style.display = "none";
+  },
+  addPromptRow(cls = "", prompts = "") {
+    const row = document.createElement("div");
+    row.className = "prompt-row";
+    row.innerHTML = `
+      <input type="text" placeholder="class" value="${cls}">
+      <input type="text" placeholder="prompts, comma-separated (default: the class name)"
+             value="${prompts}">`;
+    $("prompt-rows").appendChild(row);
+    row.firstElementChild.focus();
+  },
+  async startAutolabel() {
+    const prompts = {};
+    [...$("prompt-rows").children].forEach((row) => {
+      const [clsInput, promptInput] = row.querySelectorAll("input");
+      const cls = clsInput.value.trim();
+      if (!cls) return;
+      const plist = promptInput.value.split(",").map((t) => t.trim()).filter(Boolean);
+      prompts[cls] = plist.length ? plist : [cls];
+    });
+    if (!Object.keys(prompts).length) { toast("Add at least one class", "warn"); return; }
+    try {
+      const { job_id } = await api("/autolabel", json("POST", {
+        prompts,
+        threshold: Number($("autolabel-conf").value) || 0.1,
+        only_unannotated: $("autolabel-unannotated").checked,
+        output: document.querySelector('input[name="autolabel-output"]:checked').value,
+      }));
+      this._startJob(job_id, "autolabel");
+    } catch (e) { toast(e.message, "err", 4000); }
+  },
+  // SAM-T6: the project's boxes (one class or all) become SAM polygons
+  async startBoxesToPolygons() {
+    const cls = $("b2p-class").value;
+    try {
+      const { job_id } = await api("/segment/boxes", json("POST", {
+        categories: cls ? [Number(cls)] : null,
+        include_pending: $("b2p-pending").checked,
+        model: $("b2p-model").value || "sam2.1-tiny",
+      }));
+      this._startJob(job_id, "boxes");
+    } catch (e) { toast(e.message, "err", 4000); }
+  },
+  _startJob(jobId, kind) {
+    this._jobId = jobId;
+    this._jobKind = kind;
+    this._jobEvents = 0;
+    $("autolabel-form").style.display = "none";
+    $("autolabel-progress").style.display = "block";
+    $("job-text").textContent = "starting… (the first run may download weights)";
+    $("job-bar").firstElementChild.style.width = "0";
+    this.pollJob();
+  },
+  async pollJob() {
+    try {
+      const body = await api(`/jobs/${this._jobId}?after=${this._jobEvents}`);
+      this._jobEvents = body.num_events;
+      for (const event of body.events) {
+        if (event.type === "progress") {
+          const pct = event.total ? (100 * event.current) / event.total : 0;
+          $("job-bar").firstElementChild.style.width = pct + "%";
+          const line = `${event.current}/${event.total ?? "?"} — ${event.message || event.phase}`;
+          $("job-text").textContent = line;
+          $("job-text").title = line;  // ellipsized, hover shows the full name
+        } else if (event.type === "failed") {
+          $("job-text").textContent = "failed: " + event.message;
+        }
+      }
+      if (body.state === "running") {
+        this._jobTimer = setTimeout(() => this.pollJob(), 800);
+        return;
+      }
+      if (body.state === "completed") {
+        const all = (await api(`/jobs/${this._jobId}`)).events;
+        const done = all.find((e) => e.type === "completed");
+        const result = (done && done.result) || {};
+        if (this._jobKind === "boxes") {
+          toast(result.images
+            ? `Converted ${result.converted || 0} box(es) into polygons on ${result.images} image(s)`
+              + (result.skipped ? ` · ${result.skipped} kept as box (no mask)` : "")
+            : "No box annotations matched — nothing to convert.",
+            result.images ? "ok" : "warn", 6000);
+          this.closeAutolabelModal();
+          // the stored geometry changed under the editor: reload the page
+          // of images (and the open one) instead of showing stale boxes
+          await this.loadImages(this.page || 1);
+          return;
+        }
+        if (!result.images) {
+          // nothing was even attempted — surface the reason, don't pretend success
+          const why = all.find((e) => e.type === "warning");
+          toast(why ? why.message : "Auto-label matched no images.", "err", 8000);
+          this.closeAutolabelModal();
+          return;
+        }
+        toast(`Auto-label finished: ${result.annotations || 0} pre-label(s) — review them in "Needs review" mode.`, "warn", 5000);
+        this.closeAutolabelModal();
+        // the job may have created classes server-side; a stale list would
+        // render their pre-labels as bare category ids
+        this.categories = (await api("/project")).categories;
+        $("queue-mode").value = "pending";
+        await this.loadImages(1);
+      } else if (body.state === "cancelled") {
+        toast(this._jobKind === "boxes"
+          ? "Conversion cancelled — images already processed keep their polygons."
+          : "Auto-label cancelled — finished images keep their pre-labels.", "warn");
+        this.closeAutolabelModal();
+        await this.loadImages(1);
+      }
+    } catch (e) {
+      $("job-text").textContent = "polling failed: " + e.message;
+      this._jobTimer = setTimeout(() => this.pollJob(), 2000);
+    }
+  },
+  async cancelAutolabel() {
+    try { await api(`/jobs/${this._jobId}/cancel`, json("POST", {})); }
+    catch (e) { toast(e.message, "err"); }
+  },
+
+  // ----------------------------------------------------------- class modal
+  async openClassManager() {
+    $("class-modal").style.display = "flex";
+    let counts = {};
+    try {
+      const stats = await api("/dataset/stats");
+      stats.per_class.forEach((c) => { counts[c.name] = c.instances; });
+    } catch (e) {}
+    $("class-tbody").innerHTML = this.categories.map((c) => `
+      <tr>
+        <td><input type="color" value="${c.color}" data-id="${c.id}"
+             style="width:26px;height:20px;border:none;background:none;padding:0;cursor:pointer"></td>
+        <td>${c.name}</td>
+        <td>${counts[c.name] || 0}</td>
+        <td>
+          <div style="display:flex;gap:6px">
+            <button class="btn" data-act="rename" data-id="${c.id}">Rename</button>
+            <button class="btn danger" data-act="delete" data-id="${c.id}">Del</button>
+          </div>
+        </td>
+        <td style="text-align:center;vertical-align:middle"><input type="checkbox" data-merge="${c.id}"
+             title="Merge '${c.name}' into another class"></td>
+      </tr>`).join("");
+    $("class-tbody").querySelectorAll("button").forEach((b) => {
+      const id = Number(b.dataset.id);
+      b.onclick = b.dataset.act === "rename"
+        ? () => this.renameClass(id) : () => this.deleteClass(id);
+    });
+    this._mergeCounts = counts;
+    $("class-tbody").querySelectorAll("input[data-merge]").forEach((box) => {
+      box.onchange = () => this._updateMergeRow();
+    });
+    this._updateMergeRow();
+    $("class-tbody").querySelectorAll("input[type=color]").forEach((inp) => {
+      // live preview while the picker is open; the PATCH persists on commit
+      inp.oninput = () => {
+        const cat = this.categories.find((c) => c.id === Number(inp.dataset.id));
+        if (cat) { cat.color = inp.value; this.renderChips(); this._drawCanvas(); }
+      };
+      inp.onchange = async () => {
+        const cat = await api(`/categories/${inp.dataset.id}`,
+          json("PATCH", { color: inp.value }));
+        Object.assign(this.categories.find((c) => c.id === cat.id), cat);
+        this.renderChips(); this._drawCanvas();
+      };
+    });
+  },
+  _mergeSelection() {
+    return [...$("class-tbody").querySelectorAll("input[data-merge]:checked")]
+      .map((box) => Number(box.dataset.merge));
+  },
+  _updateMergeRow() {
+    const sources = this._mergeSelection();
+    const row = $("merge-row");
+    row.style.display = sources.length ? "flex" : "none";
+    if (!sources.length) return;
+    const names = sources.map((id) => this.categories.find((c) => c.id === id).name);
+    $("merge-label").textContent =
+      `Merge ${names.map((n) => `'${n}'`).join(", ")} into`;
+    const targets = this.categories.filter((c) => !sources.includes(c.id));
+    const keep = $("merge-target").value;
+    $("merge-target").innerHTML = targets
+      .map((c) => `<option value="${c.id}">${c.name}</option>`).join("");
+    if (targets.some((c) => String(c.id) === keep)) $("merge-target").value = keep;
+    $("btn-merge").disabled = targets.length === 0;
+  },
+  async mergeClasses() {
+    const sources = this._mergeSelection();
+    const targetId = Number($("merge-target").value);
+    const target = this.categories.find((c) => c.id === targetId);
+    if (!sources.length || !target) return;
+    const sourceCats = sources.map((id) => this.categories.find((c) => c.id === id));
+    const moving = sourceCats.reduce((n, c) => n + (this._mergeCounts[c.name] || 0), 0);
+    if (!confirm(`Merge ${sourceCats.map((c) => `'${c.name}'`).join(", ")} into `
+                 + `'${target.name}'?\n\n${moving} annotation(s) will be relabelled as `
+                 + `'${target.name}' and the merged class(es) removed. This cannot be undone.`)) return;
+    let result;
+    try {
+      result = await api("/categories/merge", json("POST", { sources, target: targetId }));
+    } catch (e) { toast(e.message, "err"); return; }
+    const sourceNames = new Set(sourceCats.map((c) => c.name));
+    this.categories = this.categories.filter((c) => !sources.includes(c.id));
+    // everything else keys classes by NAME — fold the counts, the session
+    // set and the class input into the target
+    sourceNames.forEach((name) => {
+      this.classCounts[target.name] = (this.classCounts[target.name] || 0)
+        + (this.classCounts[name] || 0);
+      delete this.classCounts[name];
+      if (this.sessionNames.delete(name)) this.sessionNames.add(target.name);
+    });
+    if (sourceNames.has($("class-input").value.trim())) $("class-input").value = target.name;
+    // the server relabelled (and version-bumped) the open image too: reload
+    // it so the editor matches instead of re-saving stale labels
+    if (this.currentIdx >= 0 && this.editorShapes.some((s) => sourceNames.has(s.label))) {
+      if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+      const image = this.queue[this.currentIdx].image;
+      const view = await api(`/images/${image.id}/annotations`);
+      this.version = view.version;
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      this.selectedShapeIdx = -1; this.isDirty = false;
+      this._setSaveState("", "");
+    }
+    toast(`Merged ${result.merged_annotations} annotation(s) into '${target.name}'`, "ok");
+    this.renderChips(); this._drawCanvas(); this.openClassManager();
+  },
+  async addClassFromManager() {
+    const name = $("new-class-name").value.trim();
+    if (!name) return;
+    try {
+      const cat = await api("/categories", json("POST", { name }));
+      this.categories.push(cat);
+      this.sessionNames.add(name);
+      $("new-class-name").value = "";
+      this.renderChips(); this.openClassManager();
+    } catch (e) { toast(e.message, "err"); }
+  },
+  async renameClass(id) {
+    const cat = this.categories.find((c) => c.id === id);
+    const name = prompt(`Rename class '${cat.name}':`, cat.name);
+    if (!name || name === cat.name) return;
+    try {
+      const updated = await api(`/categories/${id}`, json("PATCH", { name }));
+      const oldName = cat.name;
+      Object.assign(cat, updated);
+      // everything else keys classes by NAME — remap it all, or the canvas
+      // keeps painting the old label and a later save would re-CREATE the
+      // old class from the stale shape labels
+      this.editorShapes.forEach((s) => { if (s.label === oldName) s.label = updated.name; });
+      if (oldName in this.classCounts) {
+        this.classCounts[updated.name] = this.classCounts[oldName];
+        delete this.classCounts[oldName];
+      }
+      if (this.sessionNames.delete(oldName)) this.sessionNames.add(updated.name);
+      if ($("class-input").value.trim() === oldName) $("class-input").value = updated.name;
+      this.renderChips(); this._drawCanvas(); this.openClassManager();
+    } catch (e) { toast(e.message, "err"); }
+  },
+  async deleteClass(id) {
+    const cat = this.categories.find((c) => c.id === id);
+    try {
+      await api(`/categories/${id}`, json("DELETE", {}));
+    } catch (e) {
+      if (e.status !== 400) { toast(e.message, "err"); return; }
+      if (!confirm(`${e.message}\n\nDelete the class AND those annotations?`)) return;
+      try { await api(`/categories/${id}`, json("DELETE", { force: true })); }
+      catch (e2) { toast(e2.message, "err"); return; }
+    }
+    this.categories = this.categories.filter((c) => c.id !== id);
+    delete this.classCounts[cat.name];
+    this.sessionNames.delete(cat.name);
+    // a force-delete removed this class's annotations server-side (bumping
+    // versions); reload the open image so the editor matches — keeping the
+    // stale shapes would re-create the class on the next auto-save
+    if (this.currentIdx >= 0 &&
+        this.editorShapes.some((s) => s.label === cat.name)) {
+      if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
+      const image = this.queue[this.currentIdx].image;
+      const view = await api(`/images/${image.id}/annotations`);
+      this.version = view.version;
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      this.selectedShapeIdx = -1; this.isDirty = false;
+      this._setSaveState("", "");
+    }
+    this.renderChips(); this._drawCanvas(); this.openClassManager();
+  },
+};
+
+Page._bindKeys();
+Page.init().catch((e) => toast("Failed to load: " + e.message, "err", 8000));
+</script>
+</body>
+</html>
