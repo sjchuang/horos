@@ -307,7 +307,7 @@
         <h4>Tools</h4>
         <div class="tools">
           <button class="tool-btn ai active" data-tool="sam"
-            title="Draw — click the object; right-click (or Shift+click) what is not it, or drag a rough box. Enter accepts, Space starts the next object. (1)">✦</button>
+            title="Draw — click the object; right-click (or Shift+click) what is not it, or drag a rough box. Enter or Space accepts. (1)">✦</button>
           <button class="tool-btn" data-tool="select"
             title="Edit — click a shape to select, drag to move, drag a point to reshape, click an edge to add a point, drop a point onto another to merge them. (2)">✎</button>
           <button class="tool-btn ai" data-tool="ai-text"
@@ -315,8 +315,8 @@
         </div>
         <div id="sam-panel" style="display:none;margin-top:10px">
           <div style="font-size:11px;color:var(--dim);line-height:1.5">
-            Click the object, right-click what is not. <b>Space</b> next object,
-            <b>Enter</b> accept as <span id="sam-class-echo" style="color:var(--text)">object</span>,
+            Click the object, right-click what is not. <b>Enter</b> or <b>Space</b>
+            accept as <span id="sam-class-echo" style="color:var(--text)">object</span>,
             <b>Esc</b> clear.</div>
           <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
             <span>Output</span>
@@ -332,9 +332,8 @@
           </div>
           <div style="display:flex;gap:6px;margin-top:8px">
             <button class="btn primary" id="sam-accept" style="flex:1" disabled>Accept</button>
-            <button class="btn" id="sam-next" disabled
-                    title="Keep this mask and start the next object (Space)">Next</button>
-            <button class="btn" id="sam-clear" disabled>Clear</button>
+            <button class="btn" id="sam-clear" disabled
+                    title="Drop the prompts of this object; press again to drop queued objects too (Esc)">Clear (Esc)</button>
           </div>
           <button class="btn" id="sam-convert-all" style="width:100%;margin-top:6px" disabled
                   title="Every box on this image becomes the prompt for its own SAM mask and is rewritten as a polygon (keeps class, status and score); a box SAM cannot segment stays a box. One box: the ⬠ button in the Shapes list, or P with it selected.">
@@ -537,7 +536,7 @@
       <tr><td>1 / 2 / 3</td><td>Draw ✦ (click the object) / Edit ✎ / Prompt T</td></tr>
       <tr><td>Edit: click an edge</td><td>add a control point there</td></tr>
       <tr><td>Edit: drop a point on another</td><td>merge them (points in between go too)</td></tr>
-      <tr><td>Space / Enter</td><td>SAM: keep this mask and start the next object / accept all</td></tr>
+      <tr><td>Enter / Space</td><td>Draw ✦: accept the mask (asks for the class when it is blank)</td></tr>
       <tr><td>P</td><td>selected box → polygon (SAM uses the box as its prompt)</td></tr>
       <tr><td>A / D</td><td>previous / next image</td></tr>
       <tr><td>S</td><td>skip this photo (and look-alikes)</td></tr>
@@ -691,7 +690,6 @@ const Page = {
     $("autolabel-cancel").onclick = () => this.cancelAutolabel();
     $("assist-run").onclick = () => this.runAssist();
     $("sam-accept").onclick = () => this._samAccept();
-    $("sam-next").onclick = () => this._samQueue();
     $("sam-clear").onclick = () => this._samClear();
     $("sam-convert-all").onclick = () => this.boxToPolygon(
       this.editorShapes.map((s, i) => (s.shape_type === "rectangle" ? i : -1)).filter((i) => i >= 0));
@@ -1307,14 +1305,11 @@ const Page = {
           e.preventDefault();  // focus moves into the prompt — don't type the "3"
           this.setTool("ai-text", true);
           break;
-        case "Enter": case "NumpadEnter":
+        case "Enter": case "NumpadEnter": case "Space":
+          // Space and Enter both confirm the mask — one key under the thumb while clicking
           if (this.activeTool === "sam" && (this.sam.candidate || this.sam.queued.length)) {
             e.preventDefault(); this._samAccept();
           }
-          break;
-        case "Space":
-          // multi-object flow (SAM-T5): park this mask, prompt the next one
-          if (this.activeTool === "sam" && this.sam.candidate) { e.preventDefault(); this._samQueue(); }
           break;
         case "KeyP": {
           // SAM-T6: the selected box becomes the prompt for its own polygon
@@ -1905,7 +1900,7 @@ const Page = {
   // Prompt state lives here; the server answers with a CANDIDATE shape that
   // is only written when the user accepts it (through the ordinary save).
   sam: { points: [], labels: [], box: null, candidate: null, down: null, dragBox: null, seq: 0,
-         queued: [] },  // queued: masks kept with Space, written together on Enter (SAM-T5)
+         queued: [] },  // queued: masks kept when a new box is dragged over a live one, written together on Enter / Space (SAM-T5)
 
   _samModel() { return $("sam-model").value || "sam2.1-tiny"; },
   _samOutput() {
@@ -1922,7 +1917,6 @@ const Page = {
     const total = this.sam.queued.length + (live ? 1 : 0);
     $("sam-accept").disabled = !total;
     $("sam-accept").textContent = total > 1 ? `Accept ${total} (Enter)` : "Accept (Enter)";
-    $("sam-next").disabled = !live;
     $("sam-clear").disabled = !(has || this.sam.queued.length);
     $("sam-class-echo").textContent = $("class-input").value.trim() || "the class you will be asked for";
   },
@@ -1945,9 +1939,9 @@ const Page = {
   },
   _samQueueStatus() {
     const n = this.sam.queued.length;
-    if (n) this._samSetStatus(`${n} object${n > 1 ? "s" : ""} queued — prompt the next one, Enter accepts all`);
+    if (n) this._samSetStatus(`${n} object${n > 1 ? "s" : ""} queued — prompt the next one, Enter / Space accepts all`);
   },
-  // Space / a new box: keep the current mask with its class, prompt the next object
+  // a new box dragged while a mask is live: keep that mask with its class, prompt the next object
   async _samQueue(redraw = true) {
     const cand = this.sam.candidate;
     if (!cand || !cand.points.length) return;

@@ -37,14 +37,14 @@ horos ui <project>
 
 ### D. 多物體批次接受(SAM-T5)
 
-14. 點第一個物體得到 mask 後按 <b>Space</b>(或「Next object」):mask 變成該類別色的實線薄邊
-    (已保留、尚未寫入),prompt 清空,狀態列「1 object queued — prompt the next one, Enter accepts all」
-15. 換類別(直接改 Object Class 或數字鍵)再點第二個物體、第三個物體,每次 Space;
-    「Accept」按鈕顯示「Accept 3 (Enter)」
-16. 不按 Space 直接拖一個新框:目前的 mask 自動入列,新框成為新物體的 prompt
-17. Enter:所有入列的物體加上目前的候選一次寫入,各自保留當時的類別;toast「Added 3 objects」;
+14. 點第一個物體得到 mask 後按 <b>Space</b> 或 <b>Enter</b>:兩鍵效果相同,mask 立刻寫入(2026-09-13 起
+    Space 不再是「下一個物體」,Next 按鈕已移除),留在 Draw 工具可直接點下一個
+15. 多物體批次:得到 mask 後不按鍵、直接拖一個新框(Object Class 需有值),目前的 mask 自動入列成該類別色的
+    實線薄邊,狀態列「1 object queued — prompt the next one, Enter / Space accepts all」
+16. 再拖第三個框:「Accept」按鈕顯示「Accept 3 (Enter)」
+17. Enter 或 Space:所有入列的物體加上目前的候選一次寫入,各自保留當時的類別;toast「Added 3 objects」;
     Ctrl+Z 一次還原整批
-18. Esc 第一下清掉目前物體的點與框(入列的保留);再按 Esc 丟掉整個隊列(toast 提示數量)
+18. Esc(或「Clear (Esc)」按鈕)第一下清掉目前物體的點與框(入列的保留);再按一次丟掉整個隊列(toast 提示數量)
 19. 切工具或切圖:隊列一併清空(未寫入的不會偷跟到下一張)
 
 ### E. 既有 box 當作 hint(SAM-T6)
