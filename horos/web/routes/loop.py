@@ -95,8 +95,8 @@ def train_round(number: int):
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise ProjectError(f"'{key}' must be a positive integer")
             kwargs[key] = value
-    model = body.get("model", "rfdetr-nano")
-    if not isinstance(model, str) or not model:
+    model = body.get("model")  # None → the loop picks detection or segmentation itself
+    if model is not None and (not isinstance(model, str) or not model):
         raise ProjectError("'model' must be a model key")
     extra = body.get("extra") or {}
     if not isinstance(extra, dict):

@@ -522,7 +522,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--device", help="Device override (cuda, mps, cpu)")
     p.add_argument(
-        "--model", default="rfdetr-nano", help="loop train: model key (default rfdetr-nano)"
+        "--model", help="loop train: model key (default: RF-DETR Nano, or RF-DETR-Seg Nano "
+                        "when the labels are mostly polygons)"
     )
     p.add_argument("--epochs", type=int, help="loop train: epochs (default: derived)")
 

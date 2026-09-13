@@ -736,6 +736,32 @@ def _lock_validation(project: Project, labeled: set[int], *, seed: int) -> dict:
             "image_ids": chosen}
 
 
+DETECTION_DEFAULT = "rfdetr-nano"
+SEGMENTATION_DEFAULT = "rfdetr-seg-nano"
+
+
+def default_model_for(project: Project, labeled: set[int]) -> tuple[str, str]:
+    """(model key, reason): the loop never asks the user to pick a model.
+    Polygons on most confirmed annotations mean the project wants masks →
+    RF-DETR-Seg Nano; boxes → RF-DETR Nano. Both are the smallest, Jetson-
+    friendly sizes; experts override through the Train page."""
+    with_polygons = total = 0
+    for image_id in labeled:
+        for a in project.load_annotations(image_id).annotations:
+            if a.status != "confirmed":
+                continue
+            total += 1
+            with_polygons += bool(a.segmentation)
+    if total and with_polygons * 2 >= total:
+        return SEGMENTATION_DEFAULT, (
+            f"{with_polygons} of {total} confirmed annotations are polygons → "
+            f"instance segmentation model"
+        )
+    return DETECTION_DEFAULT, (
+        f"{total - with_polygons} of {total} confirmed annotations are boxes → detection model"
+    )
+
+
 @capability(
     "loop.train",
     summary="Train this round's model on every labeled image (locks the validation split first)",
@@ -748,7 +774,7 @@ def train_round(
     project: Project,
     number: int,
     *,
-    model: str = "rfdetr-nano",
+    model: str | None = None,
     epochs: int | None = None,
     batch_size: int | None = None,
     resolution: int | None = None,
@@ -771,6 +797,10 @@ def train_round(
         raise ProjectError("Not ready to train: " + "; ".join(readiness.reasons))
     labeled = _labeled_ids(project)
     lock = _lock_validation(project, labeled, seed=seed)
+    if model is None:
+        model, model_reason = default_model_for(project, labeled)
+    else:
+        model_reason = "chosen explicitly"
     config = TrainRunConfig(
         model=model, epochs=epochs, batch_size=batch_size, resolution=resolution,
         device=device, seed=seed, image_ids=sorted(labeled), extra=extra or {},
@@ -780,7 +810,8 @@ def train_round(
     record = record.model_copy(update={
         "train_run_id": run.run_id,
         "training": {
-            "model": model, "labeled_images": len(labeled), "validation": lock,
+            "model": model, "model_reason": model_reason,
+            "labeled_images": len(labeled), "validation": lock,
             "labeled_in_round": sum(1 for i in record.image_ids if i in labeled),
         },
     }).advance("training")

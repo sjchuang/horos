@@ -186,3 +186,26 @@ def test_failed_training_returns_the_round_to_labeling(tmp_path):
     assert again.state == "training" and again.train_run_id != trained.train_run_id
     _wait(project, again.train_run_id)
     assert get_round(project, record.number).state == "reviewing"
+
+
+def test_loop_picks_segmentation_model_when_labels_are_polygons(tmp_path):
+    """E10-T18: polygons on most confirmed labels → RF-DETR-Seg Nano, boxes → RF-DETR Nano."""
+    from horos.api.loop import default_model_for
+
+    project = _project(tmp_path)
+    labeled = {r.id for r in project.list_images() if r.id <= 24}
+    assert default_model_for(project, labeled)[0] == "rfdetr-nano"
+    for image_id in range(1, 15):  # 14 of 24 become polygons
+        stored = project.load_annotations(image_id)
+        anns = [a.model_copy(update={"segmentation": [[10, 10, 40, 10, 40, 30, 10, 30]]})
+                for a in stored.annotations]
+        project.save_annotations(image_id, anns, expected_version=stored.version)
+    model, reason = default_model_for(project, labeled)
+    assert model == "rfdetr-seg-nano" and "polygons" in reason
+
+    ensure_worker_can_import_helpers()
+    record = _open_round(project, count=2)
+    trained = train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
+    assert trained.training["model"] == "rfdetr-seg-nano"
+    assert "instance segmentation" in trained.training["model_reason"]
+    _wait(project, trained.train_run_id)
