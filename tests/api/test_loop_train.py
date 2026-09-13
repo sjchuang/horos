@@ -1,6 +1,6 @@
-"""E10-T8: a round trains on every labeled image only, locks the validation
-split at the first training and never grows it, drops pending pre-labels
-from the snapshot, and moves the round on when the run finishes."""
+"""E10-T8: a round trains on every labeled image only, holds out test and
+valid shares that grow with the labels by stable hashing, drops pending
+pre-labels from the snapshot, and moves the round on when the run finishes."""
 
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ def test_training_refuses_until_ready_and_outside_labeling(tmp_path):
 # ----------------------------------------------------------------- training
 
 
-def test_round_trains_on_labeled_images_only_and_locks_validation(tmp_path):
+def test_round_trains_on_labeled_images_and_holds_out_test_and_valid(tmp_path):
     ensure_worker_can_import_helpers()
     project = _project(tmp_path)
     record = _open_round(project, count=3)
@@ -118,54 +118,67 @@ def test_round_trains_on_labeled_images_only_and_locks_validation(tmp_path):
 
     trained = train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
     assert trained.state == "training" and trained.train_run_id
-    lock = trained.training["validation"]
-    assert lock["locked_now"] is True and lock["validation_images"] == 5  # 20 % of 24
-    assert trained.training["labeled_images"] == 24
+    hold = trained.training["holdout"]
+    assert hold["test_fraction"] == 0.2 and hold["valid_fraction"] == 0.1
+    # ~20 % test, ~10 % valid of 24 labeled photos, at least one each, rest train
+    assert 1 <= hold["test_images"] <= 9 and 1 <= hold["validation_images"] <= 6
+    assert hold["train_images"] + hold["validation_images"] + hold["test_images"] == 24
+    assert hold["newly_held_out"] == hold["test_images"] + hold["validation_images"]
     by_id = {r.id: r for r in project.list_images()}
-    valid_ids = [i for i, r in by_id.items() if r.split == "valid"]
-    assert sorted(valid_ids) == lock["image_ids"] and all(i <= 24 for i in valid_ids)
     assert all(by_id[i].split == "train" for i in range(25, 31))  # the pool is untouched
+    assert loop_status(project).test_images == hold["test_images"]
 
-    # the snapshot: 24 labeled images, 24 confirmed boxes, no pending pre-label
+    # the snapshot: 24 labeled images, 24 confirmed boxes, no pending pre-label;
+    # the trainer sees train + valid, the test split is exported but never trained on
     images, annotations, pending = _snapshot_counts(project, trained.train_run_id)
     assert (images, annotations, pending) == (24, 24, 0)
 
     run = _wait(project, trained.train_run_id)
     assert run.state == "completed"
-    assert run.dataset_images == 24 and run.dataset_splits["valid"] == 5
+    assert run.dataset_images == 24
+    assert run.dataset_splits == {"train": hold["train_images"], "valid": hold["validation_images"],
+                                  "test": hold["test_images"]}
 
     status = round_training_status(project, record.number)
     assert status.round.state == "reviewing"
     assert status.round.metrics  # the fake backend reports a loss
-    assert status.training.run.state == "completed"
     assert loop_status(project).current.state == "reviewing"
     assert loop_status(project).labeled_images == labeled_before
     assert loop_status(project).has_model
 
 
-def test_second_training_keeps_the_validation_split_fixed(tmp_path):
+def test_held_out_sets_grow_with_the_labels_and_never_lose_a_photo(tmp_path):
     ensure_worker_can_import_helpers()
     project = _project(tmp_path)
     first = _open_round(project, count=2)
     first = train_round(project, first.number, entrypoint_override=FAKE, epochs=1)
     _wait(project, first.train_run_id)
-    valid_before = sorted(r.id for r in project.list_images() if r.split == "valid")
+    held_before = {r.id: r.split for r in project.list_images() if r.split != "train"}
     close_round(project, first.number)
 
-    # more labels arrive (the next round's picks get annotated)
-    second = _open_round(project, count=2)
-    for image_id in second.image_ids:
+    # 40 more labels arrive; the held-out sets must follow at their share
+    for image_id in range(25, 31):
         stored = project.load_annotations(image_id)
         project.save_annotations(
             image_id, [Annotation(id=1, image_id=image_id, category_id=1, bbox=(5, 5, 20, 20))],
             expected_version=stored.version,
         )
+    for n in range(31, 73):
+        path = make_image(tmp_path / "src" / f"{n}.png", 64 + n, 48, (200, 30, 30))
+        rec = project.add_image(path, width=64 + n, height=48)
+        if n <= 70:  # two photos stay unlabeled so the next round has something to pick
+            project.save_annotations(
+                rec.id, [Annotation(id=1, image_id=rec.id, category_id=1, bbox=(5, 5, 20, 20))],
+                expected_version=0,
+            )
+    second = _open_round(project, count=1)
     second = train_round(project, second.number, entrypoint_override=FAKE, epochs=1)
-    assert second.training["validation"] == {"locked_now": False, "validation_images": 5}
-    assert sorted(r.id for r in project.list_images() if r.split == "valid") == valid_before
-    assert second.training["labeled_images"] == 26 and second.training["labeled_in_round"] == 2
-    images, _, _ = _snapshot_counts(project, second.train_run_id)
-    assert images == 26
+    hold = second.training["holdout"]
+    splits_now = {r.id: r.split for r in project.list_images()}
+    assert all(splits_now[i] == s for i, s in held_before.items())  # nothing moved back
+    assert hold["test_images"] > sum(1 for s in held_before.values() if s == "test")
+    total = hold["train_images"] + hold["validation_images"] + hold["test_images"]
+    assert total == 70 and 8 <= hold["test_images"] <= 21  # ≈ 20 % of 70
     _wait(project, second.train_run_id)
     assert get_round(project, second.number).state == "reviewing"
 

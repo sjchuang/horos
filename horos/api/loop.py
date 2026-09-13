@@ -119,10 +119,13 @@ PRELABEL_THRESHOLD = {"run": SCORE_THRESHOLD, "zero_shot": 0.1}
 #: appears at all has enough instances for a validation split to mean anything
 MIN_LABELED_IMAGES = 20
 MIN_INSTANCES_PER_CLASS = 5
-#: the validation split locked at the first training: a fixed share of the
-#: labeled images, never grown afterwards (round metrics stay comparable)
-VALID_FRACTION = 0.2
-MIN_VALID_IMAGES = 2
+#: held-out shares of the labeled photos. Every newly labeled photo is put
+#: into test / valid / train by a deterministic hash bucket, so both held-out
+#: sets grow in proportion to the labels and a photo never changes split:
+#: test is never trained on (the learning curve's honest line), valid is what
+#: the trainer selects its checkpoint on
+TEST_FRACTION = 0.2
+VALID_FRACTION = 0.1
 
 
 Shapes = Literal["auto", "box", "polygon"]
@@ -146,6 +149,11 @@ class LoopSettings(BaseModel):
     #: stop-when-reached value of the headline metric (mAP flavours are in
     #: [0, 1]); None = keep going until the pool is empty or gains flatten
     target: float | None = Field(default=None, ge=0.0)
+    #: share of labeled photos held out as test (never trained on) and as
+    #: valid (checkpoint selection); assigned per photo by a stable hash so the
+    #: sets grow with the labels and never lose a member
+    test_fraction: float = Field(default=TEST_FRACTION, ge=0.0, le=0.5)
+    valid_fraction: float = Field(default=VALID_FRACTION, ge=0.0, le=0.5)
 
 
 def _settings_path(project: Project):
@@ -204,7 +212,7 @@ def update_loop_settings(project: Project, **changes) -> LoopSettings:
 _METRIC_PREFERENCE = (
     # the loop's own post-training evaluation first: same code, same
     # threshold, same fixed validation set every round — comparable by design
-    "eval/valid/map_5095", "eval/valid/map_50",
+    "eval/test/map_5095", "eval/test/map_50", "eval/valid/map_5095", "eval/valid/map_50",
     "val/ema_mAP_50_95", "val/mAP_50_95", "map_5095", "val/ema_mAP_50", "val/mAP_50",
     "map50", "map_50", "map", "loss",
 )
@@ -251,6 +259,8 @@ class LoopStatus(BaseModel):
     #: selectable images: unlabeled, not skipped, in the train split, not in the open round
     pool_size: int
     validation_images: int
+    #: labeled photos held out as test — the model never trains on them
+    test_images: int = 0
     categories: list[str]
     #: a completed training run exists — PAL will score with it
     has_model: bool
@@ -422,6 +432,7 @@ def loop_status(project: Project) -> LoopStatus:
         skipped_images=sum(1 for r in images if r.excluded),
         pool_size=len(pool),
         validation_images=sum(1 for r in images if r.split == "valid"),
+        test_images=sum(1 for r in images if r.split == "test" and r.id in labeled),
         categories=[c.name for c in project.categories],
         has_model=_latest_completed_run(project) is not None,
         next_strategy=strategy,
@@ -825,8 +836,9 @@ class TrainReadiness(BaseModel):
     labeled_images: int
     #: confirmed instances per class name
     instances: dict[str, int] = Field(default_factory=dict)
-    #: labeled images already in the validation split (0 before the lock)
+    #: labeled images currently held out as valid / test
     validation_images: int = 0
+    test_images: int = 0
     #: what still blocks training; empty when ready
     reasons: list[str] = Field(default_factory=list)
 
@@ -872,31 +884,67 @@ def train_readiness(
             )
     by_id = {r.id: r for r in project.list_images()}
     valid = sum(1 for i in labeled if by_id[i].split == "valid")
+    test = sum(1 for i in labeled if by_id[i].split == "test")
     return TrainReadiness(
         ready=not reasons, labeled_images=len(labeled), instances=instances,
-        validation_images=valid, reasons=reasons,
+        validation_images=valid, test_images=test, reasons=reasons,
     )
 
 
-def _lock_validation(project: Project, labeled: set[int], *, seed: int) -> dict:
-    """First training only: move a fixed share of the labeled train images to
-    the valid split. Later rounds find the lock in place and change nothing,
-    so every round's model is measured on the same images (E7-T2)."""
+def _bucket(seed: int, image_id: int) -> float:
+    """A stable position in [0, 1) for a photo — the same on every platform
+    and every run, so a photo's split never changes once labeled."""
+    import hashlib
+
+    digest = hashlib.sha256(f"{seed}:{image_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64
+
+
+def _assign_holdouts(
+    project: Project,
+    labeled: set[int],
+    *,
+    seed: int,
+    test_fraction: float,
+    valid_fraction: float,
+) -> dict:
+    """Put every labeled photo that is still in the train split into test /
+    valid / train by its hash bucket. Photos already held out stay where they
+    are, so the held-out sets only ever grow — in proportion to the labels —
+    and the test set is never trained on. Each held-out set gets at least one
+    photo once there are three or more labeled ones."""
     by_id = {r.id: r for r in project.list_images()}
-    already = sorted(i for i in labeled if by_id[i].split == "valid")
-    if already:
-        return {"locked_now": False, "validation_images": len(already)}
-    candidates = sorted(i for i in labeled if by_id[i].split == "train")
-    if len(candidates) < 2:
-        raise ProjectError(
-            "Cannot lock a validation split: fewer than two labeled train images"
-        )
-    share = max(MIN_VALID_IMAGES, round(len(candidates) * VALID_FRACTION))
-    n_valid = min(len(candidates) - 1, share)
-    chosen = sorted(random.Random(seed).sample(candidates, n_valid))
-    project.update_image_splits({i: "valid" for i in chosen})
-    return {"locked_now": True, "validation_images": n_valid, "seed": seed,
-            "image_ids": chosen}
+    fresh = sorted(i for i in labeled if by_id[i].split == "train")
+    moves: dict[int, str] = {}
+    for image_id in fresh:
+        b = _bucket(seed, image_id)
+        if b < test_fraction:
+            moves[image_id] = "test"
+        elif b < test_fraction + valid_fraction:
+            moves[image_id] = "valid"
+    counts = {split: sum(1 for i in labeled if by_id[i].split == split) for split in
+              ("train", "valid", "test")}
+    for split, fraction in (("test", test_fraction), ("valid", valid_fraction)):
+        have = counts[split] + sum(1 for v in moves.values() if v == split)
+        if fraction > 0 and have == 0 and len(labeled) >= 3:
+            # the lowest-bucket photo not yet claimed becomes the first member
+            free = [i for i in fresh if i not in moves]
+            if free:
+                moves[min(free, key=lambda i: _bucket(seed, i))] = split
+    # never hold out everything: training needs at least one photo
+    if len(fresh) - len(moves) < 1 and moves:
+        keep = max(moves, key=lambda i: _bucket(seed, i))
+        del moves[keep]
+    if moves:
+        project.update_image_splits(moves)
+    by_id = {r.id: r for r in project.list_images()}
+    return {
+        "newly_held_out": len(moves),
+        "test_images": sum(1 for i in labeled if by_id[i].split == "test"),
+        "validation_images": sum(1 for i in labeled if by_id[i].split == "valid"),
+        "train_images": sum(1 for i in labeled if by_id[i].split == "train"),
+        "test_fraction": test_fraction, "valid_fraction": valid_fraction, "seed": seed,
+    }
 
 
 DETECTION_DEFAULT = "rfdetr-nano"
@@ -946,10 +994,11 @@ def train_round(
     extra: dict | None = None,
     entrypoint_override: str | None = None,
 ) -> LoopRound:
-    """Start training for a round in state "labeling". Only labeled images
-    enter the snapshot (pending pre-labels are dropped by start_training),
-    hyperparameters not given are derived by the E5 rules, and the run id
-    is recorded on the round, which moves to "training"."""
+    """Start training for a round in state "labeling". Newly labeled photos
+    are first bucketed into test / valid / train (see _assign_holdouts), only
+    labeled images enter the snapshot (pending pre-labels are dropped by
+    start_training), hyperparameters not given are derived by the E5 rules,
+    and the run id is recorded on the round, which moves to "training"."""
     record = _reconcile_round(project, load_round(project, number))
     if record.state != "labeling":
         raise ProjectError(
@@ -959,9 +1008,13 @@ def train_round(
     if not readiness.ready:
         raise ProjectError("Not ready to train: " + "; ".join(readiness.reasons))
     labeled = _labeled_ids(project)
-    lock = _lock_validation(project, labeled, seed=seed)
+    settings = get_loop_settings(project)
+    holdout = _assign_holdouts(
+        project, labeled, seed=seed,
+        test_fraction=settings.test_fraction, valid_fraction=settings.valid_fraction,
+    )
     if model is None:
-        model = get_loop_settings(project).model
+        model = settings.model
         model_reason = "from the loop settings"
     else:
         model_reason = "chosen explicitly"
@@ -977,7 +1030,7 @@ def train_round(
         "train_run_id": run.run_id,
         "training": {
             "model": model, "model_reason": model_reason,
-            "labeled_images": len(labeled), "validation": lock,
+            "labeled_images": len(labeled), "holdout": holdout,
             "labeled_in_round": sum(1 for i in record.image_ids if i in labeled),
         },
     }).advance("training")

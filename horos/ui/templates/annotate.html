@@ -327,7 +327,7 @@
           <span id="metric-delta" style="font-size:20px"></span>
         </div>
         <div class="muted" id="metric-key"></div>
-        <h4 style="margin:16px 0 6px">Learning curve · mAP@50 by labeled photos</h4>
+        <h4 style="margin:16px 0 6px">Learning curve · train vs test mAP@50 by labeled photos</h4>
         <canvas id="spark"></canvas>
         <div class="legend" id="curve-legend"></div>
         <div class="muted" id="curve-note"></div>
@@ -559,6 +559,7 @@ const Loop = {
     $("select-stats").innerHTML = [
       [s.pool_size, ICON.image, "to label"], [s.labeled_images, ICON.tag, "labeled"],
       [s.skipped_images, ICON.skip, "skipped"],
+      [s.test_images, ICON.check, "held-out test"],
       [s.rounds.filter((r) => r.state === "closed").length, ICON.loop, "rounds"],
       [s.has_model ? "✓" : "—", ICON.robot, "model"],
     ].map(([v, icon, k]) => `<div class="stat"><div class="v">${v}</div><div class="k">${icon}${k}</div></div>`).join("");
@@ -850,8 +851,9 @@ const Loop = {
     }
     const evaluating = rows.some((r) => r.evaluating);
     $("curve-note").textContent = evaluating ? "evaluating this round's model on its splits…" : "";
-    const order = ["train", "valid", "test", "valid (training)"].filter((k) => series[k] && series[k].length);
-    const PAL = { train: "#ffd60a", valid: "#0a84ff", test: "#30d158", "valid (training)": "#8b98a5" };
+    const order = ["train", "test", "valid", "valid (training)"].filter((k) => series[k] && series[k].length);
+    const PAL = { train: "#ffd60a", test: "#30d158", valid: "#8b98a5", "valid (training)": "#5c6670" };
+    const THIN = { valid: true, "valid (training)": true };  // checkpoint-selection sets, for reference only
     const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = 200;
     canvas.width = w * dpr; canvas.height = h * dpr;
     const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
@@ -876,11 +878,11 @@ const Loop = {
     ctx.textAlign = "right"; ctx.fillText(`${xMax} labeled`, w - pad.r, h - 8);
     for (const k of order) {
       const p = series[k].slice().sort((a, b) => a[0] - b[0]);
-      ctx.strokeStyle = ctx.fillStyle = PAL[k]; ctx.lineWidth = 2;
-      ctx.setLineDash(k === "valid (training)" ? [4, 4] : []);
+      ctx.strokeStyle = ctx.fillStyle = PAL[k]; ctx.lineWidth = THIN[k] ? 1 : 2.5;
+      ctx.setLineDash(THIN[k] ? [4, 4] : []);
       ctx.beginPath(); p.forEach(([x, y], j) => (j ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)))); ctx.stroke();
       ctx.setLineDash([]);
-      p.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(X(x), Y(y), 3.5, 0, Math.PI * 2); ctx.fill(); });
+      p.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(X(x), Y(y), THIN[k] ? 2 : 4, 0, Math.PI * 2); ctx.fill(); });
     }
     $("curve-legend").innerHTML = order.map((k) => `<span><span class="key" style="background:${PAL[k]}"></span>${k}</span>`).join("");
     if (evaluating) { clearTimeout(this.curveTimer); this.curveTimer = setTimeout(async () => {

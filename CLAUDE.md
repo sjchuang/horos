@@ -578,7 +578,7 @@ Decisions confirmed on 2026-09-13:
 - Cold-start similarity uses **DINOv2 small** (Apache 2.0, code and weights) as a new `horos/backends/dinov2/` backend; selection is k-center greedy in embedding space
 - With a trained model, selection follows **Portable Active Learning (PAL)** — Sharma, Bersamin & Subramanian, CVPR 2026, arXiv 2605.10349 — as the default acquisition metric: per-class logistic classifiers on (raw-candidate support, confidence) give a true-positive probability whose entropy is the instance uncertainty (LIUS); class-weighted image entropy, rare-class diversity and a rank-conditioned similarity penalty over embeddings (GUIDE) refine the ranking with α = 0.9, β = 0.04, γ = 0.02; annotation budget is split by class rarity. Backends therefore report raw `candidates` and, where available, `class_probs` on every prediction. Every picked image carries a score and a reason string; details the paper leaves open are decided and documented in `horos/core/pal.py`
 - With no trained model but named classes, **OWLv2 zero-shot** is the round-0 pre-annotator and uncertainty source; the user is never asked to pick a model
-- The **validation split is locked** at the first training of the loop and never grows; later rounds feed train only, so round metrics stay comparable (E7-T2)
+- **Held-out sets grow with the labels** (changed 2026-09-13 on the user's request): every newly labeled photo is bucketed by a stable hash into test (20 %), valid (10 %) or train; a photo never changes split, test is never trained on and is the learning curve's honest line, valid is what the trainer selects its checkpoint on
 - Batch size per round defaults to a **fixed number**; a percentage of the unlabeled pool is selectable
 - **Multiple annotators**: a round's images are assigned per annotator on top of the E2-T8 claims
 - Machine-generated geometry (autolabel, SAM boxes-to-polygons, round pre-annotation) is **always** `source="auto", status="pending"` with a score — never stored as human work
@@ -606,7 +606,7 @@ Decisions confirmed on 2026-09-13:
 | E10-T5 | PAL acquisition (LIUS + GUIDE, class budgets) with a reason per pick; backends report raw candidates | `tests/unit/test_selection_uncertainty.py` |
 | E10-T6 | Round selection API: count or percent; strategy auto-chosen from model availability; pool excludes labeled and validation images | `tests/api/test_loop_select.py` |
 | E10-T7 | Round pre-annotation: own model when a completed run exists, else OWLv2 from class names; written pending with score | `tests/api/test_loop_preannotate.py` |
-| E10-T8 | Round training: readiness threshold, quick derived config, validation split locked at first training | `tests/api/test_loop_train.py` |
+| E10-T8 | Round training: readiness threshold, quick derived config, held-out test (20 %) and valid (10 %) assigned per photo by stable hash so they grow with the labels | `tests/api/test_loop_train.py` |
 | E10-T9 | Round history: per-round metrics, labels spent, delta to the previous round | `tests/api/test_loop_history.py` |
 | E10-T10 | Per-round assignment of images to annotators | `tests/api/test_loop_assign.py` |
 | E10-T11 | Machine geometry always pending with score (boxes-to-polygons, autolabel, pre-annotation) | `tests/api/test_generated_pending.py` |
@@ -641,7 +641,7 @@ Decisions already made; no need to ask again:
 - Auto-labeling uses **OWLv2 open-vocabulary zero-shot** (Apache 2.0)
 - First-version priority: annotate → train → evaluate → deploy
 - Hyperparameter adaptation is **rule-based**; search-based is left as a later extension
-- **Active learning loop (E10)**: canvas engine kept, DINOv2 small for cold-start similarity, PAL (arXiv 2605.10349) as the default uncertainty metric once labels exist, OWLv2 as the round-0 pre-annotator, fixed per-round count by default, multi-annotator assignment required
+- **Active learning loop (E10)**: canvas engine kept, DINOv2 small for cold-start similarity, PAL (arXiv 2605.10349) as the default uncertainty metric once labels exist, OWLv2 as the round-0 pre-annotator, fixed per-round count by default, multi-annotator assignment required, growing hash-bucketed test (20 %) / valid (10 %) hold-outs
 
 ### Definition of done for a task
 
