@@ -94,6 +94,7 @@ from horos.api.labels import (
     update_category,
 )
 from horos.api.loop import (
+    LoopAdvice,
     LoopSettings,
     LoopStatus,
     RoundQueueItem,
@@ -105,6 +106,7 @@ from horos.api.loop import (
     close_round,
     get_loop_settings,
     get_round,
+    loop_advice,
     loop_history,
     loop_status,
     preannotate_round,
@@ -185,6 +187,7 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "LoopAdvice",
     "LoopSettings",
     "LoopStatus",
     "RoundQueueItem",
@@ -196,6 +199,7 @@ __all__ = [
     "close_round",
     "get_loop_settings",
     "get_round",
+    "loop_advice",
     "loop_history",
     "loop_status",
     "preannotate_round",

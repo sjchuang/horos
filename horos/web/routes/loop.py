@@ -197,3 +197,8 @@ def update_loop_settings():
     if not isinstance(body, dict):
         raise ProjectError("Send an object with the settings to change")
     return jsonify(api.update_loop_settings(_project(), **body).model_dump())
+
+
+@bp.get("/advice")
+def loop_advice():
+    return jsonify(api.loop_advice(_project()).model_dump())

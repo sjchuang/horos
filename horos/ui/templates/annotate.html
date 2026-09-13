@@ -134,6 +134,12 @@
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   .up { color: var(--ok); } .down { color: var(--err); }
   .metric-big { font-size: 44px; font-weight: 600; line-height: 1; font-variant-numeric: tabular-nums; }
+  .advice { border-left: 4px solid var(--accent); padding: 6px 14px; border-radius: 6px; background: rgba(10,132,255,.06); }
+  .advice.ok { border-color: var(--ok); background: rgba(48,209,88,.08); }
+  .advice.warn { border-color: var(--warn); background: rgba(255,214,10,.08); }
+  .advice.err { border-color: var(--err); background: rgba(255,69,58,.08); }
+  .advice-title { font-size: 20px; font-weight: 600; }
+  .advice .reasons li { color: var(--dim); }
   #spark { width: 100%; height: 70px; display: block; }
   #toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: var(--panel);
            border: 1px solid var(--line); border-radius: 8px; padding: 8px 16px; display: none; z-index: 1200; }
@@ -309,7 +315,12 @@
 
   <!-- ------------------------------------------------------------ 4 review -->
   <section class="panel card" id="panel-review">
-    <div class="row" style="align-items:flex-start">
+    <div class="advice" id="advice">
+      <div class="advice-title" id="advice-title">—</div>
+      <div class="muted" id="advice-reason" style="margin-top:4px"></div>
+      <ul class="reasons" id="advice-findings" style="margin-top:6px"></ul>
+    </div>
+    <div class="row" style="align-items:flex-start;margin-top:18px">
       <div class="grow">
         <div class="row" style="align-items:baseline;gap:10px">
           <span class="metric-big" id="metric-value">—</span>
@@ -481,6 +492,12 @@ const Loop = {
             <button data-v="0" title="start every photo blank">Off</button>
           </div>
         </div>
+        <div class="opt">
+          <span class="k">Goal</span>
+          <span class="stepper narrow"><input type="number" data-opt="target" min="0" max="1" step="0.05" placeholder="—" title="stop when the headline metric reaches this (mAP, 0–1); empty = no goal">
+            <span class="step-btns"><button type="button" data-step="1"></button>
+              <button type="button" data-step="-1"></button></span></span>
+        </div>
         <div class="opt" data-opt="shapes-wrap">
           <span class="k">Shapes</span>
           <div class="seg" data-opt="shapes">
@@ -519,6 +536,10 @@ const Loop = {
       }; });
       size.onchange = () => this.saveSettings({ model: size.value });
       seg("suggest").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ preannotate: b.dataset.v === "1" }); });
+      const goal = root.querySelector('[data-opt="target"]');
+      goal.value = st.target == null ? "" : st.target;
+      goal.onchange = () => this.saveSettings({ target: goal.value === "" ? null : Number(goal.value) });
+      if (window.horosControls) horosControls.wire(root);
       seg("shapes").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ shapes: b.dataset.v }); });
     });
   },
@@ -765,7 +786,23 @@ const Loop = {
   },
 
   // ------------------------------------------------------------ 4 review
+  async renderAdvice(cur) {
+    try {
+      const a = await api("/loop/advice");
+      const tone = { continue: "ok", first_round: "ok", flattening: "warn", check_labels: "err",
+                     target_reached: "ok", nothing_left: "warn" }[a.verdict] || "";
+      $("advice").className = "advice " + tone;
+      $("advice-title").textContent = a.title;
+      $("advice-reason").textContent = a.reason;
+      $("advice-findings").innerHTML = (a.findings || []).map((t) => `<li>${ICON.warn}<span>${t}</span></li>`).join("");
+      // the primary action follows the advice
+      const next = $("btn-next-round");
+      next.classList.toggle("primary", a.verdict === "continue" || a.verdict === "first_round");
+      $("btn-finish").classList.toggle("primary", a.verdict === "target_reached" || a.verdict === "flattening");
+    } catch (e) { $("advice-title").textContent = "—"; $("advice-reason").textContent = e.message; }
+  },
   renderReview(cur) {
+    this.renderAdvice(cur);
     const rows = this.status.rounds;
     const row = cur ? rows.find((r) => r.number === cur.number) : rows.filter((r) => r.metric != null).slice(-1)[0];
     $("metric-value").textContent = row && row.metric != null ? fmt(row.metric) : "—";

@@ -97,6 +97,8 @@ __all__ = [
     "LoopSettings",
     "get_loop_settings",
     "update_loop_settings",
+    "LoopAdvice",
+    "loop_advice",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -139,6 +141,9 @@ class LoopSettings(BaseModel):
     shapes: Shapes = "auto"
     #: the segmenter used for shapes="polygon"
     refiner: str = "sam2.1-tiny"
+    #: stop-when-reached value of the headline metric (mAP flavours are in
+    #: [0, 1]); None = keep going until the pool is empty or gains flatten
+    target: float | None = Field(default=None, ge=0.0)
 
 
 def _settings_path(project: Project):
@@ -1479,5 +1484,151 @@ def restore_images(project: Project, image_ids: list[int]) -> SkipResult:
     return SkipResult(
         skipped=[], unchanged=len(image_ids) - changed,
         skipped_images=sum(1 for r in project.list_images() if r.excluded),
+    )
+
+
+# ------------------------------------------------------------------- advice
+
+
+Verdict = Literal["continue", "flattening", "target_reached", "check_labels", "nothing_left",
+                  "first_round"]
+
+#: below this absolute gain of a mAP-style metric (or relative loss drop) a
+#: round counts as "flat"; two flat rounds in a row → flattening
+FLAT_GAIN = 0.01
+FLAT_LOSS_DROP = 0.02
+
+
+class LoopAdvice(BaseModel):
+    """The answer to "should I label another round?" (E10-S5), rule-based
+    with the rule spelled out — the user decides, the loop explains."""
+
+    verdict: Verdict
+    title: str
+    reason: str
+    metric_key: str | None = None
+    metric: float | None = None
+    delta: float | None = None
+    labels_spent: int = 0
+    #: metric gain per 100 labeled photos over the last comparable rounds
+    gain_per_100: float | None = None
+    pool_size: int = 0
+    rounds_with_metric: int = 0
+    target: float | None = None
+    #: the trained run's own verdict findings (E7): validation too small, …
+    findings: list[str] = Field(default_factory=list)
+
+
+@capability(
+    "loop.advice",
+    summary="Should another round be labeled? Rule-based verdict with its reason",
+    web_route="/api/v1/loop/advice",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="'horos loop' prints the advice line with the status.",
+)
+def loop_advice(project: Project) -> LoopAdvice:
+    history = [r for r in loop_history(project) if r.metric is not None]
+    status = loop_status(project)
+    settings = get_loop_settings(project)
+    findings: list[str] = []
+    if history and history[-1].train_run_id:
+        try:
+            from horos.api.verdict import run_verdict
+
+            verdict = run_verdict(project, history[-1].train_run_id)
+            findings = [
+                f"{f.title} — {f.suggestion}" for f in verdict.findings if f.severity != "info"
+            ][:3]
+        except HorosError:
+            findings = []
+    if not history:
+        return LoopAdvice(
+            verdict="first_round", title="Label the first round",
+            reason="There is no trained model yet; the first round gives the loop something to "
+                   "measure and to pick from.",
+            pool_size=status.pool_size, target=settings.target, findings=findings,
+        )
+    last = history[-1]
+    key = last.metric_key or ""
+    lower_is_better = key == "loss"
+    base = dict(
+        metric_key=last.metric_key, metric=last.metric, delta=last.delta,
+        labels_spent=last.labels_spent, pool_size=status.pool_size,
+        rounds_with_metric=len(history), target=settings.target, findings=findings,
+    )
+    # gain per 100 labels over the last two comparable rounds
+    gain = None
+    if len(history) >= 2 and history[-2].metric_key == key:
+        spent = sum(r.labels_spent for r in history[-1:])
+        change = last.metric - history[-2].metric
+        if lower_is_better:
+            change = -change
+        if spent > 0:
+            gain = round(100 * change / spent, 4)
+    base["gain_per_100"] = gain
+    metric_text = f"{key} {last.metric:.3f}" if last.metric is not None else ""
+
+    if settings.target is not None and last.metric is not None and (
+        (not lower_is_better and last.metric >= settings.target)
+        or (lower_is_better and last.metric <= settings.target)
+    ):
+        return LoopAdvice(
+            verdict="target_reached", title="Goal reached — export the model",
+            reason=f"{metric_text} meets the goal of {settings.target:g}. Another round would "
+                   f"spend labels on a model that already does what you asked.",
+            **base,
+        )
+    if status.pool_size == 0:
+        return LoopAdvice(
+            verdict="nothing_left", title="Nothing left to label",
+            reason="Every photo is labeled or skipped. Add photos on the Dataset page to keep "
+                   "going, or export this model.",
+            **base,
+        )
+    if len(history) == 1:
+        return LoopAdvice(
+            verdict="continue", title="Keep going — one round is not a trend",
+            reason=f"{metric_text} after {last.labels_spent} labeled photos. A second round "
+                   f"shows whether more labels still move the metric.",
+            **base,
+        )
+    if last.improved is False and last.delta is not None:
+        return LoopAdvice(
+            verdict="check_labels", title="Worse than last round — check the new labels first",
+            reason=f"{metric_text} moved {last.delta:+.3f} against the previous round. Before "
+                   f"adding more, look at this round's labels and the model's worst cases: a "
+                   f"few wrong or inconsistent labels usually explain a drop.",
+            **base,
+        )
+    flat_now = (
+        last.delta is not None and (
+            (lower_is_better and abs(last.delta) < FLAT_LOSS_DROP * max(abs(last.metric), 1e-9))
+            or (not lower_is_better and abs(last.delta) < FLAT_GAIN)
+        )
+    )
+    prev = history[-2]
+    flat_prev = (
+        prev.delta is not None and (
+            (lower_is_better and abs(prev.delta) < FLAT_LOSS_DROP * max(abs(prev.metric), 1e-9))
+            or (not lower_is_better and abs(prev.delta) < FLAT_GAIN)
+        )
+    )
+    if flat_now and flat_prev:
+        return LoopAdvice(
+            verdict="flattening", title="Gains are flattening",
+            reason=f"The last two rounds moved {key} by less than "
+                   f"{FLAT_GAIN if not lower_is_better else FLAT_LOSS_DROP:g} each "
+                   f"({last.labels_spent} labels this round"
+                   + (f", {gain:+.3f} per 100 labels" if gain is not None else "")
+                   + "). Either stop and export, pick a bigger round, or try a larger model.",
+            **base,
+        )
+    return LoopAdvice(
+        verdict="continue", title="Keep going — labels still pay off",
+        reason=f"{metric_text}, {last.delta:+.3f} against the previous round"
+               + (f" ({gain:+.3f} per 100 labels)" if gain is not None else "")
+               + f". {status.pool_size} photos are still unlabeled.",
+        **base,
     )
 
