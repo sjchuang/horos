@@ -140,7 +140,7 @@
   .advice.err { border-color: var(--err); background: rgba(255,69,58,.08); }
   .advice-title { font-size: 20px; font-weight: 600; }
   .advice .reasons li { color: var(--dim); }
-  #spark { width: 100%; height: 70px; display: block; }
+  #spark { width: 100%; height: 200px; display: block; }
   #toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: var(--panel);
            border: 1px solid var(--line); border-radius: 8px; padding: 8px 16px; display: none; z-index: 1200; }
   #toast.warn { border-color: var(--warn); color: var(--warn); }
@@ -327,7 +327,10 @@
           <span id="metric-delta" style="font-size:20px"></span>
         </div>
         <div class="muted" id="metric-key"></div>
-        <canvas id="spark" style="margin-top:12px"></canvas>
+        <h4 style="margin:16px 0 6px">Learning curve · mAP@50 by labeled photos</h4>
+        <canvas id="spark"></canvas>
+        <div class="legend" id="curve-legend"></div>
+        <div class="muted" id="curve-note"></div>
       </div>
       <div class="stats" style="min-width:300px" id="review-stats"></div>
     </div>
@@ -832,17 +835,57 @@ const Loop = {
       + "</tbody></table>";
   },
   drawSpark() {
+    // learning curve: mAP@50 on train / valid / test against labeled photos,
+    // one point per round; falls back to the trainer's val mAP for rounds
+    // whose split evaluation has not run
     const canvas = $("spark"); if (!canvas.clientWidth) return;
-    const pts = this.status.rounds.filter((r) => r.metric != null).map((r) => [r.number, r.metric]);
-    const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = 70;
+    const rows = this.status.rounds.filter((r) => r.state === "closed" || r.state === "reviewing");
+    const series = {};
+    for (const r of rows) {
+      for (const [split, v] of Object.entries(r.curve || {})) (series[split] = series[split] || []).push([r.labeled_total, v]);
+      if (!r.curve || !("valid" in r.curve)) {
+        const v = r.metrics["val/ema_mAP_50"] ?? r.metrics["val/mAP_50"];
+        if (v != null) (series["valid (training)"] = series["valid (training)"] || []).push([r.labeled_total, v]);
+      }
+    }
+    const evaluating = rows.some((r) => r.evaluating);
+    $("curve-note").textContent = evaluating ? "evaluating this round's model on its splits…" : "";
+    const order = ["train", "valid", "test", "valid (training)"].filter((k) => series[k] && series[k].length);
+    const PAL = { train: "#ffd60a", valid: "#0a84ff", test: "#30d158", "valid (training)": "#8b98a5" };
+    const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = 200;
     canvas.width = w * dpr; canvas.height = h * dpr;
     const ctx = canvas.getContext("2d"); ctx.scale(dpr, dpr); ctx.clearRect(0, 0, w, h);
-    if (pts.length < 2) return;
-    const ys = pts.map((p) => p[1]), yMin = Math.min(...ys), yMax = Math.max(...ys) === yMin ? yMin + 1 : Math.max(...ys);
-    const X = (i) => 8 + (w - 16) * i / (pts.length - 1), Y = (y) => 8 + (h - 16) * (1 - (y - yMin) / (yMax - yMin));
-    ctx.strokeStyle = "#4dabf7"; ctx.lineWidth = 2; ctx.beginPath();
-    pts.forEach(([, y], i) => (i ? ctx.lineTo(X(i), Y(y)) : ctx.moveTo(X(i), Y(y)))); ctx.stroke();
-    ctx.fillStyle = "#4dabf7"; pts.forEach(([, y], i) => { ctx.beginPath(); ctx.arc(X(i), Y(y), 3, 0, Math.PI * 2); ctx.fill(); });
+    if (!order.length) {
+      ctx.fillStyle = "#8b98a5"; ctx.font = "13px system-ui"; ctx.textAlign = "center";
+      ctx.fillText(evaluating ? "evaluating…" : "the curve appears after the first trained round", w / 2, h / 2);
+      $("curve-legend").innerHTML = ""; return;
+    }
+    const pts = order.flatMap((k) => series[k]);
+    const xs = pts.map((p) => p[0]);
+    const xMin = Math.min(...xs), xMax = Math.max(...xs, xMin + 1);
+    const pad = { l: 44, r: 12, t: 10, b: 26 };
+    const X = (x) => pad.l + (w - pad.l - pad.r) * (x - xMin) / (xMax - xMin);
+    const Y = (y) => pad.t + (h - pad.t - pad.b) * (1 - Math.min(Math.max(y, 0), 1));
+    ctx.strokeStyle = "#2a333e"; ctx.fillStyle = "#8b98a5"; ctx.font = "11px system-ui"; ctx.lineWidth = 1;
+    for (let i = 0; i <= 4; i++) {
+      const yv = i / 4, y = Y(yv);
+      ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+      ctx.textAlign = "right"; ctx.fillText(yv.toFixed(2), pad.l - 6, y + 4);
+    }
+    ctx.textAlign = "left"; ctx.fillText(`${xMin} labeled`, pad.l, h - 8);
+    ctx.textAlign = "right"; ctx.fillText(`${xMax} labeled`, w - pad.r, h - 8);
+    for (const k of order) {
+      const p = series[k].slice().sort((a, b) => a[0] - b[0]);
+      ctx.strokeStyle = ctx.fillStyle = PAL[k]; ctx.lineWidth = 2;
+      ctx.setLineDash(k === "valid (training)" ? [4, 4] : []);
+      ctx.beginPath(); p.forEach(([x, y], j) => (j ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y)))); ctx.stroke();
+      ctx.setLineDash([]);
+      p.forEach(([x, y]) => { ctx.beginPath(); ctx.arc(X(x), Y(y), 3.5, 0, Math.PI * 2); ctx.fill(); });
+    }
+    $("curve-legend").innerHTML = order.map((k) => `<span><span class="key" style="background:${PAL[k]}"></span>${k}</span>`).join("");
+    if (evaluating) { clearTimeout(this.curveTimer); this.curveTimer = setTimeout(async () => {
+      this.status = await api("/loop"); this.drawSpark(); this.renderAdvice(this.status.current);
+    }, 4000); }
   },
 };
 window.addEventListener("DOMContentLoaded", () => Loop.init().catch((e) => toast(e.message, "err", 6000)));

@@ -98,3 +98,36 @@ def test_headline_prefers_validation_map_over_loss():
     assert _headline(rfdetr_like) == ("val/ema_mAP_50_95", 0.59)
     assert _headline({"loss": 1.0}) == ("loss", 1.0)
     assert _headline({}) == (None, None)
+
+
+def test_completed_round_evaluates_every_split_for_the_learning_curve(tmp_path, monkeypatch):
+    """E10-S5: after training, the round's model is evaluated on train,
+    valid and (when present) test; the summary exposes them as `curve`."""
+    from types import SimpleNamespace
+
+    from horos.api import loop as loop_mod
+    from horos.errors import ProjectError
+
+    calls = []
+
+    def fake_evaluate_run(project, run_id, *, split="test", device=None):
+        calls.append(split)
+        if split == "test":
+            raise ProjectError(f"Run {run_id} has no 'test' split in its dataset snapshot.")
+        return SimpleNamespace(map_50={"train": 0.9, "valid": 0.6}[split], map_5095=0.4)
+
+    import horos.api.evaluate as eval_mod
+
+    monkeypatch.setattr(eval_mod, "evaluate_run", fake_evaluate_run)
+    # the background thread must not race the assertions: run it inline
+    monkeypatch.setattr(loop_mod, "_evaluate_in_background",
+                        lambda project, number: loop_mod.evaluate_round_splits(project, number))
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path)
+    record = _cycle(project, count=2, epochs=1)
+    assert sorted(calls) == ["test", "train", "valid"]
+    row = loop_history(project)[0]
+    assert row.curve == {"train": 0.9, "valid": 0.6}
+    assert row.evaluating is False and row.labeled_total == 26
+    assert record.metrics["eval/train/map_5095"] == 0.4
+    assert "evaluation_notes" not in record.training  # a missing test split is not a failure

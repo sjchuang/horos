@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 from collections.abc import Iterator
 from threading import Event as CancelEvent
 from typing import TYPE_CHECKING, Literal
@@ -99,6 +100,7 @@ __all__ = [
     "update_loop_settings",
     "LoopAdvice",
     "loop_advice",
+    "evaluate_round_splits",
 ]
 
 Strategy = Literal["auto", "pal", "diversity", "random"]
@@ -228,6 +230,13 @@ class RoundSummary(BaseModel):
     metric: float | None = None
     delta: float | None = None
     improved: bool | None = None
+    #: mAP@50 of this round's model on each split of its snapshot, from the
+    #: post-training evaluation (E10-S5 learning curve); missing = not run
+    curve: dict[str, float] = Field(default_factory=dict)
+    #: labeled photos when the round ended — the learning curve's x axis
+    labeled_total: int = 0
+    #: the split evaluation is still running in the background
+    evaluating: bool = False
     created_at: str
 
 
@@ -354,6 +363,12 @@ def _summary(
         metric=value,
         delta=delta,
         improved=improved,
+        curve={
+            split: record.metrics[f"eval/{split}/map_50"]
+            for split in ("train", "valid", "test") if f"eval/{split}/map_50" in record.metrics
+        },
+        labeled_total=after,
+        evaluating=bool(record.training.get("evaluating")),
         created_at=record.created_at,
     )
 
@@ -437,9 +452,15 @@ def close_round(project: Project, number: int) -> LoopRound:
     record = _reconcile_round(project, load_round(project, number))
     if record.state == "closed":
         return record
-    if record.labeled_after is None:
-        record = record.model_copy(update={"labeled_after": len(_labeled_ids(project))})
-    return save_round(project, record.advance("closed"))
+    # re-read under the lock: the split evaluation thread merges its metrics
+    # into the same record
+    with _ROUND_WRITE_LOCK:
+        record = load_round(project, number)
+        if record.state == "closed":
+            return record
+        if record.labeled_after is None:
+            record = record.model_copy(update={"labeled_after": len(_labeled_ids(project))})
+        return save_round(project, record.advance("closed"))
 
 
 # --------------------------------------------------------------- selection
@@ -977,8 +998,13 @@ def _reconcile_round(project: Project, record: LoopRound) -> LoopRound:
         from horos.api.experiment import get_run_summary
 
         scores = get_run_summary(project, run.run_id, reference=None).scores
-        update = {"metrics": dict(scores), "labeled_after": len(_labeled_ids(project))}
-        return save_round(project, record.model_copy(update=update).advance("reviewing"))
+        update = {
+            "metrics": dict(scores), "labeled_after": len(_labeled_ids(project)),
+            "training": {**record.training, "evaluating": True},
+        }
+        record = save_round(project, record.model_copy(update=update).advance("reviewing"))
+        _evaluate_in_background(project, record.number)
+        return load_round(project, record.number)  # the evaluation may have run inline
     if run.state in ("failed", "stopped"):
         training = {**record.training, "error": run.error or f"run {run.state}"}
         return save_round(project, record.model_copy(update={"training": training})
@@ -1631,4 +1657,80 @@ def loop_advice(project: Project) -> LoopAdvice:
                + f". {status.pool_size} photos are still unlabeled.",
         **base,
     )
+
+
+# --------------------------------------------------------- learning curve
+
+
+_EVALUATING: set[tuple[str, int]] = set()
+_EVALUATING_LOCK = threading.Lock()
+#: serialises read-modify-write of a round record between the request thread
+#: (close, reconcile) and the evaluation thread within this process
+_ROUND_WRITE_LOCK = threading.RLock()
+
+
+def _evaluate_in_background(project: Project, number: int) -> None:
+    """Run the split evaluation on a daemon thread; the round record is the
+    hand-off (training.evaluating flips back when done)."""
+    key = (str(project.root), number)
+    with _EVALUATING_LOCK:
+        if key in _EVALUATING:
+            return
+        _EVALUATING.add(key)
+
+    def run() -> None:
+        try:
+            evaluate_round_splits(project, number)
+        except HorosError:
+            logger.exception("round %s split evaluation failed", number)
+        finally:
+            with _EVALUATING_LOCK:
+                _EVALUATING.discard(key)
+
+    threading.Thread(target=run, name=f"horos-loop-eval-{number}", daemon=True).start()
+
+
+@capability(
+    "loop.evaluate",
+    summary="mAP of a round's model on its train, valid and test splits (the learning curve)",
+    web_route="/api/v1/loop/rounds/<int:number>/evaluate",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Runs automatically when a round's training completes.",
+)
+def evaluate_round_splits(
+    project: Project, number: int, *, device: str | None = None
+) -> LoopRound:
+    """COCO mAP of the round's trained model on every split its snapshot has
+    (train, valid, test), stored as eval/<split>/map_50 and map_5095 on the
+    round. Train mAP shows how well the model fits what it saw, valid how it
+    generalises to the fixed validation set, test — when the project has a
+    labeled test split — how it does on data the loop never touched. A split
+    that is missing or fails is recorded as a note, never as a zero."""
+    from horos.api.evaluate import evaluate_run
+
+    record = load_round(project, number)
+    if not record.train_run_id:
+        raise ProjectError(f"Round {number} has no training run to evaluate")
+    metrics = dict(record.metrics)
+    notes: list[str] = []
+    for split in ("train", "valid", "test"):
+        try:
+            report = evaluate_run(project, record.train_run_id, split=split, device=device)
+        except HorosError as exc:
+            if "no '" in str(exc) and "split" in str(exc):
+                continue  # the snapshot simply has no such split (usually test)
+            notes.append(f"{split}: evaluation failed — {exc}")
+            continue
+        metrics[f"eval/{split}/map_50"] = float(report.map_50)
+        metrics[f"eval/{split}/map_5095"] = float(report.map_5095)
+    with _ROUND_WRITE_LOCK:
+        latest = load_round(project, number)
+        training = {**latest.training, "evaluating": False}
+        if notes:
+            training["evaluation_notes"] = notes
+        merged = {**latest.metrics, **metrics}
+        return save_round(
+            project, latest.model_copy(update={"metrics": merged, "training": training})
+        )
 

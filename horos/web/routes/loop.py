@@ -202,3 +202,10 @@ def update_loop_settings():
 @bp.get("/advice")
 def loop_advice():
     return jsonify(api.loop_advice(_project()).model_dump())
+
+
+@bp.post("/rounds/<int:number>/evaluate")
+def evaluate_round_splits(number: int):
+    body = request.get_json(silent=True) or {}
+    record = api.evaluate_round_splits(_project(), number, device=body.get("device") or None)
+    return jsonify(record.model_dump())
