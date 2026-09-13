@@ -228,32 +228,7 @@
       <div class="row" style="justify-content:center">
         <span class="badge tip" id="strategy-badge" data-tip=""></span>
       </div>
-      <div class="row options" id="loop-options">
-        <div class="opt">
-          <span class="k">Model</span>
-          <div class="seg" id="opt-model">
-            <button data-v="auto" title="Boxes → RF-DETR Nano · polygons → RF-DETR-Seg Nano">Auto</button>
-            <button data-v="detection" title="detect boxes">Boxes</button>
-            <button data-v="instance_segmentation" title="segment masks">Masks</button>
-          </div>
-          <select id="opt-model-size" style="display:none"></select>
-        </div>
-        <div class="opt">
-          <span class="k">Suggestions</span>
-          <div class="seg" id="opt-suggest">
-            <button data-v="1" title="pre-label the picked photos">On</button>
-            <button data-v="0" title="start every photo blank">Off</button>
-          </div>
-        </div>
-        <div class="opt" id="opt-shapes-wrap">
-          <span class="k">Shapes</span>
-          <div class="seg" id="opt-shapes">
-            <button data-v="auto" title="whatever the model produces">Auto</button>
-            <button data-v="box" title="boxes only">Box</button>
-            <button data-v="polygon" title="boxes become SAM polygons">Polygon</button>
-          </div>
-        </div>
-      </div>
+      <div class="row options loop-options"></div>
       <button class="btn primary big" id="btn-select">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3"/></svg>
@@ -290,6 +265,7 @@
             <span class="badge" id="round-badge">round —</span>
             <span class="badge tip" id="prelabel-badge" data-tip="" style="display:none"></span>
           </div>
+          <div class="row options loop-options" style="justify-content:flex-start;margin-top:10px"></div>
           <div class="row" style="margin-top:10px">
             <input type="text" id="annotators-input" placeholder="Who is labeling? ann, bob" style="width:240px">
             <button class="btn" id="btn-assign" title="Share the round between these people">
@@ -457,6 +433,32 @@ const Loop = {
     $("btn-select").disabled = n <= 0 || this.status.pool_size === 0;
   },
   models: [],
+  OPTIONS_HTML: `      
+        <div class="opt">
+          <span class="k">Model</span>
+          <div class="seg" data-opt="model">
+            <button data-v="auto" title="Boxes → RF-DETR Nano · polygons → RF-DETR-Seg Nano">Auto</button>
+            <button data-v="detection" title="detect boxes">Boxes</button>
+            <button data-v="instance_segmentation" title="segment masks">Masks</button>
+          </div>
+          <select data-opt="size" style="display:none"></select>
+        </div>
+        <div class="opt">
+          <span class="k">Suggestions</span>
+          <div class="seg" data-opt="suggest">
+            <button data-v="1" title="pre-label the picked photos">On</button>
+            <button data-v="0" title="start every photo blank">Off</button>
+          </div>
+        </div>
+        <div class="opt" data-opt="shapes-wrap">
+          <span class="k">Shapes</span>
+          <div class="seg" data-opt="shapes">
+            <button data-v="auto" title="whatever the model produces">Auto</button>
+            <button data-v="box" title="boxes only">Box</button>
+            <button data-v="polygon" title="boxes become SAM polygons">Polygon</button>
+          </div>
+        </div>
+      `,
   async renderOptions() {
     const st = this.status.settings || {};
     if (!this.models.length) {
@@ -464,34 +466,36 @@ const Loop = {
     }
     const chosen = this.models.find((m) => m.key === st.model);
     const kind = chosen ? chosen.task : "auto";
-    const setSeg = (id, v) => $(id).querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === String(v)));
-    setSeg("opt-model", kind);
-    setSeg("opt-suggest", st.preannotate === false ? 0 : 1);
-    setSeg("opt-shapes", st.shapes || "auto");
-    $("opt-shapes-wrap").style.opacity = st.preannotate === false ? ".4" : "1";
-    const size = $("opt-model-size");
-    if (kind === "auto") size.style.display = "none";
-    else {
-      const sizes = this.models.filter((m) => m.task === kind);
-      size.innerHTML = sizes.map((m) => `<option value="${m.key}" ${m.key === st.model ? "selected" : ""}>${m.display_name.replace(/^RF-DETR(-Seg)? /, "")}</option>`).join("");
-      size.style.display = "";
-    }
-    if (!this._optionsWired) {
-      this._optionsWired = true;
-      $("opt-model").querySelectorAll("button").forEach((b) => { b.onclick = () => {
+    document.querySelectorAll(".loop-options").forEach((root) => {
+      root.innerHTML = this.OPTIONS_HTML;
+      const seg = (name) => root.querySelector(`[data-opt="${name}"]`);
+      const setSeg = (name, v) => seg(name).querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === String(v)));
+      setSeg("model", kind);
+      setSeg("suggest", st.preannotate === false ? 0 : 1);
+      setSeg("shapes", st.shapes || "auto");
+      seg("shapes-wrap").style.opacity = st.preannotate === false ? ".4" : "1";
+      const size = seg("size");
+      if (kind === "auto") size.style.display = "none";
+      else {
+        const sizes = this.models.filter((m) => m.task === kind);
+        size.innerHTML = sizes.map((m) => `<option value="${m.key}" ${m.key === st.model ? "selected" : ""}>${m.display_name.replace(/^RF-DETR(-Seg)? /, "")}</option>`).join("");
+        size.style.display = "";
+      }
+      seg("model").querySelectorAll("button").forEach((b) => { b.onclick = () => {
         const v = b.dataset.v;
         const pick = v === "auto" ? null : (this.models.find((m) => m.task === v && /nano/i.test(m.key)) || this.models.find((m) => m.task === v) || {}).key || null;
         this.saveSettings({ model: pick });
       }; });
       size.onchange = () => this.saveSettings({ model: size.value });
-      $("opt-suggest").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ preannotate: b.dataset.v === "1" }); });
-      $("opt-shapes").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ shapes: b.dataset.v }); });
-    }
+      seg("suggest").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ preannotate: b.dataset.v === "1" }); });
+      seg("shapes").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ shapes: b.dataset.v }); });
+    });
   },
   async saveSettings(changes) {
     try {
       this.status.settings = await api("/loop/settings", json("PUT", changes));
       await this.renderOptions();
+      if (this.status.current && this.status.current.state === "labeling") this.renderLabel(this.status.current);
     } catch (e) { toast(e.message, "err", 4000); }
   },
   renderSelect() {
@@ -552,6 +556,7 @@ const Loop = {
     const st = this.status.settings || {};
     const modelName = st.model ? st.model.replace("rfdetr-", "RF-DETR ").replace("seg-", "Seg ") : "auto model";
     $("round-badge").innerHTML = `${ICON.loop} Round ${cur.number} · ${how} · ${modelName}`;
+    await this.renderOptions();
     const pre = cur.preannotation || {};
     $("prelabel-badge").style.display = pre.annotations ? "" : "none";
     $("prelabel-badge").innerHTML = `${ICON.robot} ${pre.annotations} suggested`;
@@ -564,6 +569,7 @@ const Loop = {
     if ($("annotator").getAttribute("src") !== src) $("annotator").setAttribute("src", src);
     this.updateRing(picks);
     await this.renderReadiness();
+    clearTimeout(this.pollTimer);  // renderLabel re-runs after a settings change
     this.pollTimer = setTimeout(() => this.refreshLabel(), 5000);
   },
   async refreshLabel() {
