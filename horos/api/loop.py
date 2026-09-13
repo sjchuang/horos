@@ -1,0 +1,510 @@
+"""The active-learning loop — round selection (E10-T6).
+
+One round: select → label → train → review. This module owns the *select*
+step and the round bookkeeping; labeling reuses the annotator, training
+and review land in E10-T8/T9.
+
+How a batch is chosen (strategy "auto", the only thing the UI ever sends):
+
+- no labeled image yet → **diversity**: k-center greedy over DINOv2
+  embeddings (E10-T4). The paper behind the model-based metric seeds with
+  a random 2 %; the confirmed E10 design replaces that with similarity.
+- labeled images exist → **pal** (E10-T5): the newest completed training
+  run scores every unlabeled image; without a run, OWLv2 zero-shot with the
+  project's class names as prompts stands in as the scorer (decision D4).
+  PAL cannot reach images the scorer sees nothing in; the remainder of the
+  budget is filled by diversity so the round is always the size asked for.
+- the embedding model cannot load → **random**, and the round says so.
+
+Pool = images with no confirmed annotation whose split is "train". Valid
+and test images are never selected: the validation split is locked at the
+first training (E10-T8) and its metrics must stay comparable across
+rounds (E7-T2).
+"""
+
+from __future__ import annotations
+
+import logging
+import random
+from collections.abc import Iterator
+from threading import Event as CancelEvent
+from typing import TYPE_CHECKING, Literal
+
+import numpy as np
+from pydantic import BaseModel, Field
+
+from horos.api.embeddings import DEFAULT_EMBEDDING_MODEL, embedding_events, load_embeddings
+from horos.api.jobs import start_job
+from horos.api.manifest import capability
+from horos.api.train import list_runs
+from horos.core import pal
+from horos.core.project import Project
+from horos.core.rounds import (
+    LoopRound,
+    PickedImage,
+    SelectionRecord,
+    SelectionStrategy,
+    create_round,
+    current_round,
+    list_rounds,
+    load_round,
+    save_round,
+)
+from horos.core.selection import kcenter_greedy, random_picks, resolve_count
+from horos.errors import BackendError, HorosError, ProjectError
+
+if TYPE_CHECKING:
+    from horos.backends.base import Event, ImageEmbedder, ImagePrediction, ModelBackend
+
+logger = logging.getLogger(__name__)
+
+__all__ = [
+    "LoopStatus",
+    "RoundSummary",
+    "loop_status",
+    "get_round",
+    "select_round_events",
+    "select_round",
+    "start_round_job",
+    "close_round",
+]
+
+Strategy = Literal["auto", "pal", "diversity", "random"]
+#: a detection counts as "final" for PAL scoring at or above this confidence;
+#: the backends report raw candidates below it (down to their own floor)
+SCORE_THRESHOLD = 0.3
+#: labeled images used to fit PAL's logistic classifiers per round — a cap
+#: so a large labeled set does not cost a full inference pass every round
+MAX_FIT_IMAGES = 300
+ZERO_SHOT_SCORER = "owlv2-base"
+
+
+class RoundSummary(BaseModel):
+    number: int
+    state: str
+    strategy: str | None = None
+    requested: int = 0
+    picked: int = 0
+    #: picks that now hold confirmed annotations
+    labeled: int = 0
+    train_run_id: str | None = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+    created_at: str
+
+
+class LoopStatus(BaseModel):
+    total_images: int
+    labeled_images: int
+    #: selectable images: unlabeled, in the train split, not in the open round
+    pool_size: int
+    validation_images: int
+    categories: list[str]
+    #: a completed training run exists — PAL will score with it
+    has_model: bool
+    #: what strategy "auto" would pick for the next round
+    next_strategy: SelectionStrategy
+    current: LoopRound | None = None
+    rounds: list[RoundSummary] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------- helpers
+
+
+def _labeled_ids(project: Project) -> set[int]:
+    out = set()
+    for record in project.list_images():
+        if any(a.status == "confirmed" for a in project.load_annotations(record.id).annotations):
+            out.add(record.id)
+    return out
+
+
+def _latest_completed_run(project: Project):
+    runs = [r for r in list_runs(project) if r.state == "completed" and r.checkpoint]
+    return max(runs, key=lambda r: r.created_at) if runs else None
+
+
+def _auto_strategy(project: Project, labeled: set[int]) -> tuple[SelectionStrategy, str]:
+    if not labeled:
+        return "diversity", "no labeled images yet — spreading the first batch over the data"
+    if _latest_completed_run(project) is not None:
+        return "pal", "a trained model exists — scoring with it (PAL)"
+    if project.categories:
+        return "pal", (
+            f"no trained model yet — {ZERO_SHOT_SCORER} zero-shot on the class names "
+            f"stands in as the PAL scorer"
+        )
+    return "diversity", "labels exist but the project has no classes to prompt a scorer with"
+
+
+def _summary(project: Project, record: LoopRound) -> RoundSummary:
+    labeled = 0
+    if record.selection:
+        for image_id in record.selection.image_ids:
+            try:
+                anns = project.load_annotations(image_id).annotations
+            except ProjectError:
+                continue
+            if any(a.status == "confirmed" for a in anns):
+                labeled += 1
+    return RoundSummary(
+        number=record.number,
+        state=record.state,
+        strategy=record.selection.strategy if record.selection else None,
+        requested=record.selection.requested if record.selection else 0,
+        picked=len(record.image_ids),
+        labeled=labeled,
+        train_run_id=record.train_run_id,
+        metrics=record.metrics,
+        created_at=record.created_at,
+    )
+
+
+# ------------------------------------------------------------------ status
+
+
+@capability(
+    "loop.status",
+    summary="Where the active-learning loop stands: pool, labels, rounds, next strategy",
+    web_route="/api/v1/loop",
+    web_methods=("GET",),
+    cli="loop",
+)
+def loop_status(project: Project) -> LoopStatus:
+    images = project.list_images()
+    labeled = _labeled_ids(project)
+    active = current_round(project)
+    reserved = set(active.image_ids) if active else set()
+    pool = [
+        r for r in images if r.id not in labeled and r.split == "train" and r.id not in reserved
+    ]
+    strategy, _ = _auto_strategy(project, labeled)
+    return LoopStatus(
+        total_images=len(images),
+        labeled_images=len(labeled),
+        pool_size=len(pool),
+        validation_images=sum(1 for r in images if r.split == "valid"),
+        categories=[c.name for c in project.categories],
+        has_model=_latest_completed_run(project) is not None,
+        next_strategy=strategy,
+        current=active,
+        rounds=[_summary(project, r) for r in list_rounds(project)],
+    )
+
+
+@capability(
+    "loop.round",
+    summary="One round's record: strategy, every pick with its score and reason",
+    web_route="/api/v1/loop/rounds/<int:number>",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="'horos loop' prints the round table; per-pick reasons are for the UI.",
+)
+def get_round(project: Project, number: int) -> LoopRound:
+    return load_round(project, number)
+
+
+@capability(
+    "loop.close",
+    summary="Close a round (from any state) so the next one can start",
+    web_route="/api/v1/loop/rounds/<int:number>/close",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Rounds close themselves at review; abandoning one is a UI action.",
+)
+def close_round(project: Project, number: int) -> LoopRound:
+    record = load_round(project, number)
+    if record.state == "closed":
+        return record
+    return save_round(project, record.advance("closed"))
+
+
+# --------------------------------------------------------------- selection
+
+
+def _pal_detections(
+    prediction: ImagePrediction,
+    image_id: int,
+    name_of: dict[int, str],
+    *,
+    threshold: float,
+) -> list[pal.Detection]:
+    """Backend prediction → PAL detections with support counts."""
+    final = [i for i in prediction.instances if i.score >= threshold]
+    cand_boxes = [c.bbox for c in prediction.candidates]
+    support = pal.support_counts([f.bbox for f in final], cand_boxes) if cand_boxes else None
+    out = []
+    for n, inst in enumerate(final):
+        name = inst.category_name or name_of.get(inst.category_id)
+        if name is None:
+            continue
+        out.append(
+            pal.Detection(
+                image_id=image_id,
+                category=name,
+                confidence=inst.score,
+                support=None if support is None else support[n],
+                class_probs=inst.class_probs,
+            )
+        )
+    return out
+
+
+def _scorer(project: Project, device: str | None):
+    """(backend, label, name_of, run_id) — the newest completed run's model,
+    else OWLv2 prompted with the class names."""
+    run = _latest_completed_run(project)
+    if run is not None:
+        from horos.api.evaluate import _load_run_backend
+
+        backend, _ = _load_run_backend(project, run.run_id, device=device)
+        return backend, run.run_id, {}, run.run_id
+    from horos.backends import get_backend
+
+    names = [c.name for c in project.categories]
+    backend = get_backend(ZERO_SHOT_SCORER, device=device)
+    backend.configure_prompts(names)  # type: ignore[attr-defined]
+    return backend, ZERO_SHOT_SCORER, dict(enumerate(names)), None
+
+
+def select_round_events(
+    project: Project,
+    *,
+    count: int | None = None,
+    percent: float | None = None,
+    strategy: Strategy = "auto",
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    device: str | None = None,
+    embedder: ImageEmbedder | None = None,
+    detector: ModelBackend | None = None,
+    detector_label: str | None = None,
+    cancel: CancelEvent | None = None,
+    seed: int | None = None,
+) -> Iterator[Event]:
+    """Open the next round and choose its images, as an R4 event stream.
+    Ends with RunCompleted(result={"round", "picked", "strategy"}) and the
+    round in state "labeling"; on failure the round is closed again so the
+    loop is never stuck. `embedder`/`detector` are injectable for tests."""
+    from horos.backends.base import ProgressUpdated, RunCompleted, RunFailed, RunStarted
+
+    images = project.list_images()
+    labeled = _labeled_ids(project)
+    pool = [r for r in images if r.id not in labeled and r.split == "train"]
+    wanted = resolve_count(len(pool), count=count, percent=percent)
+    if strategy == "auto":
+        chosen, why = _auto_strategy(project, labeled)
+    else:
+        chosen, why = strategy, f"strategy '{strategy}' requested explicitly"
+    if chosen == "pal" and not labeled:
+        raise ProjectError(
+            "PAL needs labeled images to learn from; label a first batch or use 'diversity'"
+        )
+    record = create_round(project, labeled_before=len(labeled))
+    notes = [why]
+    yield RunStarted(
+        total=wanted,
+        config={"round": record.number, "requested": wanted, "percent": percent,
+                "strategy": chosen, "pool": len(pool), "embedding_model": embedding_model},
+    )
+    try:
+        # ---- embeddings (diversity needs them; PAL uses them for RCSP)
+        pool_ids = [r.id for r in pool]
+        labeled_ids = sorted(labeled)
+        pool_vecs = None
+        covered = None
+        try:
+            for event in embedding_events(
+                project, embedding_model, device=device, backend=embedder, cancel=cancel
+            ):
+                if event.type == "progress":
+                    yield event
+                elif event.type == "failed":
+                    raise BackendError(event.message, backend="embeddings")
+            pool_vecs = load_embeddings(project, pool_ids, embedding_model)
+            covered = load_embeddings(project, labeled_ids, embedding_model)
+        except BackendError as exc:
+            notes.append(f"embedding model {embedding_model} unavailable: {exc}")
+            pool_vecs = covered = None
+        if cancel is not None and cancel.is_set():
+            raise _Cancelled()
+
+        picks: list[PickedImage] = []
+        scorer_label: str | None = None
+        if chosen == "pal":
+            backend = detector
+            if backend is None:
+                backend, scorer_label, name_of, _ = _scorer(project, device)
+            else:
+                scorer_label = detector_label or getattr(backend, "family", "detector")
+                name_of = dict(enumerate(c.name for c in project.categories))
+            by_id = {r.id: r for r in images}
+            # labeled detections with true/false-positive flags → LIUS training set
+            fit_ids = labeled_ids
+            if len(fit_ids) > MAX_FIT_IMAGES:
+                fit_ids = sorted(random.Random(seed).sample(fit_ids, MAX_FIT_IMAGES))
+                notes.append(
+                    f"PAL classifiers fitted on {MAX_FIT_IMAGES} of {len(labeled_ids)} "
+                    f"labeled images"
+                )
+            labeled_dets: list[pal.Detection] = []
+            total_steps = len(fit_ids) + len(pool)
+            step = 0
+            cats = {c.id: c.name for c in project.categories}
+            for image_id in fit_ids:
+                if cancel is not None and cancel.is_set():
+                    raise _Cancelled()
+                rec = by_id[image_id]
+                pred = backend.infer_one(project.image_path(rec), threshold=SCORE_THRESHOLD)
+                dets = _pal_detections(pred, image_id, name_of, threshold=SCORE_THRESHOLD)
+                final = [i for i in pred.instances if i.score >= SCORE_THRESHOLD]
+                boxes = [i.bbox for i in final if (i.category_name or name_of.get(i.category_id))]
+                gt = [a for a in project.load_annotations(image_id).annotations
+                      if a.status == "confirmed"]
+                flags = pal.match_true_positives(
+                    boxes, [d.category for d in dets], [d.confidence for d in dets],
+                    [a.bbox for a in gt], [cats.get(a.category_id, "") for a in gt],
+                )
+                labeled_dets.extend(
+                    pal.Detection(
+                        image_id=d.image_id, category=d.category, confidence=d.confidence,
+                        support=d.support, class_probs=d.class_probs, true_positive=flag,
+                    )
+                    for d, flag in zip(dets, flags, strict=True)
+                )
+                step += 1
+                yield ProgressUpdated(current=step, total=total_steps, phase="scoring labeled",
+                                      message=f"{rec.file_name}: {len(dets)} detection(s)")
+            unlabeled_dets: dict[int, list[pal.Detection]] = {}
+            for rec in pool:
+                if cancel is not None and cancel.is_set():
+                    raise _Cancelled()
+                pred = backend.infer_one(project.image_path(rec), threshold=SCORE_THRESHOLD)
+                unlabeled_dets[rec.id] = _pal_detections(
+                    pred, rec.id, name_of, threshold=SCORE_THRESHOLD
+                )
+                step += 1
+                yield ProgressUpdated(current=step, total=total_steps, phase="scoring unlabeled",
+                                      message=f"{rec.file_name}: "
+                                              f"{len(unlabeled_dets[rec.id])} detection(s)")
+            embeddings = (
+                {image_id: pool_vecs[n] for n, image_id in enumerate(pool_ids)}
+                if pool_vecs is not None else None
+            )
+            result = pal.select(unlabeled_dets, labeled_dets, wanted, embeddings=embeddings)
+            notes.extend(result.notes)
+            notes.append(
+                "PAL class budgets: " + ", ".join(
+                    f"{c}={b}" for c, b in sorted(result.budgets.items())
+                )
+            )
+            picks = [
+                PickedImage(image_id=p.image_id, score=p.score, reason=p.reason)
+                for p in result.picks
+            ]
+            if result.shortfall:
+                notes.append(
+                    f"{result.shortfall} image(s) added by diversity to fill the round"
+                )
+        # ---- diversity / random, and PAL's top-up
+        remaining = wanted - len(picks)
+        if remaining > 0:
+            taken = {p.image_id for p in picks}
+            rest_idx = [n for n, image_id in enumerate(pool_ids) if image_id not in taken]
+            if chosen == "random":
+                extra = random_picks(len(rest_idx), remaining, seed=seed)
+            elif pool_vecs is not None and rest_idx:
+                cover_parts = []
+                if covered is not None and len(covered):
+                    cover_parts.append(covered)
+                if taken:
+                    cover_parts.append(pool_vecs[[n for n in range(len(pool_ids))
+                                                  if pool_ids[n] in taken]])
+                cover = np.vstack(cover_parts) if cover_parts else None
+                extra = kcenter_greedy(pool_vecs[rest_idx], remaining, covered=cover)
+            else:
+                if chosen == "diversity":
+                    chosen = "random"
+                    notes.append("no embeddings available — fell back to random selection")
+                elif chosen == "pal":
+                    notes.append("no embeddings available — the PAL top-up is random")
+                extra = random_picks(len(rest_idx), remaining, seed=seed)
+            for p in extra:
+                picks.append(PickedImage(image_id=pool_ids[rest_idx[p.index]],
+                                         score=p.score, reason=p.reason))
+        yield ProgressUpdated(current=wanted, total=wanted, phase="selecting",
+                              message=f"{len(picks)} image(s) chosen")
+        record = record.model_copy(update={
+            "selection": SelectionRecord(
+                strategy=chosen, requested=wanted, requested_percent=percent,
+                pool_size=len(pool),
+                embedding_model=embedding_model if pool_vecs is not None else None,
+                scorer=scorer_label, picks=picks, notes=notes,
+            )
+        }).advance("labeling")
+        save_round(project, record)
+        yield RunCompleted(result={"round": record.number, "picked": len(picks),
+                                   "strategy": chosen, "cancelled": False})
+    except _Cancelled:
+        save_round(project, record.advance("closed"))
+        yield RunCompleted(result={"round": record.number, "picked": 0, "cancelled": True})
+    except Exception as exc:  # noqa: BLE001 — the stream must end with an event (R4)
+        logger.exception("round selection failed")
+        try:
+            save_round(project, load_round(project, record.number).advance("closed"))
+        except HorosError:
+            pass
+        yield RunFailed(error_code=getattr(exc, "code", "backend_error"), message=str(exc))
+
+
+class _Cancelled(Exception):
+    pass
+
+
+@capability(
+    "loop.select",
+    summary="Open the next round and pick its images (blocking; scripts and CLI)",
+    not_web_because="The Web API starts the same work as a background job (loop.select_job).",
+    cli="loop",
+)
+def select_round(project: Project, **kwargs) -> LoopRound:
+    """Run `select_round_events` to completion and return the round."""
+    last = None
+    for event in select_round_events(project, **kwargs):
+        last = event
+    if last is None or last.type != "completed":
+        message = getattr(last, "message", "selection produced no result")
+        raise ProjectError(f"Round selection failed: {message}")
+    if last.result.get("cancelled"):
+        raise ProjectError("Round selection was cancelled")
+    return load_round(project, int(last.result["round"]))
+
+
+@capability(
+    "loop.select_job",
+    summary="Open the next round and pick its images as a background job (poll via jobs.status)",
+    web_route="/api/v1/loop/rounds",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="'horos loop select' runs the selection in the foreground.",
+)
+def start_round_job(
+    project: Project,
+    *,
+    count: int | None = None,
+    percent: float | None = None,
+    strategy: Strategy = "auto",
+    embedding_model: str = DEFAULT_EMBEDDING_MODEL,
+    device: str | None = None,
+) -> str:
+    if current_round(project) is not None:
+        active = current_round(project)
+        raise ProjectError(
+            f"Round {active.number} is still '{active.state}'; close it before starting a new one."
+        )
+    return start_job(
+        project,
+        "loop-select",
+        lambda cancel: select_round_events(
+            project, count=count, percent=percent, strategy=strategy,
+            embedding_model=embedding_model, device=device, cancel=cancel,
+        ),
+    )

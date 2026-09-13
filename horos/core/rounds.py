@@ -28,9 +28,11 @@ ROUND_JSON = "round.json"
 
 RoundState = Literal["selecting", "labeling", "training", "reviewing", "closed"]
 
-#: How a batch was chosen. "auto" is resolved to one of the others before a
-#: round is stored — the record always says what actually happened.
-SelectionStrategy = Literal["diversity", "hybrid", "uncertainty", "random"]
+#: How a batch was chosen. "auto" is resolved to one of these before a round
+#: is stored — the record always says what actually happened: "pal" is the
+#: model-based acquisition (E10-T5), "diversity" the embedding cold start
+#: (E10-T4), "random" the explicit fallback when no embedding model loads.
+SelectionStrategy = Literal["pal", "diversity", "random"]
 
 #: legal transitions; anything else is a programming error, not a user error
 _TRANSITIONS: dict[str, tuple[str, ...]] = {

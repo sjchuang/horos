@@ -33,3 +33,41 @@ def start_embedding_job():
         _project(), _model(body, DEFAULT_EMBEDDING_MODEL), device=body.get("device") or None
     )
     return jsonify({"job_id": job_id}), 202
+
+
+@bp.get("")
+def loop_status():
+    return jsonify(api.loop_status(_project()).model_dump())
+
+
+@bp.get("/rounds/<int:number>")
+def get_round(number: int):
+    return jsonify(api.get_round(_project(), number).model_dump())
+
+
+def _count(body: dict) -> tuple[int | None, float | None]:
+    count, percent = body.get("count"), body.get("percent")
+    if count is not None and (isinstance(count, bool) or not isinstance(count, int)):
+        raise ProjectError("'count' must be an integer")
+    if percent is not None and (isinstance(percent, bool) or not isinstance(percent, int | float)):
+        raise ProjectError("'percent' must be a number")
+    return count, percent
+
+
+@bp.post("/rounds")
+def start_round_job():
+    body = request.get_json(silent=True) or {}
+    count, percent = _count(body)
+    strategy = body.get("strategy", "auto")
+    if strategy not in ("auto", "pal", "diversity", "random"):
+        raise ProjectError("'strategy' must be auto, pal, diversity or random")
+    job_id = api.start_round_job(
+        _project(), count=count, percent=percent, strategy=strategy,
+        embedding_model=_model(body, DEFAULT_EMBEDDING_MODEL), device=body.get("device") or None,
+    )
+    return jsonify({"job_id": job_id}), 202
+
+
+@bp.post("/rounds/<int:number>/close")
+def close_round(number: int):
+    return jsonify(api.close_round(_project(), number).model_dump())

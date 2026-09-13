@@ -500,6 +500,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run the planned pip installs (torch on Jetson is never automated)",
     )
 
+    p = sub.add_parser(
+        "loop",
+        help="Active-learning loop: show where it stands, or select the next round",
+    )
+    p.add_argument(
+        "action", nargs="?", choices=("status", "select"), default="status",
+        help="'status' (default) prints pool, labels and rounds; 'select' opens the "
+             "next round and picks its images",
+    )
+    p.add_argument(
+        "--project",
+        help="Project directory (default: the project containing the current directory)",
+    )
+    p.add_argument("--count", type=int, help="Images for the round (default 20)")
+    p.add_argument("--percent", type=float, help="Round size as a percentage of the pool")
+    p.add_argument(
+        "--strategy", choices=("auto", "pal", "diversity", "random"), default="auto",
+        help="auto (default): PAL once labels exist, diversity before",
+    )
+    p.add_argument("--device", help="Device override (cuda, mps, cpu)")
+
     p = sub.add_parser("ui", help="Start the Web API + WebUI server")
     p.add_argument(
         "project_path",
@@ -562,7 +583,10 @@ def _ml_preflight(command: str) -> int | None:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command in _ML_GATED_COMMANDS or args.command == "ui":
+    gated = args.command in _ML_GATED_COMMANDS or args.command == "ui"
+    if args.command == "loop" and args.action == "select":
+        gated = True  # embedding / scoring models; 'loop status' works without them
+    if gated:
         exit_code = _ml_preflight(args.command)
         if exit_code is not None:
             return exit_code
@@ -1038,6 +1062,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                 print("Manual steps remain (see above) — not automated on purpose.")  # noqa: T201
                 return 1
             print("Fixes applied. Re-run 'horos doctor' to verify.")  # noqa: T201
+        elif args.command == "loop":
+            project = _project_arg(args)
+            if args.action == "select":
+                from horos.api.loop import select_round_events
+                from horos.backends.base import dump_event
+
+                final = None
+                for event in select_round_events(
+                    project, count=args.count, percent=args.percent,
+                    strategy=args.strategy, device=args.device,
+                ):
+                    print(dump_event(event), file=sys.stderr)  # noqa: T201
+                    final = event
+                if final is None or final.type != "completed" or final.result.get("cancelled"):
+                    return 1
+                record = api.get_round(project, int(final.result["round"]))
+                _emit(record.model_dump(mode="json"))
+            else:
+                _emit(api.loop_status(project).model_dump(mode="json"))
         elif args.command == "ui":
             from horos.web.app import create_app
 

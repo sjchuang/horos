@@ -93,6 +93,15 @@ from horos.api.labels import (
     merge_categories,
     update_category,
 )
+from horos.api.loop import (
+    LoopStatus,
+    RoundSummary,
+    close_round,
+    get_round,
+    loop_status,
+    select_round,
+    start_round_job,
+)
 from horos.api.manifest import Capability, get_capability, list_capabilities
 from horos.api.media import (
     MediaFrame,
@@ -157,6 +166,13 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "LoopStatus",
+    "RoundSummary",
+    "close_round",
+    "get_round",
+    "loop_status",
+    "select_round",
+    "start_round_job",
     "EmbeddingStatus",
     "embedding_status",
     "start_embedding_job",

@@ -398,3 +398,33 @@ def test_boxes_to_polygons_streams_events_and_filters_by_class(tmp_path, monkeyp
         assert json.loads(capsys.readouterr().out.splitlines()[-1])["type"] == "failed"
     finally:
         _reset_segmenters()
+
+
+def test_loop_status_and_select_from_the_cli(tmp_path, capsys, monkeypatch):
+    """E10-T15: the loop runs from the CLI without a browser (E9-S3)."""
+    from helpers.fake_backend import FakeEmbedder
+
+    coco_dir = write_sample_coco_dir(tmp_path / "coco")
+    proj = tmp_path / "proj"
+    _run(capsys, "init", str(proj), "--name", "demo")
+    _run(capsys, "import", str(coco_dir), "--project", str(proj))
+    # the sample dataset is fully labeled; wipe one image's labels to get a pool
+    from horos.api import open_project
+
+    project = open_project(proj)
+    stored = project.load_annotations(1)
+    project.save_annotations(1, [], expected_version=stored.version)
+
+    code, body = _run(capsys, "loop", "--project", str(proj))
+    assert code == 0 and body["pool_size"] == 1 and body["labeled_images"] == 2
+    assert body["next_strategy"] == "pal" and body["rounds"] == []
+
+    monkeypatch.setattr("horos.backends.get_backend", lambda key, **kw: FakeEmbedder())
+    code, body = _run(capsys, "loop", "select", "--project", str(proj),
+                      "--count", "1", "--strategy", "diversity")
+    assert code == 0 and body["number"] == 1 and body["state"] == "labeling"
+    assert [p["image_id"] for p in body["selection"]["picks"]] == [1]
+    assert body["selection"]["strategy"] == "diversity"
+
+    code, body = _run(capsys, "loop", "--project", str(proj))
+    assert code == 0 and body["current"]["number"] == 1 and body["pool_size"] == 0
