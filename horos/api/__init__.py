@@ -42,6 +42,11 @@ from horos.api.dataset import (
     resplit,
     validate_project,
 )
+from horos.api.embeddings import (
+    EmbeddingStatus,
+    embedding_status,
+    start_embedding_job,
+)
 from horos.api.error_analysis import (
     ClassErrors,
     ConfusionPair,
@@ -152,6 +157,9 @@ from horos.api.visualize import (
 )
 
 __all__ = [
+    "EmbeddingStatus",
+    "embedding_status",
+    "start_embedding_job",
     "ClearDatasetSummary",
     "clear_dataset",
     "PrefetchResult",

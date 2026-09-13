@@ -21,6 +21,9 @@ dependencies = [
     "flask>=3.0,<4",
     "pyyaml>=6.0",
     "pillow>=10.0",
+    # E10 selection and the embedding store: k-center greedy, PAL logistic
+    # fits and .npy vector storage (BSD-3; already pulled in by pycocotools)
+    "numpy>=1.24",
     # E6 imports it directly for COCO metrics (also a member of rfdetr's train
     # stack); torch-free, so safe on every platform including Jetson (BSD).
     "pycocotools>=2.0",
