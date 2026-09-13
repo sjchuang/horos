@@ -20,7 +20,7 @@ from pydantic import BaseModel
 
 from horos.errors import UnknownModelError
 
-Task = Literal["detection", "instance_segmentation"]
+Task = Literal["detection", "instance_segmentation", "embedding"]
 
 APACHE_2_0 = "Apache-2.0"
 
@@ -145,6 +145,23 @@ _MODELS: dict[str, ModelInfo] = {
             latency_hint="best zero-shot quality, slow — batch use only",
             entrypoint=_OWLV2_ENTRYPOINT,
             hf_id="google/owlv2-large-patch14-ensemble",
+        ),
+        # DINOv2 (code + weights Apache 2.0): image embeddings for the
+        # active-learning loop's similarity-based selection (E10). Not a
+        # detector. DINOv3 is deliberately absent (non-Apache license, §9).
+        ModelInfo(
+            key="dinov2-small",
+            family="dinov2",
+            display_name="DINOv2 Small (image embeddings)",
+            task="embedding",
+            code_license=APACHE_2_0,
+            weights_license=APACHE_2_0,
+            license_url="https://huggingface.co/facebook/dinov2-small",
+            input_resolution=224,
+            params_millions=22.1,
+            latency_hint="one vector per image; drives batch selection, never deployed",
+            entrypoint="horos.backends.dinov2:DINOv2Backend",
+            hf_id="facebook/dinov2-small",
         ),
         ModelInfo(
             key="sam-base",

@@ -13,7 +13,7 @@ from __future__ import annotations
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal
@@ -273,6 +273,44 @@ class BoxToMaskBackend(ModelBackend):
     ) -> list[list[float] | None]:
         """One flat [x1, y1, x2, y2, ...] polygon per COCO-xywh box, in the
         same order; None where no usable mask came back."""
+
+
+class ImageEmbedder(ModelBackend):
+    """Image-level feature extractors (DINOv2 and successors) for the
+    active-learning loop (E10-T2): cold-start diversity selection and the
+    similarity penalty of PAL work on cosine distances between these
+    vectors. Encoders only — training, detection and export are refused
+    with an explicit error rather than left abstract, so a subclass
+    implements just `embed_batch` and `embedding_dim`."""
+
+    @property
+    @abstractmethod
+    def embedding_dim(self) -> int:
+        """Length of one vector."""
+
+    @abstractmethod
+    def embed_batch(self, images: Sequence[Path]) -> list[list[float]]:
+        """One L2-normalised vector per image, in the order given."""
+
+    def _refuse(self, op: str) -> BackendError:
+        return BackendError(
+            f"{self.info.display_name} is an image-embedding model; it does not {op}.",
+            backend=self.family,
+        )
+
+    def train(self, spec: TrainSpec) -> Iterator[Event]:
+        raise self._refuse("train")
+
+    def infer_one(self, image: Path, *, threshold: float = 0.5) -> ImagePrediction:
+        raise self._refuse("detect objects")
+
+    def infer_batch(
+        self, images: Iterable[Path], *, threshold: float = 0.5
+    ) -> Iterator[Event]:
+        raise self._refuse("detect objects")
+
+    def export(self, checkpoint: Path, spec: ExportSpec) -> Iterator[Event]:
+        raise self._refuse("export")
 
 
 class SegmentPrompt(BaseModel):

@@ -9,6 +9,7 @@ from pathlib import Path
 from horos.backends.base import (
     Event,
     ExportSpec,
+    ImageEmbedder,
     ImagePrediction,
     MetricsUpdated,
     ModelBackend,
@@ -262,3 +263,36 @@ class SpawnProbeBackend(FakeBackend):
         checkpoint = spec.output_dir / "best.fake"
         checkpoint.write_bytes(b"fake-weights")
         yield RunCompleted(result={"checkpoint": str(checkpoint)})
+
+
+class FakeEmbedder(ImageEmbedder):
+    """A deterministic image embedder for the active-learning loop tests
+    (E10): the vector is built from the image's mean colour and size, so
+    two files with the same content embed identically and different colours
+    land apart. No ML dependency."""
+
+    family = "fake-embedder"
+
+    def __init__(self, info=None, *, device=None, checkpoint=None):
+        super().__init__(info, device=device, checkpoint=checkpoint)
+        self.calls: list[list[str]] = []
+
+    @property
+    def embedding_dim(self) -> int:
+        return 6
+
+    def embed_batch(self, images):
+        import numpy as np
+        from PIL import Image
+
+        paths = [str(p) for p in images]
+        self.calls.append(paths)
+        out = []
+        for path in paths:
+            with Image.open(path) as im:
+                rgb = im.convert("RGB")
+                width, height = rgb.size
+                mean = np.asarray(rgb, dtype=np.float64).reshape(-1, 3).mean(axis=0) / 255.0
+            vec = np.asarray([*mean, width / 1000.0, height / 1000.0, 1.0])
+            out.append((vec / (np.linalg.norm(vec) or 1.0)).tolist())
+        return out
