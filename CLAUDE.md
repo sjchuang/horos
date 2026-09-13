@@ -233,6 +233,7 @@ The user's priority order is: annotate → train → evaluate → deploy. Annota
 | **P2** | E5 training | |
 | **P3** | E6 evaluation and testing | |
 | **P4** | E7 experiment management + E8 export and deployment | |
+| **P5** | E10 active learning loop | Replaces the standalone annotate / autolabel / review pages with one select → label → train → review loop; the canvas engine from E2 is kept |
 
 ---
 
@@ -565,6 +566,58 @@ Contract tests. Deliberate exceptions are allowed (some features are intentional
 
 ---
 
+### E10 — Active Learning Loop
+
+**Goal:** replace the standalone annotate, autolabel and review pages with one loop that a user can follow without reading any text: select a batch → label it → train → review → next round. Works for any labeled fraction, from zero to complete.
+
+Decisions confirmed on 2026-09-13:
+
+- The **canvas engine** (E2-T1..T8: zoom, draw, polygon, shortcuts, optimistic lock) is kept and embedded; the page shell, autolabel page and review page are rebuilt as the loop page
+- Cold-start similarity uses **DINOv2 small** (Apache 2.0, code and weights) as a new `horos/backends/dinov2/` backend; selection is k-center greedy in embedding space
+- With a trained model, selection is **hybrid**: diverse candidates first, then ranked by prediction uncertainty. Every picked image carries a score and a reason string
+- With no trained model but named classes, **OWLv2 zero-shot** is the round-0 pre-annotator and uncertainty source; the user is never asked to pick a model
+- The **validation split is locked** at the first training of the loop and never grows; later rounds feed train only, so round metrics stay comparable (E7-T2)
+- Batch size per round defaults to a **fixed number**; a percentage of the unlabeled pool is selectable
+- **Multiple annotators**: a round's images are assigned per annotator on top of the E2-T8 claims
+- Machine-generated geometry (autolabel, SAM boxes-to-polygons, round pre-annotation) is **always** `source="auto", status="pending"` with a score — never stored as human work
+
+#### User stories
+
+- **E10-S1** (WebUI) A user with an unlabeled folder presses one button, gets a diverse first batch, labels it, presses train, and sees a model
+- **E10-S2** (WebUI) A user chooses how many images the next round should contain and sees the remaining unlabeled count update live
+- **E10-S3** (WebUI) A user with a partly labeled dataset starts the loop and the existing labels are round 0 — nothing is relabeled
+- **E10-S4** (WebUI) In every round after the first model, the user corrects pre-annotations instead of drawing from scratch
+- **E10-S5** (WebUI) A user sees, per round, the validation metric and how many labels it took, and decides whether another round is worth it
+- **E10-S6** (Python API) An engineer runs the loop from a script: select, label externally, train, repeat
+- **E10-S7** (WebUI) Two annotators open the same round and each gets their own share of its images
+- **E10-S8** (Python API) A user asks why an image was picked and gets the strategy, score and reason recorded for it
+
+#### Tasks
+
+| ID | Content | Definition of done |
+|---|---|---|
+| E10-T1 | Round data model and storage (`rounds/<n>/round.json`, state machine selecting → labeling → training → reviewing → closed) | `tests/unit/test_round_model.py` |
+| E10-T2 | `ImageEmbedder` interface in `backends/base.py` + DINOv2 backend + registry entry with both licenses | `tests/api/test_backend_dinov2.py` |
+| E10-T3 | Project embedding store: per model, incremental, invalidated when an image file changes, progress events (R4) | `tests/api/test_embedding_store.py` |
+| E10-T4 | Diversity selection (k-center greedy) with a reason per pick | `tests/unit/test_selection_diversity.py` |
+| E10-T5 | Uncertainty scoring from predictions + hybrid selection with reasons | `tests/unit/test_selection_uncertainty.py` |
+| E10-T6 | Round selection API: count or percent; strategy auto-chosen from model availability; pool excludes labeled and validation images | `tests/api/test_loop_select.py` |
+| E10-T7 | Round pre-annotation: own model when a completed run exists, else OWLv2 from class names; written pending with score | `tests/api/test_loop_preannotate.py` |
+| E10-T8 | Round training: readiness threshold, quick derived config, validation split locked at first training | `tests/api/test_loop_train.py` |
+| E10-T9 | Round history: per-round metrics, labels spent, delta to the previous round | `tests/api/test_loop_history.py` |
+| E10-T10 | Per-round assignment of images to annotators | `tests/api/test_loop_assign.py` |
+| E10-T11 | Machine geometry always pending with score (boxes-to-polygons, autolabel, pre-annotation) | `tests/api/test_generated_pending.py` |
+| E10-T12 | Web API endpoints | `tests/web/test_loop_routes.py` |
+| E10-T13 | Canvas extracted as an embeddable component with no page-shell dependencies | Interface scenario |
+| E10-T14 | Loop page: four-step stepper, one primary action at a time, count slider, embedded canvas, live curves, round history | Interface scenario |
+| E10-T15 | CLI `horos loop` (select / train / status) | `tests/api/test_cli.py` |
+
+#### How it is accepted
+
+**E10-T6 is the core acceptance gate**: with fake backends, a project with zero labels yields a diverse batch, a project with a completed run yields an uncertainty-ranked batch, and every pick carries a reason. E10-T14 is accepted through its interface scenario: the whole loop is completed once without reading any help text.
+
+---
+
 ## 7. Development Process
 
 ### Confirm before starting each Epic
@@ -581,6 +634,7 @@ Decisions already made; no need to ask again:
 - Auto-labeling uses **OWLv2 open-vocabulary zero-shot** (Apache 2.0)
 - First-version priority: annotate → train → evaluate → deploy
 - Hyperparameter adaptation is **rule-based**; search-based is left as a later extension
+- **Active learning loop (E10)**: canvas engine kept, DINOv2 small for cold-start similarity, OWLv2 as the round-0 pre-annotator, fixed per-round count by default, multi-annotator assignment required
 
 ### Definition of done for a task
 
