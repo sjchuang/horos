@@ -181,3 +181,24 @@ def test_error_overlay_refuses_an_image_outside_the_split(tmp_path):
     _write_detections(project, run.run_id, "valid", [])
     with pytest.raises(ProjectError, match="not part of"):
         render_error_overlay(project, run.run_id, "valid", 999)
+
+
+def test_polygon_instances_are_drawn_as_outlines_not_boxes(blank):
+    """A segmentation model's instance carries a polygon: the overlay draws
+    its outline with a translucent fill and leaves the bbox corners alone."""
+    from horos.api.visualize import prediction_overlay_boxes
+
+    diamond = [40.0, 10.0, 70.0, 40.0, 40.0, 70.0, 10.0, 40.0]  # inside bbox (10,10,60,60)
+    prediction = ImagePrediction(
+        image="x", width=80, height=80,
+        instances=[PredictedInstance(bbox=(10, 10, 60, 60), score=0.9, category_id=0,
+                                     category_name="box", segmentation=[diamond])],
+    )
+    boxes = prediction_overlay_boxes(prediction, colors={"box": "#ff0000"})
+    assert boxes[0].polygon == diamond
+    out = render_overlay(blank, boxes)  # `blank` is black
+    px = out.load()
+    assert px[40, 10][0] > 200          # a polygon vertex is painted red
+    assert px[70, 20] == (0, 0, 0)      # the bbox's right edge is untouched: no rectangle
+    inside = px[40, 40]
+    assert 30 < inside[0] < 200 and inside[1] == 0  # translucent red fill, not the outline

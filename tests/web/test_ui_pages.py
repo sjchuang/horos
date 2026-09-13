@@ -49,6 +49,7 @@ def test_evaluate_page_holds_metrics_and_error_analysis_only(client):
 def test_lab_page_holds_the_upload_playground_only(client):
     html = client.get("/lab").get_data(as_text=True)
     assert 'id="dropzone"' in html and 'id="gallery"' in html
+    assert "inst.segmentation" in html  # segmentation models show masks, not only boxes
     assert 'id="eval-btn"' not in html and 'id="errors-panel"' not in html
 
 

@@ -61,6 +61,9 @@ class OverlayBox(BaseModel):
     label: str = ""
     style: Literal["solid", "dashed"] = "solid"
     width: int | None = None  # default scales with the image
+    #: flat [x1, y1, x2, y2, ...] outline of a segmentation instance; drawn
+    #: (with a translucent fill) instead of the rectangle when present
+    polygon: list[float] | None = None
 
 
 # ------------------------------------------------------------------ drawing
@@ -130,18 +133,30 @@ def render_overlay(
     else:
         canvas = image.convert("RGB")
 
-    draw = ImageDraw.Draw(canvas)
     # line width and font scale with the image so labels stay legible on
     # 4K frames and do not swallow 64-px thumbnails
     base = max(1, round(max(canvas.size) / 400))
     font_size = max(10, base * 6)
     font = _font(font_size)
+    # masks first, as one translucent layer, so outlines and labels stay crisp
+    polygons = [b for b in boxes if b.polygon and len(b.polygon) >= 6]
+    if polygons:
+        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        layer_draw = ImageDraw.Draw(layer)
+        for box in polygons:
+            pts = list(zip(box.polygon[0::2], box.polygon[1::2], strict=True))
+            layer_draw.polygon(pts, fill=(*_hex_to_rgb(box.color), 70))
+        canvas = Image.alpha_composite(canvas.convert("RGBA"), layer).convert("RGB")
+    draw = ImageDraw.Draw(canvas)
     for box in boxes:
         x, y, w, h = box.bbox
         xyxy = (x, y, x + w, y + h)
         color = _hex_to_rgb(box.color)
         width = box.width or base
-        if box.style == "dashed":
+        if box.polygon and len(box.polygon) >= 6:
+            pts = list(zip(box.polygon[0::2], box.polygon[1::2], strict=True))
+            draw.line([*pts, pts[0]], fill=color, width=width, joint="curve")
+        elif box.style == "dashed":
             _dashed_rectangle(draw, xyxy, color, width, dash=max(4, base * 3))
         else:
             draw.rectangle(xyxy, outline=color, width=width)
@@ -216,7 +231,10 @@ def prediction_overlay_boxes(
         if name not in colors:
             colors[name] = palette[len(colors) % len(palette)]
         boxes.append(
-            OverlayBox(bbox=inst.bbox, color=colors[name], label=f"{name} {inst.score:.2f}")
+            OverlayBox(
+                bbox=inst.bbox, color=colors[name], label=f"{name} {inst.score:.2f}",
+                polygon=inst.segmentation[0] if inst.segmentation else None,
+            )
         )
     return boxes
 

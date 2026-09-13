@@ -483,7 +483,18 @@ function drawViewer() {
       const [x, y, w, h] = inst.bbox;
       const color = instColor(inst);
       ctx.strokeStyle = color;
-      ctx.strokeRect(x, y, w, h);
+      const polys = (inst.segmentation || []).filter((p) => p && p.length >= 6);
+      if (polys.length) {
+        // a segmentation model: translucent mask outline instead of the box
+        ctx.fillStyle = color + "55";
+        for (const p of polys) {
+          ctx.beginPath();
+          for (let k = 0; k < p.length; k += 2) (k ? ctx.lineTo(p[k], p[k + 1]) : ctx.moveTo(p[k], p[k + 1]));
+          ctx.closePath(); ctx.fill(); ctx.stroke();
+        }
+      } else {
+        ctx.strokeRect(x, y, w, h);
+      }
       const label = `${instLabel(inst)} ${inst.score.toFixed(2)}`;
       const tw = ctx.measureText(label).width + fontPx * 0.7;
       const th = fontPx * 1.4;
