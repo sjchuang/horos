@@ -1237,7 +1237,7 @@ def similar_images(
     project: Project,
     image_id: int,
     *,
-    threshold: float = 0.9,
+    threshold: float = 0.8,
     limit: int = 48,
     model: str = DEFAULT_EMBEDDING_MODEL,
     include_labeled: bool = False,
