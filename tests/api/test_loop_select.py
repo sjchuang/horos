@@ -197,7 +197,7 @@ def test_embedding_crash_becomes_a_random_round(tmp_path):
             raise RuntimeError("disk on fire")
 
     events = list(select_round_events(project, count=2, embedder=Boom(),
-                                      embedding_model="boom"))
+                                      embedding_model="boom", detector=FakeDetector()))
     # the embedding stream ends with `failed`; selection treats that as "no
     # embeddings" and falls back rather than losing the round
     assert events[-1].type == "completed"
