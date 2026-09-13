@@ -212,7 +212,7 @@
 </header>
 <main>
   <section class="panel" id="setup-panel">
-    <h2>Start a training run</h2>
+    <h2>Train</h2>
     <div id="resume-banner" class="hidden"
          style="position:relative;border:1px solid var(--accent);border-radius:8px;
                 padding:10px 30px 10px 14px;margin-bottom:14px;
@@ -221,11 +221,8 @@
               style="position:absolute;top:6px;right:6px;border:none;background:none;
                      color:var(--dim);padding:2px 6px;font-size:13px;line-height:1">✕</button>
       <strong style="color:var(--accent)">Resuming</strong>
-      <span id="resume-detail" style="color:var(--dim);font-size:13px"></span>
-      <div style="color:var(--dim);font-size:12px;margin-top:4px">
-        Classes are locked to the source run's set (the checkpoint's class
-        head fixes them). epochs is the TOTAL count — set it higher than the
-        source run's completed epochs, or there is nothing left to train.</div>
+      <span id="resume-detail" style="color:var(--dim);font-size:13px"
+            title="Classes follow the source run (the checkpoint fixes them). Epochs is the total: set it above the epochs already completed."></span>
     </div>
     <div style="margin-bottom:14px">
       <div style="color:var(--dim);font-size:12px;margin-bottom:4px">Model</div>
@@ -242,11 +239,10 @@
       <label id="include-bg-row" class="note hidden"
              style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer">
         <input type="checkbox" id="include-bg">
-        keep images that contain none of the selected classes as background negatives
+        <span title="Photos with none of the selected classes stay in the run as background negatives">Keep other photos as negatives</span>
       </label>
       <p id="data-summary" style="color:var(--dim);font-size:13px;margin:8px 0 0"></p>
     </div>
-    <p id="split-summary" style="color:var(--dim);font-size:13px;margin:0 0 12px"></p>
     <p id="platform-note" class="note hidden"></p>
     <div id="hparams-list" style="border-top:1px solid var(--line)"></div>
     <details id="advanced-details">
@@ -257,11 +253,12 @@
       <div style="margin:10px 0 12px">
         <div style="color:var(--dim);font-size:12px;margin-bottom:4px"
              title="Which epoch's weights are kept as the run's best checkpoint">
-          Keep best checkpoint by</div>
-        <select id="criterion-select" style="width:100%">
-          <option value="map">validation mAP — detection quality (default)</option>
-          <option value="smoothed_map">smoothed mAP — noise-robust on small valid splits</option>
-          <option value="loss">validation loss — smooth, but can diverge from mAP</option>
+          Best checkpoint</div>
+        <select id="criterion-select" style="width:100%"
+                title="mAP: detection quality (default) · smoothed mAP: steadier on a small valid set · loss: smooth, but can drift from mAP">
+          <option value="map">validation mAP</option>
+          <option value="smoothed_map">smoothed mAP</option>
+          <option value="loss">validation loss</option>
         </select>
       </div>
       <div id="hparams-advanced" style="border-top:1px solid var(--line)"></div>
@@ -276,25 +273,24 @@
     <div id="plan-notes"></div>
     <button class="primary" id="start-btn"
             style="width:100%;margin-top:12px;padding:9px 14px;font-weight:600">
-      Start training</button>
+      Train</button>
     <p id="status"></p>
   </section>
 
   <div id="right-col">
   <div class="panel" id="right-empty" style="color:var(--dim)">
-    No training runs yet — pick the model and classes on the left and press
-    <strong>Start training</strong>.
+    No runs yet. Set up on the left, then <strong>Train</strong>.
   </div>
   <section class="panel hidden" id="run-panel">
-    <h2>Training run</h2>
+    <h2>Run</h2>
     <div class="row" style="margin-bottom:10px">
       <span class="state" id="run-state">—</span>
       <span class="mono" id="run-id"></span>
       <span style="color:var(--dim)" id="run-model"></span>
       <span style="margin-left:auto;display:flex;gap:8px">
         <button class="hidden" id="resume-btn"
-                title="Start a new run initialized from this run's best checkpoint">
-          Resume from best</button>
+                title="Start a new run from this run's best checkpoint">
+          Resume</button>
         <button class="danger hidden" id="stop-btn">Stop</button>
       </span>
     </div>
@@ -320,24 +316,25 @@
       <h2 style="margin-top:4px">Export</h2>
       <div class="row" style="gap:8px;flex-wrap:wrap;margin-bottom:8px">
         <span style="color:var(--dim);font-size:13px;min-width:52px">Report</span>
-        <select id="report-format">
-          <option value="png">PNG · one 16:9 dashboard image</option>
-          <option value="pdf">PDF · dashboard + detail pages</option>
-          <option value="xlsx">Excel · metrics per epoch, hyperparameters, evaluation</option>
+        <select id="report-format"
+                title="PNG: one 16:9 dashboard · PDF: dashboard + detail pages · Excel: metrics per epoch, hyperparameters, evaluation">
+          <option value="png">PNG</option>
+          <option value="pdf">PDF</option>
+          <option value="xlsx">Excel</option>
         </select>
-        <button id="report-export-btn">Export report</button>
+        <button id="report-export-btn">Export</button>
         <span class="note" id="report-status"></span>
       </div>
       <div class="row" style="gap:8px;flex-wrap:wrap">
         <span style="color:var(--dim);font-size:13px;min-width:52px">Model</span>
         <select id="model-format">
-          <option value="pytorch">PyTorch weights (weights.pt + class_names.txt)</option>
-          <option value="onnx">ONNX (opset 17, batch 1)</option>
-          <option value="tensorrt">TensorRT engine (this GPU only)</option>
-          <option value="tflite">TFLite (float32 + float16, via ONNX)</option>
-          <option value="tflite-int8">TFLite + int8 weights (dynamic-range, ~4× smaller)</option>
+          <option value="pytorch">PyTorch</option>
+          <option value="onnx">ONNX</option>
+          <option value="tensorrt">TensorRT · this GPU</option>
+          <option value="tflite">TFLite</option>
+          <option value="tflite-int8">TFLite int8</option>
         </select>
-        <button id="model-export-btn">Export model</button>
+        <button id="model-export-btn">Export</button>
         <span class="note" id="model-status"></span>
       </div>
       <p id="model-format-note" class="note" style="margin:6px 0 0"></p>
@@ -349,19 +346,18 @@
     </div>
     <p id="run-error" class="hidden"></p>
     <div id="verdict" class="hidden">
-      <h2 style="margin-top:16px">Conclusion &amp; suggestions</h2>
+      <h2 style="margin-top:16px">Verdict</h2>
       <p id="verdict-summary" style="margin:0 0 10px;font-weight:600"></p>
       <div id="verdict-findings"></div>
     </div>
     <details id="run-hparams-details" style="margin-top:10px">
-      <summary style="cursor:pointer;color:var(--dim)">Hyperparameters used — hover a name for the reason</summary>
+      <summary style="cursor:pointer;color:var(--dim)" title="Hover a name for the reason it was chosen">Hyperparameters</summary>
       <table style="margin-top:8px"><tbody id="run-hparams"></tbody></table>
       <div id="queue-save-row" class="hidden" style="margin-top:10px">
         <button class="primary" id="queue-save-btn">Save changes</button>
-        <span style="color:var(--dim);font-size:12px;margin-left:8px">
-          only fields you change are saved; clear a field to go back to the
-          derived value. Model, classes and the dataset snapshot are fixed
-          at enqueue — delete the queued run to change those</span>
+        <span style="color:var(--dim);font-size:12px;margin-left:8px"
+              title="Model, classes and the dataset snapshot were fixed when the run was queued; delete it to change those">
+          Only changed fields are saved; clear one to restore the derived value.</span>
       </div>
       <div id="run-notes"></div>
     </details>
@@ -488,16 +484,12 @@ async function setResume(state) {
   resumeState = state;
   $("resume-banner").classList.toggle("hidden", !state);
   $("model-select").disabled = !!state;  // the checkpoint fixes the architecture
-  $("start-btn").textContent = state ? "Resume training" : "Start training";
+  $("start-btn").textContent = state ? "Resume" : "Train";
   if (state) {
     $("resume-detail").textContent =
-      ` from run ${state.runId} (${state.checkpoint.split(/[\\/]/).pop()})` +
-      (state.epochsDone != null
-        ? ` — ${state.epochsDone} epochs completed: set TOTAL epochs above ${state.epochsDone}`
-        : "") +
-      (state.fullState
-        ? " · full training state (weights, optimizer, LR schedule)"
-        : " · weights only: expect a brief loss bump while the optimizer re-warms");
+      ` ${state.runId} · ${state.checkpoint.split(/[\\/]/).pop()}` +
+      (state.epochsDone != null ? ` · ${state.epochsDone} epochs done — set epochs above that` : "") +
+      (state.fullState ? "" : " · weights only (loss bumps briefly)");
     $("model-select").value = state.model;
     $("model-select").dispatchEvent(new Event("change"));
     // the class head's shape is fixed by the checkpoint: lock the picker
@@ -551,19 +543,22 @@ async function updateDataSummary() {
   const sc = s.split_counts || {};
   const inSets = (sc.train || 0) + (sc.valid || 0) + (sc.test || 0);
   const noSet = s.num_images - inSets;  // unlabeled photos belong to no set and are not trained on
-  let text = `Training data: <strong>${inSets}</strong> images ` +
-    `(${sc.train || 0} train · ${sc.valid || 0} valid · ${sc.test || 0} test)` +
-    (noSet > 0 ? ` · ${noSet} unlabeled in no set` : "") +
-    ` · <strong>${s.num_annotations}</strong> annotations · ${s.num_categories} class` +
-    `${s.num_categories === 1 ? "" : "es"}`;
+  // one line: train / valid / test · labels · classes; the meaning stays in the tooltip
+  const tip = `train / valid / test — only labeled photos belong to a set; test is never trained on`
+    + (noSet > 0 ? `; ${noSet} unlabeled photo${noSet === 1 ? "" : "s"} in no set` : "");
+  let text = `<span title="${tip}"><strong>${sc.train || 0}</strong> / ` +
+    `<strong>${sc.valid || 0}</strong> / <strong>${sc.test || 0}</strong></span>` +
+    ` · ${s.num_annotations} label${s.num_annotations === 1 ? "" : "s"}` +
+    ` · ${s.num_categories} class${s.num_categories === 1 ? "" : "es"}`;
+  if (!(sc.test || 0)) text += ` · <span class="note" title="Keep a test set for unbiased final numbers">no test set</span>`;
   if (subset && fullStats) {
     const background = includeBackground()
       ? s.unannotated_images
       : fullStats.num_images - s.num_images;
     if (background > 0) {
       text += includeBackground()
-        ? ` · <span class="note">${background} background-only image${background === 1 ? "" : "s"} kept</span>`
-        : ` · <span class="note">${background} image${background === 1 ? "" : "s"} with none of the selected classes excluded</span>`;
+        ? ` · <span class="note">${background} as negatives</span>`
+        : ` · <span class="note">${background} left out</span>`;
     }
   }
   el.innerHTML = text;
@@ -677,8 +672,9 @@ function renderPlan(plan) {
   $("hparams-advanced").innerHTML = advanced.map(hparamRow).join("");
   const touched = advanced.filter((d) => d.overridden).length;
   $("advanced-count").textContent =
-    `· checkpoint criterion, seed, ${advanced.map((d) => d.name).join(", ")}`
-    + (touched ? ` · ${touched} overridden` : "");
+    `· ${advanced.length + 2}` + (touched ? ` · ${touched} changed` : "");
+  $("advanced-details").querySelector("summary").title =
+    `checkpoint criterion, seed, ${advanced.map((d) => d.name).join(", ")}`;
   $("plan-notes").innerHTML = (plan.notes || [])
     .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
 
@@ -778,11 +774,12 @@ async function loadVerdict(runId) {
     const v = await api(`/train/runs/${runId}/verdict`);
     if (runId !== activeRun) return;   // user switched runs while loading
     $("verdict-summary").textContent = v.summary;
+    // one line per finding; the detail and the suggestion unfold on click
     $("verdict-findings").innerHTML = v.findings
-      .map((f) => `<div class="finding ${f.severity}">
-        <div class="f-title">${f.title}</div>
+      .map((f) => `<details class="finding ${f.severity}">
+        <summary class="f-title" style="cursor:pointer">${f.title}</summary>
         <div class="f-detail">${f.detail}</div>
-        <div class="f-suggest">${f.suggestion}</div></div>`)
+        <div class="f-suggest">${f.suggestion}</div></details>`)
       .join("");
     $("verdict").classList.remove("hidden");
   } catch (e) { /* verdict is advisory; never block the run view */ }
@@ -836,8 +833,8 @@ function renderRun(run) {
   if (queued) $("chips-note").classList.add("hidden");  // unhidden by chips render
   $("run-bar").parentElement.classList.toggle("hidden", queued);  // the bar itself
   if (queued) {
-    $("run-phase").textContent =
-      "queued — starts when the current run finishes";
+    $("run-phase").textContent = "queued";
+    $("run-phase").title = "starts when the current run finishes";
     $("run-hparams-details").open = true;
   }
   const resumable = !active && !!run.checkpoint;
@@ -880,24 +877,20 @@ let exportRunShown = null;
 let exporting = false;
 let tensorrtSupport = null;   // {level, note} from /capabilities
 
+// one short line per format; the long version sits in the select's tooltip
 const MODEL_FORMAT_NOTES = {
-  pytorch: "rfdetr loads weights.pt directly (inference or further fine-tuning); "
-    + "model_card.json carries the license, classes and metrics.",
-  onnx: "Portable graph for onnxruntime / TensorRT builders. After export horos "
-    + "re-runs sample images through the original weights and the ONNX graph and "
-    + "records the largest difference in model_card.json.",
-  tensorrt: "A TensorRT engine is compiled for THIS machine's GPU architecture and "
-    + "TensorRT version — it will not load elsewhere. Export again on each "
-    + "deployment device. Needs NVIDIA's tensorrt package: horos install --tensorrt.",
-  tflite: "Portable .tflite models (float32 and float16) converted from the ONNX graph "
-    + "with onnx2tf; the input stays NCHW so the model card's I/O contract is unchanged. "
-    + "horos re-runs sample images through the original weights and the TFLite "
-    + "interpreter and records the difference. Needs the toolchain: horos install --tflite.",
-  "tflite-int8": "Everything the TFLite export does, plus a dynamic-range quantised model: "
-    + "int8 weights, float32 activations and I/O, no calibration, about a quarter of the size. "
-    + "It is built through TensorFlow's converter (several extra minutes) with an NHWC input "
-    + "and a tanh approximation of Erf, gets its own parity check with a looser tolerance, and "
-    + "is recorded under model_card.json → variants. float32 stays the primary artifact.",
+  pytorch: "weights.pt + class_names.txt + model_card.json",
+  onnx: "opset 17, batch 1 · parity checked against the weights",
+  tensorrt: "built for this GPU and TensorRT version only · horos install --tensorrt",
+  tflite: "float32 + float16 from the ONNX graph · horos install --tflite",
+  "tflite-int8": "TFLite plus int8 weights (~¼ size, slower export) · float32 stays primary",
+};
+const MODEL_FORMAT_TIPS = {
+  pytorch: "rfdetr loads weights.pt directly for inference or further fine-tuning; model_card.json carries the license, classes and metrics.",
+  onnx: "Portable graph for onnxruntime and TensorRT builders. After export, sample images are run through the original weights and the ONNX graph and the largest difference is recorded in model_card.json.",
+  tensorrt: "A TensorRT engine is compiled for this machine's GPU architecture and TensorRT version and will not load elsewhere — export again on each deployment device. Needs NVIDIA's tensorrt package.",
+  tflite: "float32 and float16 .tflite models converted from the ONNX graph with onnx2tf; the input stays NCHW so the model card's I/O contract is unchanged. Parity is checked against the weights.",
+  "tflite-int8": "Everything the TFLite export does plus a dynamic-range quantised model: int8 weights, float32 activations and I/O, no calibration, about a quarter of the size. Built through TensorFlow's converter (several extra minutes), its own looser parity check, recorded under model_card.json → variants.",
 };
 
 function fmtBytes(n) {
@@ -911,10 +904,12 @@ function updateModelFormatNote() {
   const trtOpt = $("model-format").querySelector('option[value="tensorrt"]');
   if (tensorrtSupport && tensorrtSupport.level === "unavailable") {
     trtOpt.disabled = true;
-    trtOpt.textContent = "TensorRT engine — unavailable on this platform";
+    trtOpt.textContent = "TensorRT · unavailable here";
     if (fmt === "tensorrt") note = tensorrtSupport.note;
   }
   $("model-format-note").textContent = note;
+  $("model-format-note").title = MODEL_FORMAT_TIPS[fmt] || "";
+  $("model-format").title = MODEL_FORMAT_TIPS[fmt] || "";
   $("model-export-btn").disabled = exporting || (fmt === "tensorrt" && !!trtOpt.disabled);
 }
 
@@ -1002,17 +997,16 @@ $("model-export-btn").onclick = async () => {
     $("export-bar").style.width = "100%";
     const parity = result.parity || {};
     let parityText = parity.status === "passed"
-      ? ` · parity OK (${parity.detections_compared ?? 0} detections matched, `
-        + `max score diff ${Number(parity.max_score_diff ?? 0).toFixed(4)})`
-      : parity.status === "failed" ? " · ⚠ parity FAILED — see model_card.json"
+      ? ` · parity ✓ (${parity.detections_compared ?? 0} matched, Δ ${Number(parity.max_score_diff ?? 0).toFixed(4)})`
+      : parity.status === "failed" ? " · ⚠ parity failed — see model_card.json"
       : "";
     const int8 = (result.variants || {}).int8;
     if (int8) {
       const p8 = int8.parity || {};
       parityText += p8.status === "passed"
-        ? ` · int8 weights parity OK (${p8.detections_compared ?? 0} detections matched)`
-        : p8.status === "failed" ? " · ⚠ int8 parity FAILED — float32 stays the artifact"
-        : " · int8 weights written";
+        ? ` · int8 parity ✓ (${p8.detections_compared ?? 0} matched)`
+        : p8.status === "failed" ? " · ⚠ int8 parity failed — float32 stays"
+        : " · int8 written";
     }
     status.innerHTML = `ready — <a href="/api/v1/train/runs/${runId}/exports/${result.bundle}"
       style="color:var(--accent)">download ${result.bundle}</a>${parityText}`;
@@ -1093,8 +1087,7 @@ function renderRunHparams(run) {
         body: JSON.stringify(body),
       });
       renderRun(record);
-      setStatus(`Queued run ${run.run_id} updated — dependent values `
-                + `were re-derived.`, "ok");
+      setStatus(`Queued run ${run.run_id} updated.`, "ok");
     } catch (e) {
       setStatus("Could not update the queued run: " + e.message, "error");
     } finally {
@@ -1117,8 +1110,7 @@ function renderMetricChips() {
   const bestIsEma = emaPts ? !!emaPts[emaPts.length - 1][1] : false;
   const note = $("chips-note");
   if (bestEpoch !== null) {
-    note.textContent = `scores at the best checkpoint (epoch ${bestEpoch + 1}`
-      + `${bestIsEma ? ", EMA weights" : ""})`;
+    note.textContent = `best checkpoint · epoch ${bestEpoch + 1}${bestIsEma ? " · EMA" : ""}`;
     note.classList.remove("hidden");
   } else {
     note.classList.add("hidden");  // no best info (old run): show latest
@@ -1164,7 +1156,7 @@ function drawChart() {
     ctx.fillStyle = "#8b98a5";
     ctx.font = "13px system-ui";
     ctx.textAlign = "center";
-    ctx.fillText("loss curves appear after the first validation epoch", w / 2, h / 2);
+    ctx.fillText("curves appear after the first epoch", w / 2, h / 2);
     legend.innerHTML = "";
     chartMeta = null;               // no hover on an empty chart
     $("chart-tip").classList.add("hidden");
@@ -1318,7 +1310,7 @@ $("start-btn").onclick = async () => {
   }
   if (resumeState) body.resume_from = resumeState.checkpoint;
   $("start-btn").disabled = true;
-  setStatus("Starting training run…", "");
+  setStatus("Starting…", "");
   try {
     const record = await post("/train", body);
     setResume(null);
@@ -1326,10 +1318,9 @@ $("start-btn").onclick = async () => {
     if (record.state === "queued") {
       // stay on the running run's view (it is what the user is watching);
       // the queued run shows up in the history below
-      setStatus("Run " + record.run_id + " queued — it starts automatically "
-                + "when the current run finishes.", "ok");
+      setStatus("Queued " + record.run_id + " — starts after the current run.", "ok");
     } else {
-      setStatus("Run " + record.run_id + " started.", "ok");
+      setStatus("Started " + record.run_id + ".", "ok");
       attach(record.run_id, { live: true });
     }
     refreshRuns();
@@ -1409,20 +1400,10 @@ async function init() {
     $("project-name").textContent = "(no project bound)";
   }
 
-  // allocation follows the Dataset page's split assignment — show it here
+  // the data line (train / valid / test · labels · classes) is drawn by the
+  // class picker's summary; here only the per-class counts are needed
   api("/dataset/stats").then((s) => {
     fullStats = s;
-    const sc = s.split_counts || {};
-    const test = sc.test || 0;
-    $("split-summary").innerHTML =
-      `Data allocation (from the <a href="/" style="color:var(--accent)">Dataset</a> ` +
-      `page splits): <strong>${sc.train || 0}</strong> train · ` +
-      `<strong>${sc.valid || 0}</strong> valid · <strong>${test}</strong> test ` +
-      `(never trained on) — only labeled photos belong to a set` +
-      (test === 0
-        ? ' — <span class="note">no test split: keep one for unbiased final numbers</span>'
-        : "");
-
     // per-class counts: grey out classes with zero annotations (nothing to
     // train on) and drop them from the default selection
     classInstances = {};
