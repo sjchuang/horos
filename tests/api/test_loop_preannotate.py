@@ -184,3 +184,28 @@ def test_standalone_preannotate_replaces_pending_and_respects_human_work(tmp_pat
     close_round(project, record.number)
     with pytest.raises(ProjectError, match="closed"):
         preannotate_round(project, record.number, detector=FakeDetector())
+
+
+def test_image_predictions_use_the_loop_scorer_and_current_class_names(tmp_path, monkeypatch):
+    """SAM-T4 class suggestion: the annotator asks what the loop's scorer sees
+    on one photo; nothing is written, names go through the aliases."""
+    from horos.api.labels import update_category
+    from horos.api.loop import image_predictions
+
+    project = _project(tmp_path, ["red", "blue", "grey"])
+    detector = FakeDetector()
+    monkeypatch.setattr("horos.api.autolabel._cached_backend", lambda key, device=None: detector)
+    update_category(project, 1, name="Box")  # the model still says "box"
+
+    result = image_predictions(project, 1)
+    assert result.kind == "zero_shot" and result.model == "owlv2-base"
+    assert [(d.label, d.score) for d in result.detections] == [("Box", 0.95)]
+    assert result.detections[0].bbox == (10.0, 10.0, 30.0, 20.0)
+    assert _pending(project, 1) == []  # a suggestion writes nothing
+    assert image_predictions(project, 3).detections == []  # grey: the fake sees nothing
+    assert image_predictions(project, 2, threshold=0.95).detections == []  # pallet 0.9 filtered
+
+    with pytest.raises(ProjectError, match="No image with id 99"):
+        image_predictions(project, 99)
+    with pytest.raises(ProjectError, match="threshold must be"):
+        image_predictions(project, 1, threshold=2)

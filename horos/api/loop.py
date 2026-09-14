@@ -93,6 +93,9 @@ __all__ = [
     "round_queue",
     "SimilarImage",
     "similar_images",
+    "ImageDetection",
+    "ImagePredictions",
+    "image_predictions",
     "SkipResult",
     "skip_images",
     "restore_images",
@@ -1501,6 +1504,67 @@ class SkipResult(BaseModel):
     skipped_images: int
     #: photos added to the open round to replace skipped picks (E10-T16)
     replacements: list[int] = Field(default_factory=list)
+
+
+class ImageDetection(BaseModel):
+    """One detection of the loop's current scorer on a project photo."""
+
+    label: str
+    bbox: tuple[float, float, float, float]  # COCO xywh, image pixels
+    score: float
+
+
+class ImagePredictions(BaseModel):
+    image_id: int
+    #: run id of the model used, or the zero-shot scorer's key
+    model: str
+    kind: Literal["run", "zero_shot"]
+    threshold: float
+    detections: list[ImageDetection] = Field(default_factory=list)
+
+
+@capability(
+    "images.predictions",
+    summary="What the loop's current model sees on one photo (class suggestions)",
+    web_route="/api/v1/images/<int:image_id>/predictions",
+    web_methods=("GET",),
+    cli=None,
+    not_cli_because="Feeds the annotator's class suggestion when a shape is accepted.",
+)
+def image_predictions(
+    project: Project,
+    image_id: int,
+    *,
+    threshold: float = 0.1,
+    device: str | None = None,
+) -> ImagePredictions:
+    """Detections of the same scorer the loop pre-annotates with — the newest
+    completed run, else OWLv2 prompted with the class names — on one photo,
+    names mapped through the project's aliases. Nothing is written: the
+    annotator uses them to suggest the class of a shape drawn where no
+    pseudo label sits (SAM-T4)."""
+    if not 0.0 <= threshold <= 1.0:
+        raise ProjectError(f"threshold must be within [0, 1], got {threshold}")
+    record = next((r for r in project.list_images() if r.id == image_id), None)
+    if record is None:
+        raise ProjectError(f"No image with id {image_id} in project {project.root}")
+    backend, label, name_of, kind = _scorer(project, device)
+    prediction = backend.infer_one(project.image_path(record), threshold=threshold)
+    detections = []
+    for inst in sorted(prediction.instances, key=lambda i: -i.score):
+        if inst.score < threshold:
+            continue
+        name = inst.category_name or name_of.get(inst.category_id)
+        if name is None:
+            continue
+        detections.append(
+            ImageDetection(
+                label=project.resolve_category_name(name), bbox=inst.bbox, score=inst.score
+            )
+        )
+    return ImagePredictions(
+        image_id=image_id, model=label, kind=kind, threshold=threshold, detections=detections
+    )
 
 
 @capability(

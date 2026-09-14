@@ -203,6 +203,8 @@ def test_canvas_class_menu_offers_to_keep_the_class(client):
     assert 'id="label-keep"' in html and "horos_keep_class" in html
     assert "_askLabel(hit ? hit.label : typed, hit)" in html
     assert "_suggestClass" in html and 'id="label-hint"' in html  # pseudo label under it wins
+    assert 'id="label-suggest"' in html and "horos_suggest_class" in html
+    assert "/predictions?threshold=" in html  # no pseudo label: ask the loop's model
 
 
 def test_dataset_page_groups_photos_and_skips_a_group(client):

@@ -551,6 +551,10 @@
            title="Skip this menu: every new object takes the current class until you change it in Object Class">
       <input type="checkbox" id="label-keep"> Keep this class for the next objects
     </label>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12px;color:var(--dim);cursor:pointer"
+           title="Pre-fill the class from what sits under the new shape: a pseudo label on this photo, else what the loop's current model (your newest run, or the zero-shot model) sees there. Falls back to the current class.">
+      <input type="checkbox" id="label-suggest"> Suggest the class from the model
+    </label>
     <div style="display:flex;gap:6px;margin-top:10px">
       <button class="btn primary" id="label-ok" style="flex:1">Use</button>
       <button class="btn" id="label-cancel">Discard</button>
@@ -2346,8 +2350,13 @@ const Page = {
     const typed = $("class-input").value.trim();
     if (typed && this._keepClass()) { this._rememberClass(typed); return typed; }
     // a pseudo label sitting under the new shape knows its class better than
-    // the last class used: pre-fill with it, else fall back to the current one
-    const hit = shape ? this._suggestClass(shape) : null;
+    // the last class used: pre-fill with it; with none there, ask the loop's
+    // model what it sees (one request per photo, cached); else the current class
+    let hit = null;
+    if (shape && this._suggestOn()) {
+      hit = this._suggestClass(shape);
+      if (!hit) hit = await this._suggestFromModel(shape);
+    }
     const name = await this._askLabel(hit ? hit.label : typed, hit);
     if (name) {
       $("class-input").value = name;
@@ -2376,20 +2385,49 @@ const Page = {
   // shapes are ranked by IoU × confidence, and one has to overlap at least
   // SUGGEST_MIN_IOU to count; null when nothing relevant sits there
   SUGGEST_MIN_IOU: 0.3,
-  _suggestClass(shape) {
+  _suggestOn() {
+    try { return localStorage.getItem("horos_suggest_class") !== "0"; } catch (e) { return true; }
+  },
+  // best of a list of {label, box:[x1,y1,x2,y2], conf} against the new shape
+  _bestMatch(shape, candidates, source) {
     const box = this._shapeBox(shape);
     if (!box) return null;
     let best = null;
-    for (const s of this.editorShapes) {
-      if (s.status !== "pending" || s === shape) continue;
-      const other = this._shapeBox(s);
-      if (!other) continue;
-      const iou = this._boxIoU(box, other);
+    for (const c of candidates) {
+      const iou = this._boxIoU(box, c.box);
       if (iou < this.SUGGEST_MIN_IOU) continue;
-      const score = iou * (s.score ?? 0.5);
-      if (!best || score > best.rank) best = { label: s.label, iou, conf: s.score ?? null, rank: score };
+      const rank = iou * (c.conf ?? 0.5);
+      if (!best || rank > best.rank) best = { label: c.label, iou, conf: c.conf, rank, source };
     }
     return best;
+  },
+  _suggestClass(shape) {
+    const pendings = this.editorShapes
+      .filter((s) => s.status === "pending" && s !== shape && this._shapeBox(s))
+      .map((s) => ({ label: s.label, box: this._shapeBox(s), conf: s.score ?? null }));
+    return this._bestMatch(shape, pendings, "pseudo label");
+  },
+  // the loop's scorer (newest run, else zero-shot from the class names) on
+  // this photo — fetched once per photo and kept until another one is opened
+  _predCache: { imageId: null, promise: null },
+  async _suggestFromModel(shape) {
+    const item = this.queue[this.currentIdx];
+    if (!item) return null;
+    if (this._predCache.imageId !== item.image.id) {
+      this._predCache = {
+        imageId: item.image.id,
+        promise: api(`/images/${item.image.id}/predictions?threshold=0.1`)
+          .then((r) => r.detections.map((d) => ({
+            label: d.label, conf: d.score,
+            box: [d.bbox[0], d.bbox[1], d.bbox[0] + d.bbox[2], d.bbox[1] + d.bbox[3]],
+          })))
+          .catch(() => []),  // no model, no classes, no GPU: the menu still opens
+      };
+    }
+    const seq = this._openSeq;
+    const candidates = await this._predCache.promise;
+    if (seq !== this._openSeq) return null;  // the user moved on while the model ran
+    return this._bestMatch(shape, candidates, "model");
   },
   // the class of the last shape labeled is the class the next image opens
   // with — nobody wants to re-pick "box" 300 times
@@ -2413,7 +2451,7 @@ const Page = {
     return new Promise((resolve) => {
       const modal = $("label-modal"), input = $("label-input");
       $("label-hint").textContent = hit
-        ? `Suggested from the pseudo label under it (IoU ${hit.iou.toFixed(2)}${hit.conf != null ? `, confidence ${Number(hit.conf).toFixed(2)}` : ""}). Enter keeps it.`
+        ? `Suggested from the ${hit.source} under it (IoU ${hit.iou.toFixed(2)}${hit.conf != null ? `, confidence ${Number(hit.conf).toFixed(2)}` : ""}). Enter keeps it.`
         : "Names this shape and becomes the current class.";
       $("label-datalist").innerHTML = this.categories.map((c) => `<option value="${c.name}">`).join("");
       $("label-chips").innerHTML = this._visibleCategories().map((c) => `
@@ -2421,6 +2459,10 @@ const Page = {
       $("label-keep").checked = this._keepClass();
       $("label-keep").onchange = (e) => {
         try { localStorage.setItem("horos_keep_class", e.target.checked ? "1" : "0"); } catch (err) {}
+      };
+      $("label-suggest").checked = this._suggestOn();
+      $("label-suggest").onchange = (e) => {
+        try { localStorage.setItem("horos_suggest_class", e.target.checked ? "1" : "0"); } catch (err) {}
       };
       const cleanup = () => {
         input.removeEventListener("keydown", onKey);

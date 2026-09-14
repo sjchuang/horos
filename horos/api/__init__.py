@@ -96,6 +96,8 @@ from horos.api.labels import (
     update_category,
 )
 from horos.api.loop import (
+    ImageDetection,
+    ImagePredictions,
     LoopAdvice,
     LoopSettings,
     LoopStatus,
@@ -109,6 +111,7 @@ from horos.api.loop import (
     evaluate_round_splits,
     get_loop_settings,
     get_round,
+    image_predictions,
     loop_advice,
     loop_history,
     loop_status,
@@ -195,6 +198,8 @@ __all__ = [
     "LoopStatus",
     "RoundQueueItem",
     "RoundSummary",
+    "ImageDetection",
+    "ImagePredictions",
     "SimilarImage",
     "SkipResult",
     "TrainReadiness",
@@ -212,6 +217,7 @@ __all__ = [
     "round_queue",
     "round_training_status",
     "select_round",
+    "image_predictions",
     "similar_images",
     "skip_images",
     "start_preannotate_job",

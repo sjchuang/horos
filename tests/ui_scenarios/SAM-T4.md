@@ -36,7 +36,9 @@ horos ui <project>
    Auto Save 開著會在 0.5 s 後儲存,Ctrl+Z 可還原
 8a. 影像上有 pseudo label(虛線、pending)時,SAM 畫在同一物件上按 Enter:選單預填**該 pseudo label 的類別**
    (以 IoU × 信心度挑最佳、IoU ≥ 0.3 才算),說明列顯示「Suggested from the pseudo label under it (IoU 0.xx, confidence 0.xx)」;
-   附近沒有 pseudo label 時回到目前(上次指定)的類別
+   照片上沒有 pseudo label 時,改問 loop 目前的模型(最新完成的 run,沒有就 OWLv2 依類別名稱 zero-shot)
+   這張看到什麼(GET /images/<id>/predictions,每張只問一次並快取),同樣以 IoU × 信心度挑,說明列寫「from the model」;
+   模型也沒看到相關物件時回到目前(上次指定)的類別。選單裡的「Suggest the class from the model」可關閉整個建議(預設開)
 8b. 選單裡勾「Keep this class for the next objects」(記在 localStorage `horos_keep_class`,預設不勾):
    之後 Enter 直接以 Object Class 的類別寫入、不再跳選單;Object Class 清空時仍會問。
    取消勾選要再開一次選單(清空 Object Class 後 Enter)

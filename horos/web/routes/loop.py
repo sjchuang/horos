@@ -166,6 +166,15 @@ def image_clusters():
     return jsonify(result.model_dump())
 
 
+@images_bp.get("/<int:image_id>/predictions")
+def image_predictions(image_id: int):
+    threshold = request.args.get("threshold", default=0.1, type=float)
+    result = api.image_predictions(
+        _project(), image_id, threshold=threshold, device=request.args.get("device") or None
+    )
+    return jsonify(result.model_dump())
+
+
 @images_bp.get("/<int:image_id>/similar")
 def similar_images(image_id: int):
     threshold = request.args.get("threshold", default=0.8, type=float)

@@ -125,3 +125,11 @@ def test_image_clusters_route(client):
     assert sum(c["size"] for c in body["clusters"]) == 6
     assert all(len(c["samples"]) == 1 and c["image_ids"] for c in body["clusters"])
     assert client.get("/api/v1/images/clusters?model=fake-embedder&k=abc").status_code == 400
+
+
+def test_image_predictions_route(client):
+    """SAM-T4: the annotator's class suggestion asks the loop's scorer."""
+    body = client.get("/api/v1/images/1/predictions?threshold=0.2").get_json()
+    assert body["image_id"] == 1 and body["kind"] == "zero_shot"
+    assert all({"label", "bbox", "score"} <= set(d) for d in body["detections"])
+    assert client.get("/api/v1/images/999/predictions").status_code == 400
