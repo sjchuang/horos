@@ -40,7 +40,8 @@ def test_groups_follow_the_embedding_and_report_labels_and_skips(tmp_path):
     groups = {frozenset(c.image_ids) for c in result.clusters}
     assert groups == {frozenset({1, 2, 3, 4}), frozenset({5, 6, 7, 8}), frozenset({9, 10, 11, 12})}
     by_first = {min(c.image_ids): c for c in result.clusters}
-    assert by_first[1].labeled == 1 and by_first[1].skipped == 0
+    assert by_first[1].labeled == 1 and by_first[1].labeled_ids == [1]
+    assert by_first[1].skipped == 0 and by_first[5].labeled_ids == []
     assert by_first[9].labeled == 0 and by_first[9].skipped == 2
     assert all(len(c.samples) == 2 for c in result.clusters)
     assert all(s.id in c.image_ids for c in result.clusters for s in c.samples)

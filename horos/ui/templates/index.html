@@ -688,8 +688,9 @@ async function analyzeGroups() {
 function renderGroups() {
   $("groups-grid").innerHTML = groups.map((g, i) => {
     const allSkipped = g.skipped === g.size;
+    const labeledSet = new Set(g.labeled_ids || []);  // labeled samples get a green edge
     const strip = g.samples.map((s) => `
-      <a href="/annotate?canvas=1#${s.id}" title="${s.file_name} — open in the annotator">
+      <a href="/annotate?canvas=1#${s.id}" title="${s.file_name} — open in the annotator" style="${labeledSet.has(s.id) ? "outline:2px solid var(--ok);outline-offset:-2px" : ""}">
         <img loading="lazy" src="/api/v1/images/${s.id}/file" alt=""></a>`).join("");
     const facts = [`<b>${g.size}</b> photos`, `alike ${g.cohesion.toFixed(2)}`];
     if (g.labeled) facts.push(`<b>${g.labeled}</b> labeled`);
@@ -701,29 +702,41 @@ function renderGroups() {
         <span>${facts.join(" · ")}</span>
         <span style="flex:1"></span>
         ${g.skipped ? `<button class="restore" title="Bring the skipped photos of this group back">Restore</button>` : ""}
-        ${allSkipped ? "" : `<button class="skip" title="Skip every photo of this group — they leave the pool, statistics, snapshots and training">Skip group</button>`}
+        ${allSkipped ? "" : g.labeled && g.labeled < g.size
+          ? `<button class="skip-unlabeled" title="Skip only the photos of this group that carry no labels; the ${g.labeled} labeled stay">Skip unlabeled</button>
+             <button class="skip" title="Skip every photo of this group, labeled ones too — their labels leave training">Skip all…</button>`
+          : `<button class="skip" title="Skip every photo of this group — they leave the pool, statistics, snapshots and training">Skip group</button>`}
       </div>
     </div>`;
   }).join("");
   $("groups-grid").querySelectorAll(".group").forEach((el) => {
     const g = groups[Number(el.dataset.i)];
     const skip = el.querySelector(".skip"), restore = el.querySelector(".restore");
-    if (skip) skip.onclick = () => skipGroup(g, el);
+    const unlabeled = el.querySelector(".skip-unlabeled");
+    if (skip) skip.onclick = () => skipGroup(g, el, true);
+    if (unlabeled) unlabeled.onclick = () => skipGroup(g, el, false);
     if (restore) restore.onclick = () => restoreGroup(g, el);
   });
 }
 
-async function skipGroup(g, el) {
-  if (g.labeled && !confirm(
-    `Skip this group of ${g.size} photos?\n\n${g.labeled} of them carry labels; skipped photos and their labels leave training.`
+// withLabeled=false skips only the members that carry no labels — the
+// usual case: the group is junk, but the few photos someone already labeled
+// are kept and keep training
+async function skipGroup(g, el, withLabeled) {
+  const labeled = new Set(g.labeled_ids || []);
+  const ids = withLabeled ? g.image_ids : g.image_ids.filter((id) => !labeled.has(id));
+  if (!ids.length) return;
+  if (withLabeled && g.labeled && !confirm(
+    `Skip all ${g.size} photos of this group?\n\n${g.labeled} of them carry labels; skipped photos and their labels leave training.`
   )) return;
   el.querySelectorAll("button").forEach((b) => { b.disabled = true; });
   try {
     await api("/images/skip", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ image_ids: g.image_ids, note: "skipped as a group (Dataset page)" }),
+      body: JSON.stringify({ image_ids: ids, note: "skipped as a group (Dataset page)" }),
     });
-    g.skipped = g.size;
+    g.skipped = withLabeled ? g.size : g.size - g.labeled;
+    if (withLabeled) g.labeled_ids = [];
     renderGroups();
     await refreshStats();
   } catch (e) {

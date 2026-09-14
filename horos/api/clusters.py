@@ -37,8 +37,9 @@ class ImageCluster(BaseModel):
     samples: list[ImageRecord]
     image_ids: list[int]
     #: members that carry confirmed labels — skipping them drops those labels
-    #: from training
+    #: from training; `labeled_ids` lets a caller skip only the unlabeled rest
     labeled: int = 0
+    labeled_ids: list[int] = Field(default_factory=list)
     #: members already skipped
     skipped: int = 0
 
@@ -111,6 +112,7 @@ def cluster_images(
             samples=[embedded[m] for m in g.members[:samples]],
             image_ids=[embedded[m].id for m in g.members],
             labeled=sum(embedded[m].id in labeled for m in g.members),
+            labeled_ids=[embedded[m].id for m in g.members if embedded[m].id in labeled],
             skipped=sum(embedded[m].excluded for m in g.members),
         )
         for i, g in enumerate(groups)

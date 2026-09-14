@@ -211,3 +211,4 @@ def test_dataset_page_groups_photos_and_skips_a_group(client):
     assert 'id="groups-fold"' in html and 'id="groups-k"' in html and 'id="groups-btn"' in html
     assert "/images/clusters?" in html and "/loop/embeddings" in html
     assert '"/images/skip"' in html and '"/images/restore"' in html
+    assert "skip-unlabeled" in html and "labeled_ids" in html  # skip without / with labeled
