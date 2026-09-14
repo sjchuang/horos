@@ -146,17 +146,24 @@ def postprocess(
 
 
 def _ensure_categories(project: Project, class_names: set[str]) -> dict[str, int]:
+    """{name: category id} for every requested class name, creating classes
+    that do not exist. A name that is an alias of an existing class (renamed
+    or merged since the model learned it) maps to that class instead of
+    becoming a new one; the mapping is keyed by the name as requested."""
     categories = list(project.categories)
     by_name = {c.name: c.id for c in categories}
     changed = False
     for name in sorted(class_names):
-        if name not in by_name:
-            new_id = max((c.id for c in categories), default=0) + 1
-            categories.append(
-                Category(id=new_id, name=name, color=default_color(len(categories)))
-            )
-            by_name[name] = new_id
-            changed = True
+        current = project.resolve_category_name(name)
+        if current in by_name:
+            by_name[name] = by_name[current]
+            continue
+        new_id = max((c.id for c in categories), default=0) + 1
+        categories.append(
+            Category(id=new_id, name=name, color=default_color(len(categories)))
+        )
+        by_name[name] = new_id
+        changed = True
     if changed:
         project.set_categories(categories)
     return by_name

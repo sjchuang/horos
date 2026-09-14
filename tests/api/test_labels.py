@@ -186,3 +186,42 @@ def test_merge_input_validation(project):
         merge_categories(project, [forklift.id], 999)
     # nothing changed after the refusals
     assert len(project.categories) == 2
+
+
+def test_rename_and_merge_keep_old_names_as_aliases_for_model_output(project):
+    """A model trained before a rename still answers with the old name; the
+    old name (and a merged class's name) must map to the current class, so
+    predictions display, score and pre-label under it instead of creating
+    a new class (the user renamed box → Box)."""
+    from horos.api.autolabel import _ensure_categories
+    from horos.api.labels import resolve_prediction_names
+    from horos.backends.base import ImagePrediction, PredictedInstance
+
+    first, second = project.categories[0], project.categories[1]
+    old_name = first.name
+    renamed = update_category(project, first.id, name=old_name.upper() + "_new")
+    assert renamed.aliases == [old_name]
+    assert project.resolve_category_name(old_name) == renamed.name
+    assert project.resolve_category_name(renamed.name) == renamed.name
+    assert project.resolve_category_name("never-seen") == "never-seen"
+    # renaming back drops the stale alias; renaming again keeps a chain
+    twice = update_category(project, first.id, name="third")
+    assert twice.aliases == [old_name, renamed.name]
+
+    # an alias resolves to the existing class: nothing new is created
+    ids = _ensure_categories(project, {old_name, "brand-new"})
+    assert ids[old_name] == first.id and ids["brand-new"] not in {first.id, second.id}
+    assert {c.name for c in project.categories} >= {"third", second.name, "brand-new"}
+
+    pred = ImagePrediction(image="x.png", width=10, height=10, instances=[
+        PredictedInstance(bbox=(1, 1, 2, 2), score=0.9, category_id=0, category_name=old_name),
+        PredictedInstance(bbox=(1, 1, 2, 2), score=0.9, category_id=1, category_name=second.name),
+    ])
+    fixed = resolve_prediction_names(project, pred)
+    assert [i.category_name for i in fixed.instances] == ["third", second.name]
+
+    # merging: the absorbed class's name points at the target from now on
+    result = merge_categories(project, [second.id], first.id)
+    target = next(c for c in project.categories if c.id == first.id)
+    assert second.name in target.aliases and result.removed_ids == [second.id]
+    assert project.resolve_category_name(second.name) == "third"

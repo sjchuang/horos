@@ -296,7 +296,7 @@ API tests, primarily. The core condition is **E1-T5: lossless round-tripping** â
 | E2-T1 | Annotation canvas (zoom, pan, draw) | Interface scenario |
 | E2-T2 | bbox creation and editing | `tests/api/test_annotate_bbox.py` + interface scenario |
 | E2-T3 | polygon creation and editing | `tests/api/test_annotate_polygon.py` + interface scenario |
-| E2-T4 | Class management (add, rename, recolor) | `tests/api/test_labels.py` |
+| E2-T4 | Class management (add, rename, recolor, merge, delete as a job); renamed and merged names stay as `Category.aliases`, and every place model output meets project classes (autolabel, loop scoring and pseudo-labels, Lab, single-image inference) maps names through them, so a model trained before a rename still lands on the right class | `tests/api/test_labels.py` |
 | E2-T5 | Keyboard shortcuts | Interface scenario (including a shortcut reference table) |
 | E2-T6 | Progress persistence and resume | `tests/api/test_annotate_progress.py` |
 | E2-T7 | Image queue and navigation | `tests/api/test_image_queue.py` |

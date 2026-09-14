@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from horos.api.manifest import capability
+from horos.backends.base import ImagePrediction
 from horos.core.dataset import Category, default_color
 from horos.core.project import Project
 from horos.errors import CategoryInUseError, ProjectError
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MergeResult", "add_category", "update_category", "delete_category",
     "delete_category_events", "start_delete_category_job", "merge_categories",
+    "resolve_prediction_names",
 ]
 
 
@@ -91,16 +93,45 @@ def update_category(
         if not name:
             raise ProjectError("Category name must not be empty")
         _ensure_name_free(project, name, ignore_id=category_id)
+    aliases = list(cat.aliases)
+    if name is not None and name != cat.name:
+        # the old name stays reachable: a model trained before the rename
+        # answers with it, and that output must land on this class
+        aliases = [a for a in aliases if a != name] + [cat.name]
     updated = cat.model_copy(
         update={
             **({"name": name} if name is not None else {}),
             **({"color": color} if color is not None else {}),
+            "aliases": aliases,
         }
     )
+    others = [
+        c.model_copy(update={"aliases": [a for a in c.aliases if a != name]})
+        if name is not None and name in c.aliases else c
+        for c in project.categories if c.id != category_id
+    ]
     project.set_categories(
-        [updated if c.id == category_id else c for c in project.categories]
+        [updated if c.id == category_id else next(o for o in others if o.id == c.id)
+         for c in project.categories]
     )
     return updated
+
+
+def resolve_prediction_names(project: Project, prediction: ImagePrediction) -> ImagePrediction:
+    """The prediction with every instance's class name mapped through the
+    project's current names (renames and merges recorded as aliases), so a
+    model that learned "box" shows and labels "Box" after the rename."""
+    def fix(inst):
+        if inst.category_name is None:
+            return inst
+        current = project.resolve_category_name(inst.category_name)
+        return inst if current == inst.category_name else inst.model_copy(
+            update={"category_name": current})
+
+    return prediction.model_copy(update={
+        "instances": [fix(i) for i in prediction.instances],
+        "candidates": [fix(i) for i in prediction.candidates],
+    })
 
 
 def delete_category_events(
@@ -263,7 +294,16 @@ def merge_categories(
         merged += sum(1 for a in stored.annotations if a.category_id in sources)
         touched += 1
         project.save_annotations(record.id, relabelled, expected_version=stored.version)
-    project.set_categories([c for c in project.categories if c.id not in sources])
+    # the merged classes' names (and their own aliases) keep pointing at the
+    # target, so an older model's output for them lands on the target
+    absorbed = [n for c in project.categories if c.id in sources for n in (c.name, *c.aliases)]
+    aliases = list(target.aliases) + [
+        n for n in absorbed if n not in target.aliases and n != target.name
+    ]
+    target = target.model_copy(update={"aliases": aliases})
+    project.set_categories([
+        target if c.id == target_id else c for c in project.categories if c.id not in sources
+    ])
     logger.info(
         "merged categories %s into %d (%d annotation(s) across %d image(s))",
         sources, target_id, merged, touched,

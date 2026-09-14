@@ -107,6 +107,21 @@ def test_one_pseudo_label_per_object_even_when_the_model_stacks_queries(tmp_path
     assert record.preannotation["nms_iou"] == 0.5
 
 
+def test_pseudo_labels_follow_a_renamed_class(tmp_path):
+    """The model learned "box"; the user renamed the class to "Box". Its
+    pseudo-labels must land on "Box" — no resurrected "box" class."""
+    from horos.api.labels import update_category
+
+    project = _project(tmp_path, ["red"] * 4, labeled={1: "box"})
+    box = next(c for c in project.categories if c.name == "box")
+    update_category(project, box.id, name="Box")
+    record = _select(project, count=2, detector=FakeDetector(), detector_label="fake-run")
+    names = {c.name for c in project.categories}
+    assert "Box" in names and "box" not in names
+    written = [a for i in record.image_ids for a in _pending(project, i)]
+    assert written and all(a.category_id == box.id for a in written)
+
+
 def test_cold_start_round_is_prelabeled_by_the_zero_shot_stand_in(tmp_path):
     project = _project(tmp_path, ["red", "green", "blue", "grey"])
     detector = FakeDetector()

@@ -32,6 +32,10 @@ class Category(BaseModel):
     id: int
     name: str
     color: str = ""
+    #: former names of this class (renames, merged classes): a model trained
+    #: before the rename still answers with them, and its output must land
+    #: on this class rather than create a new one
+    aliases: list[str] = Field(default_factory=list)
 
     @field_validator("name")
     @classmethod

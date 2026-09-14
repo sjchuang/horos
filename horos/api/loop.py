@@ -28,7 +28,7 @@ import json
 import logging
 import random
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from threading import Event as CancelEvent
 from typing import TYPE_CHECKING, Literal
@@ -522,8 +522,11 @@ def _pal_detections(
     name_of: dict[int, str],
     *,
     threshold: float,
+    resolve: Callable[[str], str] | None = None,
 ) -> list[pal.Detection]:
-    """Backend prediction → PAL detections with support counts."""
+    """Backend prediction → PAL detections with support counts. `resolve`
+    maps the model's class names to the project's current ones (a class
+    renamed since the model learned it), so they match the labels."""
     final = [i for i in prediction.instances if i.score >= threshold]
     cand_boxes = [c.bbox for c in prediction.candidates]
     support = pal.support_counts([f.bbox for f in final], cand_boxes) if cand_boxes else None
@@ -532,6 +535,8 @@ def _pal_detections(
         name = inst.category_name or name_of.get(inst.category_id)
         if name is None:
             continue
+        if resolve is not None:
+            name = resolve(name)
         out.append(
             pal.Detection(
                 image_id=image_id,
@@ -610,6 +615,7 @@ def _preannotate_images(
             name = inst.category_name or name_of.get(inst.category_id)
             if name is None:
                 continue
+            name = project.resolve_category_name(name)  # renamed since the model learned it?
             if any(c == name and _iou(b, inst.bbox) >= PRELABEL_NMS_IOU for c, b, _ in detections):
                 duplicates += 1
                 continue
@@ -761,7 +767,8 @@ def select_round_events(
                     threshold=SCORE_THRESHOLD, masks=False,
                 )
                 for image_id, pred in zip(chunk, preds, strict=True):
-                    dets = _pal_detections(pred, image_id, name_of, threshold=SCORE_THRESHOLD)
+                    dets = _pal_detections(pred, image_id, name_of, threshold=SCORE_THRESHOLD,
+                                           resolve=project.resolve_category_name)
                     final = [i for i in pred.instances if i.score >= SCORE_THRESHOLD]
                     boxes = [i.bbox for i in final
                              if (i.category_name or name_of.get(i.category_id))]
@@ -793,7 +800,8 @@ def select_round_events(
                 for rec, pred in zip(chunk, preds, strict=True):
                     pool_preds[rec.id] = pred
                     unlabeled_dets[rec.id] = _pal_detections(
-                        pred, rec.id, name_of, threshold=SCORE_THRESHOLD
+                        pred, rec.id, name_of, threshold=SCORE_THRESHOLD,
+                        resolve=project.resolve_category_name,
                     )
                     step += 1
                 found = sum(len(d) for d in unlabeled_dets.values())

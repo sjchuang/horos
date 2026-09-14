@@ -186,9 +186,11 @@ def media_inference_events(
                 image = Image.fromarray(array).convert("RGB")
                 frame_name = f"frames/{saved:05d}.jpg"
                 image.save(item_dir / frame_name, quality=88)
-                prediction = backend.infer_one(
+                from horos.api.labels import resolve_prediction_names
+
+                prediction = resolve_prediction_names(project, backend.infer_one(
                     item_dir / frame_name, threshold=THRESHOLD_FLOOR
-                )
+                ))
                 item.frames.append(
                     MediaFrame(
                         index=index,

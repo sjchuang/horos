@@ -168,7 +168,10 @@ def infer_image(
     image = Path(image)
     if not image.is_file():
         raise ProjectError(f"No such image file: {image}")
-    return backend.infer_one(image, threshold=threshold)
+    from horos.api.labels import resolve_prediction_names
+
+    # a class renamed since this run trained is reported under its current name
+    return resolve_prediction_names(project, backend.infer_one(image, threshold=threshold))
 
 
 # --------------------------------------------------------------- evaluation

@@ -114,3 +114,8 @@ horos ui ./demo_project
    刪除仍有標註的類別：跳出確認「'Vest' is used by 120 annotation(s) on 87 photo(s). Delete the class and those annotations?」，
    確認後連同標註刪除（API 回 409 `category_in_use`，不是錯誤）
 3. 刪除一個已不存在的類別（清單過期）：顯示錯誤 toast 並重新整理清單，不會再跳確認
+
+## 2026-09-14 改名後模型輸出跟著走
+
+1. Manage Classes 把 box 改名為 Box；用改名前訓練的模型：Lab 的預測顯示 Box、迴圈的偽標記寫在 Box 上、PAL 評分以 Box 對照標記，
+   專案裡不會冒出新的 box 類別（舊名記在該類別的 aliases，合併掉的類別名稱也一樣指向目標）

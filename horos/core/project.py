@@ -341,6 +341,18 @@ class Project:
                 record.split = split_by_id[record.id]  # type: ignore[assignment]
         self._save_image_index(index)
 
+    def resolve_category_name(self, name: str) -> str:
+        """The current name of the class `name` refers to: itself when a class
+        carries it, else the class that lists it among its aliases (a rename
+        or a merge happened after the model learned the name), else `name`."""
+        for category in self.manifest.categories:
+            if category.name == name:
+                return name
+        for category in self.manifest.categories:
+            if name in category.aliases:
+                return category.name
+        return name
+
     # ------------------------------------------------------------------ splits
     @property
     def split_ratios(self) -> SplitRatios:
