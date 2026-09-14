@@ -69,6 +69,15 @@ from horos.errors import ProjectError
 ALPHA = 0.9  # LIUS weight
 BETA = 0.04  # CWIE + RCDI weight
 GAMMA = 0.02  # RCSP weight
+
+# horos choice (2026-09-14, on the user's request): Eq. 5's rarity is gentle —
+# a class holding 60 % of the labels still gets weight 0.7 against 0.99 for
+# one at 2 %, so budgets barely move. Budgets are therefore additionally
+# weighted by inverse label frequency, mean_frac / frac_c, clipped to
+# [1/BALANCE_CAP, BALANCE_CAP] and raised to BALANCE (0 restores the paper).
+# Rarity itself still drives CWIE, RCDI and the class order.
+BALANCE = 1.0
+BALANCE_CAP = 8.0
 CANDIDATE_FACTOR = 2  # candidates per class = CANDIDATE_FACTOR · b_c
 SUPPORT_IOU = 0.5
 TRUE_POSITIVE_IOU = 0.5
@@ -290,6 +299,24 @@ def rarity_weights(
     return weights
 
 
+def balance_weights(
+    labeled_counts: Mapping[str, int], classes: Iterable[str], *, cap: float = BALANCE_CAP
+) -> dict[str, float]:
+    """Inverse label frequency per class, mean_frac / frac_c, clipped to
+    [1/cap, cap]; a class without a single label gets `cap`. 1.0 everywhere
+    when the labels are balanced (or absent)."""
+    classes = list(classes)
+    total = sum(labeled_counts.get(c, 0) for c in classes)
+    if not classes or total <= 0:
+        return {c: 1.0 for c in classes}
+    mean_frac = 1.0 / len(classes)
+    out = {}
+    for c in classes:
+        frac = labeled_counts.get(c, 0) / total
+        out[c] = cap if frac <= 0 else min(cap, max(1.0 / cap, mean_frac / frac))
+    return out
+
+
 def class_budgets(
     total: int, rarity: Mapping[str, float], available: Mapping[str, int]
 ) -> dict[str, int]:
@@ -386,6 +413,8 @@ class PalResult:
     #: or images with no detections at all); the caller tops up otherwise
     shortfall: int
     notes: list[str] = field(default_factory=list)
+    #: inverse-label-frequency weights that shaped the budgets (1.0 = neutral)
+    balance: dict[str, float] = field(default_factory=dict)
 
     def as_picks(self, index_of: Mapping[int, int]) -> list[Pick]:
         """Translate to selection.Pick rows via an image_id → index map."""
@@ -403,8 +432,11 @@ def select(
     alpha: float = ALPHA,
     beta: float = BETA,
     gamma: float = GAMMA,
+    balance: float = BALANCE,
 ) -> PalResult:
-    """Run one PAL acquisition round.
+    """Run one PAL acquisition round. `balance` is the exponent on the
+    inverse-label-frequency weight that tilts the class budgets towards
+    under-labeled classes (0 = the paper's Eq. 6 alone).
 
     `unlabeled` maps image id → its detections (images with none are simply
     unreachable by the method and count towards `shortfall`); `labeled` are
@@ -429,8 +461,10 @@ def select(
             images_with.setdefault(d.category, set()).add(image_id)
     rarity = rarity_weights(labeled_counts, unlabeled_counts)
     reachable = {i for i, dets in unlabeled.items() if dets}
+    balance_w = balance_weights(labeled_counts, rarity) if balance > 0 else {c: 1.0 for c in rarity}
+    budget_weights = {c: rarity[c] * balance_w[c] ** balance for c in rarity}
     budgets = class_budgets(
-        min(budget, len(reachable)), rarity, {c: len(s) for c, s in images_with.items()}
+        min(budget, len(reachable)), budget_weights, {c: len(s) for c, s in images_with.items()}
     )
 
     # LIUS per image per class: the most uncertain detection of that class
@@ -498,6 +532,6 @@ def select(
             f"{len(reachable)} unlabeled images have detections and class budgets "
             f"ran out of candidates"
         )
-    return PalResult(
+    return PalResult(balance=balance_w,
         picks=picks, rarity=rarity, budgets=budgets, shortfall=shortfall, notes=notes
     )

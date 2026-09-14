@@ -222,3 +222,33 @@ def test_select_validates_inputs():
 def test_paper_weights_are_the_defaults():
     assert (pal.ALPHA, pal.BETA, pal.GAMMA) == (0.9, 0.04, 0.02)
     assert pal.CANDIDATE_FACTOR == 2
+
+
+def test_balance_weights_tilt_budgets_towards_under_labeled_classes():
+    """horos choice on top of Eq. 5/6: inverse label frequency (clipped) —
+    a class with 5 % of the labels gets a far larger share than the paper's
+    gentle rarity alone would give; balance=0 restores the paper."""
+    from horos.core.pal import BALANCE_CAP, balance_weights
+
+    w = balance_weights({"box": 95, "pallet": 5}, ["box", "pallet"])
+    assert w["box"] == pytest.approx(0.5 / 0.95) and w["pallet"] == pytest.approx(BALANCE_CAP)
+    even = balance_weights({"box": 50, "pallet": 50}, ["box", "pallet"])
+    assert even == {"box": 1.0, "pallet": 1.0}
+    assert balance_weights({}, ["box"]) == {"box": 1.0}
+
+    def det(i, c, conf, support, tp=None):
+        return Detection(image_id=i, category=c, confidence=conf, support=support,
+                         true_positive=tp)
+
+    labeled = [det(1, "box", 0.9, 8, True) for _ in range(19)] + [det(2, "pallet", 0.9, 8, True)]
+    unlabeled = {}
+    for i in range(100, 120):
+        unlabeled[i] = [det(i, "box", 0.5, 3)]
+    for i in range(200, 220):
+        unlabeled[i] = [det(i, "pallet", 0.5, 3)]
+    paper = select(unlabeled, labeled, 10, balance=0.0)
+    ours = select(unlabeled, labeled, 10)
+    assert paper.budgets["pallet"] <= 7  # Eq. 5 alone: a mild tilt (r ≈ 0.73 vs 0.28)
+    assert ours.budgets["pallet"] >= 9 > paper.budgets["pallet"]
+    assert ours.balance["pallet"] > 1 > ours.balance["box"]
+    assert sum(ours.budgets.values()) == 10

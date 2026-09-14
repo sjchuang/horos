@@ -158,6 +158,30 @@ def test_big_pools_are_scored_on_a_seeded_sample(tmp_path):
     assert not any("scored" in n and "of" in n for n in record.selection.notes)
 
 
+def test_rare_class_gets_lookalikes_of_its_few_photos(tmp_path):
+    """Class balance beyond the scorer: 'pallet' has one label on a grey
+    photo and the fake detector never proposes it on grey photos, so PAL
+    alone would never pick a grey photo. Look-alikes of the pallet photo
+    (grey pool photos, by embedding) take a share of the round, with a
+    reason that says so. Balance off = the paper's picks only."""
+    layout = [("red", "train")] * 20 + [("grey", "train")] * 6
+    labeled = {i: "box" for i in range(1, 11)}
+    labeled[23] = "pallet"  # the one grey photo with a label
+    project = _project(tmp_path, layout, labeled=labeled)
+    record = _select(project, count=8)
+    grey_pool = {21, 22, 24, 25, 26}
+    lookalikes = [p for p in record.selection.picks if "rare class 'pallet'" in p.reason]
+    assert lookalikes and all(p.image_id in grey_pool for p in lookalikes)
+    assert len(lookalikes) <= 2  # at most a quarter of the round
+    assert any(n.startswith("class balance:") for n in record.selection.notes)
+    assert len(record.image_ids) == 8
+    from horos.api.loop import close_round
+
+    close_round(project, record.number)
+    plain = _select(project, count=8, balance=False)
+    assert not any("rare class" in p.reason for p in plain.selection.picks)
+
+
 def test_pal_top_up_comes_from_diversity_when_the_scorer_sees_nothing(tmp_path):
     # only one unlabeled image has a detection; the rest are grey
     layout = [("red", "train"), ("green", "train")] + [("grey", "train")] * 6

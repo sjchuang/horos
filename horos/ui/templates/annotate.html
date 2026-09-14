@@ -518,6 +518,13 @@ const Loop = {
             <span class="step-btns"><button type="button" data-step="1"></button>
               <button type="button" data-step="-1"></button></span></span>
         </div>
+        <div class="opt">
+          <span class="k" title="On: rounds lean towards under-labeled classes — PAL's class budgets are weighted by inverse label frequency, and a class with only a handful of labels (one the model cannot propose yet) gets look-alikes of its few photos, up to a quarter of the round. Off: the paper's budgets alone.">Balance</span>
+          <div class="seg" data-opt="balance">
+            <button data-v="1" title="favour under-labeled classes">On</button>
+            <button data-v="0" title="PAL budgets as in the paper">Off</button>
+          </div>
+        </div>
         <div class="opt" data-opt="shapes-wrap">
           <span class="k" title="What the pseudo labels look like. Auto follows the model (polygons for a segmentation model, boxes otherwise); Box keeps boxes; Polygon turns box suggestions into SAM polygons.">Shapes</span>
           <div class="seg" data-opt="shapes">
@@ -541,6 +548,8 @@ const Loop = {
       setSeg("model", kind);
       setSeg("suggest", st.preannotate === false ? 0 : 1);
       setSeg("training", st.training || "continue");
+      setSeg("balance", st.balance === false ? 0 : 1);
+      seg("balance").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ balance: b.dataset.v === "1" }); });
       seg("training").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ training: b.dataset.v }); });
       setSeg("shapes", st.shapes || "auto");
       seg("shapes-wrap").style.opacity = st.preannotate === false ? ".4" : "1";

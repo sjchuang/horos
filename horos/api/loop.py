@@ -134,6 +134,12 @@ PRELABEL_THRESHOLD = {"run": SCORE_THRESHOLD, "zero_shot": 0.1}
 #: appears at all has enough instances for a validation split to mean anything
 MIN_LABELED_IMAGES = 20
 MIN_INSTANCES_PER_CLASS = 5
+#: a class with fewer labels than this share of the mean class count (and
+#: fewer than 2 × MIN_INSTANCES_PER_CLASS) is "rare": the model has seen too
+#: little of it to propose it, so its next photos are found by look-alikes
+RARE_CLASS_FACTOR = 0.25
+#: at most this share of a round goes to rare-class look-alikes
+LOOKALIKE_SHARE = 0.25
 #: held-out shares of the labeled photos. Every newly labeled photo is put
 #: into test / valid / train by a deterministic hash bucket, so both held-out
 #: sets grow in proportion to the labels and a photo never changes split:
@@ -162,6 +168,10 @@ class LoopSettings(BaseModel):
     #: how many times the round size the scorer looks at (random sample when
     #: the pool is bigger); None = score the whole pool, however long it takes
     scan_factor: int | None = Field(default=DEFAULT_SCAN_FACTOR, ge=1)
+    #: tilt each round towards under-labeled classes: PAL budgets weighted by
+    #: inverse label frequency, and look-alikes of a rare class's few photos
+    #: (by embedding) when the model cannot find it yet
+    balance: bool = True
     #: "continue": each round starts from the previous run of the same model
     #: (weights kept, optimizer fresh, class head resized — new classes are
     #: fine) and trains fewer epochs; "fresh": from the published weights
@@ -645,6 +655,89 @@ def _preannotate_images(
             "duplicates_dropped": duplicates, "nms_iou": PRELABEL_NMS_IOU}
 
 
+def _rare_class_lookalikes(
+    project: Project,
+    picks: list[PickedImage],
+    wanted: int,
+    *,
+    labeled_ids: list[int],
+    covered: np.ndarray,
+    pool_ids: list[int],
+    pool_vecs: np.ndarray,
+    notes: list[str],
+) -> list[PickedImage]:
+    """Class balance the scorer cannot give: a class with a handful of labels
+    is one the model barely proposes, so PAL finds no candidates for it.
+    Its next photos are the pool's nearest look-alikes (embedding cosine) of
+    the few photos that already carry it. At most LOOKALIKE_SHARE of the
+    round; they replace PAL's lowest-scored picks when the round is full."""
+    by_class: dict[str, list[int]] = {}
+    names = {c.id: c.name for c in project.categories}
+    for image_id in labeled_ids:
+        for a in project.load_annotations(image_id).annotations:
+            if a.status == "confirmed" and a.category_id in names:
+                by_class.setdefault(names[a.category_id], []).append(image_id)
+    counts = {c: len(ids) for c, ids in by_class.items()}
+    if len(counts) < 2:
+        return picks
+    mean = sum(counts.values()) / len(counts)
+    rare = sorted(
+        c for c, n in counts.items()
+        if n < max(2 * MIN_INSTANCES_PER_CLASS, RARE_CLASS_FACTOR * mean)
+    )
+    if not rare:
+        return picks
+    total = max(1, round(wanted * LOOKALIKE_SHARE))
+    row_of = {image_id: n for n, image_id in enumerate(labeled_ids)}
+    taken = {p.image_id for p in picks}
+    added: list[PickedImage] = []
+    per_class = {c: 0 for c in rare}
+    # round robin over the rare classes, best look-alike first
+    ranked: dict[str, list[tuple[float, int]]] = {}
+    for c in rare:
+        rows = [row_of[i] for i in set(by_class[c]) if i in row_of]
+        if not rows:
+            continue
+        sims = pool_vecs @ covered[rows].T  # cosine: vectors are L2-normalised
+        best = sims.max(axis=1)
+        ranked[c] = sorted(((float(best[n]), pool_ids[n]) for n in range(len(pool_ids))
+                            if pool_ids[n] not in taken), key=lambda t: (-t[0], t[1]))
+    while len(added) < total and ranked:
+        progressed = False
+        for c in list(ranked):
+            while ranked[c] and ranked[c][0][1] in taken:
+                ranked[c].pop(0)
+            if not ranked[c]:
+                del ranked[c]
+                continue
+            sim, image_id = ranked[c].pop(0)
+            taken.add(image_id)
+            n_photos = len(set(by_class[c]))
+            added.append(PickedImage(
+                image_id=image_id, score=sim,
+                reason=(f"class balance: looks like the {n_photos} labeled photo(s) of rare class "
+                        f"'{c}' ({counts[c]} label(s) vs {mean:.0f} per class on average) — "
+                        f"cosine {sim:.2f}; the model has too few examples to propose it"),
+            ))
+            per_class[c] += 1
+            progressed = True
+            if len(added) >= total:
+                break
+        if not progressed:
+            break
+    if not added:
+        return picks
+    # make room: drop PAL's lowest-scored picks so the round still holds `wanted`
+    keep = sorted(picks, key=lambda p: (-p.score, p.image_id))[: max(0, wanted - len(added))]
+    notes.append(
+        "class balance: " + ", ".join(
+            f"{c} ({counts[c]} label(s)) +{per_class[c]} look-alike(s)"
+            for c in rare if per_class[c]
+        ) + f" — {len(added)} photo(s) chosen by similarity to the rare classes' photos"
+    )
+    return keep + added
+
+
 def select_round_events(
     project: Project,
     *,
@@ -662,6 +755,7 @@ def select_round_events(
     shapes: Shapes | None = None,
     refiner: PromptableSegmenter | None = None,
     scan_factor: int | None = None,
+    balance: bool | None = None,
 ) -> Iterator[Event]:
     """Open the next round and choose its images, as an R4 event stream.
     `preannotate` / `shapes` default to the loop settings (E10-T19).
@@ -812,17 +906,28 @@ def select_round_events(
                 {image_id: pool_vecs[n] for n, image_id in enumerate(pool_ids)}
                 if pool_vecs is not None else None
             )
-            result = pal.select(unlabeled_dets, labeled_dets, wanted, embeddings=embeddings)
+            balanced = settings.balance if balance is None else balance
+            result = pal.select(unlabeled_dets, labeled_dets, wanted, embeddings=embeddings,
+                                balance=pal.BALANCE if balanced else 0.0)
             notes.extend(result.notes)
             notes.append(
                 "PAL class budgets: " + ", ".join(
                     f"{c}={b}" for c, b in sorted(result.budgets.items())
                 )
+                + (" (weighted by inverse label frequency: " + ", ".join(
+                    f"{c}×{w:.1f}" for c, w in sorted(result.balance.items()) if abs(w - 1) > 0.05
+                ) + ")" if balanced and any(abs(w - 1) > 0.05 for w in result.balance.values())
+                   else "")
             )
             picks = [
                 PickedImage(image_id=p.image_id, score=p.score, reason=p.reason)
                 for p in result.picks
             ]
+            if balanced and pool_vecs is not None and covered is not None:
+                picks = _rare_class_lookalikes(
+                    project, picks, wanted, labeled_ids=labeled_ids, covered=covered,
+                    pool_ids=pool_ids, pool_vecs=pool_vecs, notes=notes,
+                )
             if result.shortfall:
                 notes.append(
                     f"{result.shortfall} image(s) added by diversity to fill the round"

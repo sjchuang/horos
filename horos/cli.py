@@ -542,6 +542,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="loop select: suggestion geometry for this round (default: the loop settings)",
     )
     p.add_argument(
+        "--no-balance", action="store_true",
+        help="loop select: do not tilt this round towards under-labeled classes",
+    )
+    p.add_argument(
         "--scan", type=int, default=None,
         help="loop select: score this many times the round size (random sample of the pool; "
              "0 = all; default: the loop settings, 100)",
@@ -1110,7 +1114,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     project, count=args.count, percent=args.percent,
                     strategy=args.strategy, device=args.device,
                     preannotate=False if args.no_suggestions else None, shapes=args.shapes,
-                    scan_factor=args.scan,
+                    scan_factor=args.scan, balance=False if args.no_balance else None,
                 ):
                     print(dump_event(event), file=sys.stderr)  # noqa: T201
                     final = event
