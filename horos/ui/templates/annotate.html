@@ -231,8 +231,10 @@
           <button class="on" data-unit="count" title="a fixed number of images">#</button>
           <button data-unit="percent" title="a share of the unlabeled pool">%</button>
         </div>
-        <input type="range" id="count-slider" class="grow" min="1" max="100" step="1" value="20">
-        <span class="stepper wide"><input type="number" id="count-input" min="1" max="100" step="1" value="20">
+        <input type="range" id="count-slider" class="grow" min="1" max="100" step="1" value="20"
+               title="how many photos this round asks you to label — a fixed number (#) or a share of the unlabeled pool (%)">
+        <span class="stepper wide"><input type="number" id="count-input" min="1" max="100" step="1" value="20"
+               title="photos in this round">
           <span class="step-btns"><button type="button" data-step="1"></button>
             <button type="button" data-step="-1"></button></span></span>
       </div>
@@ -482,7 +484,7 @@ const Loop = {
   models: [],
   OPTIONS_HTML: `      
         <div class="opt">
-          <span class="k">Model</span>
+          <span class="k" title="The model each round trains and, from the second round on, scores the pool with. Auto picks RF-DETR Nano for boxes or RF-DETR-Seg Nano when most labels are polygons; Boxes / Segm let you choose the family and size.">Model</span>
           <div class="seg" data-opt="model">
             <button data-v="auto" title="Boxes → RF-DETR Nano · polygons → RF-DETR-Seg Nano">Auto</button>
             <button data-v="detection" title="detect boxes">Boxes</button>
@@ -491,26 +493,26 @@ const Loop = {
           <select data-opt="size" style="display:none"></select>
         </div>
         <div class="opt">
-          <span class="k">Pseudo labeling</span>
+          <span class="k" title="On: the picked photos arrive pre-labeled by the current model (OWLv2 zero-shot before there is one) as pending suggestions to accept or fix. Off: every photo starts blank.">Pseudo labeling</span>
           <div class="seg" data-opt="suggest">
             <button data-v="1" title="pseudo-label the picked photos">On</button>
             <button data-v="0" title="start every photo blank">Off</button>
           </div>
         </div>
         <div class="opt">
-          <span class="k">Goal</span>
-          <span class="stepper narrow"><input type="number" data-opt="target" min="0" max="1" step="0.05" placeholder="—" title="stop when the headline metric reaches this (mAP, 0–1); empty = no goal">
+          <span class="k" title="The mAP you want on the held-out test set (0–1). Once a round reaches it and the train and test curves have met, Review says the goal is reached and suggests exporting. Empty or 0 = no goal.">Goal</span>
+          <span class="stepper narrow"><input type="number" data-opt="target" min="0" max="1" step="0.05" placeholder="—" title="target mAP on the test set, 0–1; empty or 0 = no goal">
             <span class="step-btns"><button type="button" data-step="1"></button>
               <button type="button" data-step="-1"></button></span></span>
         </div>
         <div class="opt">
-          <span class="k">Scan</span>
-          <span class="stepper narrow"><input type="number" data-opt="score_limit" min="0" step="500" placeholder="all" title="unlabeled photos the model scores per round — a random sample when the pool is bigger; empty or 0 = all of them (slow on large pools)">
+          <span class="k" title="How many unlabeled photos the model scores when picking a round. Bigger pools are sampled at random (fixed seed) and the pick comes from that sample; photos left out can still be chosen for diversity and are sampled in later rounds. Empty or 0 = score them all — the most thorough, and slow on large pools.">Scan</span>
+          <span class="stepper narrow"><input type="number" data-opt="score_limit" min="0" step="500" placeholder="all" title="photos scored per round; empty or 0 = all (slow on large pools)">
             <span class="step-btns"><button type="button" data-step="1"></button>
               <button type="button" data-step="-1"></button></span></span>
         </div>
         <div class="opt" data-opt="shapes-wrap">
-          <span class="k">Shapes</span>
+          <span class="k" title="What the pseudo labels look like. Auto follows the model (polygons for a segmentation model, boxes otherwise); Box keeps boxes; Polygon turns box suggestions into SAM polygons.">Shapes</span>
           <div class="seg" data-opt="shapes">
             <button data-v="auto" title="whatever the model produces">Auto</button>
             <button data-v="box" title="boxes only">Box</button>
@@ -568,12 +570,13 @@ const Loop = {
     const s = this.status;
     this.renderOptions();
     $("select-stats").innerHTML = [
-      [s.pool_size, ICON.image, "to label"], [s.labeled_images, ICON.tag, "labeled"],
-      [s.skipped_images, ICON.skip, "skipped"],
-      [s.test_images, ICON.check, "held-out test"],
-      [s.rounds.filter((r) => r.state === "closed").length, ICON.loop, "rounds"],
-      [s.has_model ? "✓" : "—", ICON.robot, "model"],
-    ].map(([v, icon, k]) => `<div class="stat"><div class="v">${v}</div><div class="k">${icon}${k}</div></div>`).join("");
+      [s.pool_size, ICON.image, "to label", "unlabeled photos the next round can pick from (skipped ones excluded)"],
+      [s.labeled_images, ICON.tag, "labeled", "photos with at least one confirmed label — the training data, split into train / valid / test"],
+      [s.skipped_images, ICON.skip, "skipped", "photos an annotator marked unfit for training; out of the pool and of every set"],
+      [s.test_images, ICON.check, "held-out test", "labeled photos in the test set: never trained on, the learning curve's honest line"],
+      [s.rounds.filter((r) => r.state === "closed").length, ICON.loop, "rounds", "closed rounds so far"],
+      [s.has_model ? "✓" : "—", ICON.robot, "model", s.has_model ? "a trained model exists: it scores the pool and pseudo-labels the picks" : "no trained model yet: the first round is spread out by image similarity"],
+    ].map(([v, icon, k, tip]) => `<div class="stat" title="${tip}"><div class="v">${v}</div><div class="k">${icon}${k}</div></div>`).join("");
     const [icon, label, tip] = STRATEGY[s.next_strategy] || STRATEGY.random;
     $("strategy-badge").innerHTML = icon + " " + label;
     $("strategy-badge").dataset.tip = tip;
