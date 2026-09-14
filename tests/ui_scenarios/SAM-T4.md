@@ -34,6 +34,9 @@ horos ui <project>
    對應 chip 高亮:再按 Enter 沿用,直接打字可換類別,點 chip 也可;Esc/Discard 丟棄這個形狀。
    形狀以選定類別加入(polygon),工具維持在 SAM,狀態清空,可立刻點下一個物體;
    Auto Save 開著會在 0.5 s 後儲存,Ctrl+Z 可還原
+8a. 影像上有 pseudo label(虛線、pending)時,SAM 畫在同一物件上按 Enter:選單預填**該 pseudo label 的類別**
+   (以 IoU × 信心度挑最佳、IoU ≥ 0.3 才算),說明列顯示「Suggested from the pseudo label under it (IoU 0.xx, confidence 0.xx)」;
+   附近沒有 pseudo label 時回到目前(上次指定)的類別
 8b. 選單裡勾「Keep this class for the next objects」(記在 localStorage `horos_keep_class`,預設不勾):
    之後 Enter 直接以 Object Class 的類別寫入、不再跳選單;Object Class 清空時仍會問。
    取消勾選要再開一次選單(清空 Object Class 後 Enter)

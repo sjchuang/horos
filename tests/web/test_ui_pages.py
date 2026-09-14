@@ -201,7 +201,8 @@ def test_canvas_class_menu_offers_to_keep_the_class(client):
     """SAM-T4 step 8/8b: accept opens the class menu; a tick skips it next time."""
     html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'id="label-keep"' in html and "horos_keep_class" in html
-    assert "_askLabel(typed)" in html
+    assert "_askLabel(hit ? hit.label : typed, hit)" in html
+    assert "_suggestClass" in html and 'id="label-hint"' in html  # pseudo label under it wins
 
 
 def test_dataset_page_groups_photos_and_skips_a_group(client):

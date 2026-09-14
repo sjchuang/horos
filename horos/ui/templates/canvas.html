@@ -542,7 +542,7 @@
 <div class="modal" id="label-modal">
   <div class="card" style="width:360px">
     <h4 style="margin:0 0 6px">Which class?</h4>
-    <p style="color:var(--dim);font-size:12px;margin:0 0 8px">Names this shape and becomes the current class.</p>
+    <p style="color:var(--dim);font-size:12px;margin:0 0 8px" id="label-hint">Names this shape and becomes the current class.</p>
     <input type="text" id="label-input" list="label-datalist" placeholder="e.g. car, person"
            style="width:100%" autocomplete="off">
     <datalist id="label-datalist"></datalist>
@@ -2162,7 +2162,9 @@ const Page = {
     const live = cand && cand.points.length ? cand : null;
     if (live || this.sam.parts.length) {
       const seq = this.sam.seq;
-      const label = await this._labelFor();
+      const drawn = live ? { shape_type: live.shape_type, points: live.points, parts: this.sam.parts }
+                         : { shape_type: "polygon", points: this.sam.parts[0], parts: this.sam.parts.slice(1) };
+      const label = await this._labelFor(drawn);
       if (!label || seq !== this.sam.seq) return;  // discarded, or the prompt changed
       // the parts kept with "+" and the live mask are ONE object: one label,
       // several polygons (ring 0 is the first part)
@@ -2324,7 +2326,7 @@ const Page = {
     const imageId = this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id;
     this.pendingShape = shape;  // drawn in grey while the class is being asked
     this._drawCanvas();
-    const label = await this._labelFor();
+    const label = await this._labelFor(shape);
     this.pendingShape = null;
     const still = this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === imageId;
     if (!still) return;  // the image changed meanwhile
@@ -2340,10 +2342,13 @@ const Page = {
   // the class for a new shape: the menu, pre-filled with the current class so
   // Enter twice keeps it — unless "Keep this class" is ticked, in which case
   // the current class is used silently (an empty Object Class still asks)
-  async _labelFor() {
+  async _labelFor(shape) {
     const typed = $("class-input").value.trim();
     if (typed && this._keepClass()) { this._rememberClass(typed); return typed; }
-    const name = await this._askLabel(typed);
+    // a pseudo label sitting under the new shape knows its class better than
+    // the last class used: pre-fill with it, else fall back to the current one
+    const hit = shape ? this._suggestClass(shape) : null;
+    const name = await this._askLabel(hit ? hit.label : typed, hit);
     if (name) {
       $("class-input").value = name;
       this.sessionNames.add(name);
@@ -2352,6 +2357,39 @@ const Page = {
       this._rememberClass(name);
     }
     return name;
+  },
+  // axis-aligned extent of a shape (rectangle corners or every polygon ring)
+  _shapeBox(shape) {
+    const pts = [...shape.points, ...(shape.parts || []).flat()];
+    if (!pts.length) return null;
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+  },
+  _boxIoU(a, b) {
+    const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+    const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+    const inter = ix * iy;
+    const union = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter;
+    return union > 0 ? inter / union : 0;
+  },
+  // the class of the pseudo label that best covers the new shape: pending
+  // shapes are ranked by IoU × confidence, and one has to overlap at least
+  // SUGGEST_MIN_IOU to count; null when nothing relevant sits there
+  SUGGEST_MIN_IOU: 0.3,
+  _suggestClass(shape) {
+    const box = this._shapeBox(shape);
+    if (!box) return null;
+    let best = null;
+    for (const s of this.editorShapes) {
+      if (s.status !== "pending" || s === shape) continue;
+      const other = this._shapeBox(s);
+      if (!other) continue;
+      const iou = this._boxIoU(box, other);
+      if (iou < this.SUGGEST_MIN_IOU) continue;
+      const score = iou * (s.score ?? 0.5);
+      if (!best || score > best.rank) best = { label: s.label, iou, conf: s.score ?? null, rank: score };
+    }
+    return best;
   },
   // the class of the last shape labeled is the class the next image opens
   // with — nobody wants to re-pick "box" 300 times
@@ -2371,9 +2409,12 @@ const Page = {
     const pick = last && names.includes(last) ? last : (names.length === 1 ? names[0] : null);
     if (pick) { $("class-input").value = pick; this._samSyncButtons(); }
   },
-  _askLabel(prefill = "") {
+  _askLabel(prefill = "", hit = null) {
     return new Promise((resolve) => {
       const modal = $("label-modal"), input = $("label-input");
+      $("label-hint").textContent = hit
+        ? `Suggested from the pseudo label under it (IoU ${hit.iou.toFixed(2)}${hit.conf != null ? `, confidence ${Number(hit.conf).toFixed(2)}` : ""}). Enter keeps it.`
+        : "Names this shape and becomes the current class.";
       $("label-datalist").innerHTML = this.categories.map((c) => `<option value="${c.name}">`).join("");
       $("label-chips").innerHTML = this._visibleCategories().map((c) => `
         <span class="chip ${c.name === prefill ? "on" : ""}" data-name="${c.name}"><span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
