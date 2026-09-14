@@ -1670,10 +1670,22 @@ const Page = {
       ctx.font = `600 ${14 * inv}px system-ui, sans-serif`;
       const text = isPending && shape.score != null
         ? `${shape.label} ${Number(shape.score).toFixed(2)}` : shape.label;
-      const lx = shape.points[0][0], ly = shape.points[0][1] - 6 * inv;
       const tw = ctx.measureText(text).width;
+      // the tag sits above the shape's top-left corner; at the top edge of the
+      // view (or the image) it moves inside the shape, and it is kept inside
+      // the visible canvas sideways — a class name must never be cut off
+      const xs = shape.points.map((p) => p[0]), ys = shape.points.map((p) => p[1]);
+      const top = Math.min(...ys), left = Math.min(...xs);
+      const view = {  // the canvas rectangle in image coordinates
+        x0: -this.panX * inv, y0: -this.panY * inv,
+        x1: (canvas.width - this.panX) * inv, y1: (canvas.height - this.panY) * inv,
+      };
+      const boxW = tw + 8 * inv, boxH = 18 * inv;
+      let lx = left, ly = top - 6 * inv;  // baseline; the box spans ly-13 .. ly+5
+      if (ly - 13 * inv < Math.max(view.y0, 0)) ly = top + 14 * inv;  // inside, below the top edge
+      lx = Math.min(Math.max(lx, view.x0 + 4 * inv), view.x1 - boxW + 4 * inv);
       ctx.fillStyle = "rgba(0,0,0,0.66)";
-      ctx.fillRect(lx - 4 * inv, ly - 13 * inv, tw + 8 * inv, 18 * inv);
+      ctx.fillRect(lx - 4 * inv, ly - 13 * inv, boxW, boxH);
       ctx.fillStyle = isSelected ? "#ffffff" : color;
       ctx.fillText(text, lx, ly);
       ctx.globalAlpha = 1;
