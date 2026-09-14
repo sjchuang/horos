@@ -7,7 +7,7 @@ Web API via fetch() in the browser.
 
 from __future__ import annotations
 
-from flask import Blueprint, redirect, render_template, request
+from flask import Blueprint, render_template
 
 bp = Blueprint(
     "ui",
@@ -25,18 +25,17 @@ def index():
 
 @bp.get("/loop")
 def loop():
-    """The loop moved into the annotate page (E10-T17); old links still work."""
-    return redirect("/annotate", code=302)
+    """The active-learning loop: select → label → train → review (E10-T14).
+    Its Label step embeds the annotator as /annotate?embed=1&round=<n>."""
+    return render_template("loop.html")
 
 
 @bp.get("/annotate")
 def annotate():
-    # One page, two views: the loop shell (select → label → train → review)
-    # and the canvas it embeds for the Label step (?embed=1&round=<n>) or
-    # opens full-window to browse every photo (?canvas=1).
-    if request.args.get("embed") == "1" or request.args.get("canvas") == "1":
-        return render_template("canvas.html")
-    return render_template("annotate.html")
+    """The annotator: every photo, the canvas, classes, auto-label. Also
+    the loop's embedded Label step (?embed=1&round=<n>); the old ?canvas=1
+    still lands here."""
+    return render_template("canvas.html")
 
 
 @bp.get("/train")

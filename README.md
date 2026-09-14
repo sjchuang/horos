@@ -15,7 +15,7 @@ CLI that share one capability set.
 
 [Quickstart](#quickstart) ·
 [Web UI](#web-ui) ·
-[Active learning loop](#annotate--the-active-learning-loop) ·
+[Active learning loop](#loop--active-learning) ·
 [Models](#models) ·
 [Platforms](#platform-support) ·
 [Installation](#installation) ·
@@ -54,7 +54,7 @@ horos models                 # the project's trained models (completed runs)
 horos infer photo.jpg        # newest completed run, unless you pass --run
 horos export-model --format onnx   # ONNX / TensorRT / TFLite with a model card
 horos serve                  # POST /predict from an export bundle or checkpoint
-horos ui                     # web UI: dataset, annotate loop, train, evaluate, lab
+horos ui                     # web UI: dataset, annotate, loop, train, evaluate, lab
 horos catalog                # architectures horos can train, with their licenses
 ```
 
@@ -101,10 +101,19 @@ is never trained on. Unlabeled photos are in no set.
 
 <img src="docs/assets/screens/dataset.png" alt="Dataset page" width="100%">
 
-### Annotate — the active learning loop
+### Annotate
 
-Annotation is a four-step loop you can follow without reading any help text:
-**Select → Label → Train → Review**, then the next round.
+The keyboard-first annotator on its own page: browse every photo (filter by
+queue state, split and class), draw boxes and polygons by clicking with
+SAM 2.1, manage classes, run auto-label, review pseudo-labels. Accepting a
+shape opens the class menu pre-filled from the pseudo label or model
+prediction under it; one tick keeps a class for the next objects.
+
+### Loop — active learning
+
+The loop is a four-step page you can follow without reading any help text:
+**Select → Label → Train → Review**, then the next round. Its Label step
+embeds the same annotator on the round's photos.
 
 - **Select.** Choose how many photos the round should have (a fixed count, or a
   percentage of the unlabeled pool). With no labels yet, the batch is spread

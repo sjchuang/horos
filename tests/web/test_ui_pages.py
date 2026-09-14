@@ -73,23 +73,29 @@ def test_experiments_page_holds_the_comparison_table_and_editor(client):
     assert "/experiments/runs" in html and "/experiments/compare" in html
 
 
-def test_annotate_page_is_the_loop_shell_and_embeds_the_canvas(client):
-    """E10-T17: /annotate is the four-step loop; the canvas is its Label step."""
-    shell = client.get("/annotate").get_data(as_text=True)
+def test_loop_page_is_the_four_step_shell_and_embeds_the_canvas(client):
+    """E10-T17 (reversed 2026-09-14): /loop is the four-step loop, /annotate the
+    annotator; the loop's Label step embeds the annotator."""
+    shell = client.get("/loop").get_data(as_text=True)
     for element in ("steps", "panel-select", "panel-label", "panel-train", "panel-review",
                     "annotator", "btn-select", "btn-train", "btn-next-round"):
         assert f'id="{element}"' in shell, element
-    assert "/annotate?embed=1&round=" in shell and 'href="/annotate?canvas=1"' in shell
+    assert "/annotate?embed=1&round=" in shell and 'href="/annotate"' in shell
     assert "/loop/rounds" in shell and "/loop/readiness" in shell
     canvas = client.get("/annotate?embed=1&round=1").get_data(as_text=True)
     assert 'id="anno-canvas"' in canvas and 'id="skip-modal"' in canvas
     assert "/images/skip" in canvas and "/similar?" in canvas and "/images/restore" in canvas
-    assert client.get("/annotate?canvas=1").get_data(as_text=True) == canvas
-    assert client.get("/loop").status_code == 302  # the old page redirects
+    assert client.get("/annotate").get_data(as_text=True) == canvas
+    assert client.get("/annotate").get_data(as_text=True) == canvas  # old links
+    # every page's nav carries both entries
+    for page in ("/", "/annotate", "/loop", "/train", "/evaluate", "/experiments", "/lab"):
+        html = client.get(page).get_data(as_text=True)
+        assert 'href="/loop" data-tip="Loop"' in html, page
+        assert 'href="/annotate" data-tip="Annotate"' in html, page
 
 
 def test_class_manager_offers_merge_and_train_setup_folds_advanced_knobs(client):
-    annotate = client.get("/annotate?canvas=1").get_data(as_text=True)
+    annotate = client.get("/annotate").get_data(as_text=True)
     assert 'id="merge-row"' in annotate and 'id="merge-target"' in annotate
     assert "/categories/merge" in annotate
     train = client.get("/train").get_data(as_text=True)
@@ -136,14 +142,14 @@ def test_annotator_never_lets_a_previous_image_overwrite_the_current_one(client)
     """E2-T7: every open carries a sequence number; the previous image's late
     load, save response, refetch or assist result is dropped when it lands
     after the user moved on (the user saw stale shapes when paging fast)."""
-    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    html = client.get("/annotate").get_data(as_text=True)
     assert "const seq = this._openSeq = (this._openSeq || 0) + 1;" in html
     assert html.count("if (seq !== this._openSeq) return;") >= 5
     assert "if (this.sam) this._samReset(false, true);" in html  # prompts do not carry over
 
 
 def test_annotator_deletes_classes_behind_a_blocking_progress_overlay(client):
-    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    html = client.get("/annotate").get_data(as_text=True)
     assert 'id="busy-modal"' in html and 'id="busy-bar"' in html
     assert "/delete`, json(\"POST\", { force })" in html  # the job route, not the sync DELETE
     assert 'window.addEventListener("beforeunload", this._unloadGuard)' in html
@@ -151,7 +157,7 @@ def test_annotator_deletes_classes_behind_a_blocking_progress_overlay(client):
 
 
 def test_annotator_builds_multi_part_objects_with_plus(client):
-    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    html = client.get("/annotate").get_data(as_text=True)
     assert 'id="sam-part"' in html and 'case "Equal": case "NumpadAdd":' in html
     assert "parts: []" in html and "...(s.parts || []).map((r) => r.flat())" in html
     # Edit: clicking a part makes it the ring with handles
@@ -159,7 +165,7 @@ def test_annotator_builds_multi_part_objects_with_plus(client):
 
 
 def test_annotator_has_the_sam_tool(client):
-    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    html = client.get("/annotate").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html
     # SAM-T5: Space confirms like Enter (no Next button); several objects are
     # still queued implicitly when a new box is dragged over a live mask, and
@@ -190,7 +196,7 @@ def test_dataset_page_has_the_danger_zone(client):
 
 def test_canvas_grid_filters_by_class_and_remembers_the_review_threshold(client):
     """E2-T7 class filter; E3-S2 threshold starts at 0.5 and follows the annotator."""
-    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    html = client.get("/annotate").get_data(as_text=True)
     assert 'id="class-filter"' in html and "All classes" in html
     assert 'q.set("category_id"' in html
     assert 'id="review-threshold" min="0" max="1" step="0.01" value="0.5"' in html
@@ -199,7 +205,7 @@ def test_canvas_grid_filters_by_class_and_remembers_the_review_threshold(client)
 
 def test_canvas_class_menu_offers_to_keep_the_class(client):
     """SAM-T4 step 8/8b: accept opens the class menu; a tick skips it next time."""
-    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    html = client.get("/annotate").get_data(as_text=True)
     assert 'id="label-keep"' in html and "horos_keep_class" in html
     assert "_askLabel(hit ? hit.label : typed, hit)" in html
     assert "_suggestClass" in html and 'id="label-hint"' in html  # pseudo label under it wins

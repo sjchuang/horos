@@ -582,7 +582,7 @@ Decisions confirmed on 2026-09-13:
 - Batch size per round defaults to a **fixed number**; a percentage of the unlabeled pool is selectable
 - **Multiple annotators**: a round's images are assigned per annotator on top of the E2-T8 claims
 - Machine-generated geometry (autolabel, SAM boxes-to-polygons, round pre-annotation) is **always** `source="auto", status="pending"` with a score — never stored as human work
-- Confirmed 2026-09-13 (second pass): annotators can **skip** a photo as unfit for training and take visually similar photos with it (embedding similarity, user-set threshold); the loop is **part of the annotate page**, not a separate page; UI text is kept short and plain, Apple-like in tone
+- Confirmed 2026-09-13 (second pass): annotators can **skip** a photo as unfit for training and take visually similar photos with it (embedding similarity, user-set threshold); UI text is kept short and plain, Apple-like in tone. The loop was folded into the annotate page on 2026-09-13 and **moved back to its own `/loop` page on 2026-09-14** — the user wants a plain annotate page too
 
 #### User stories
 
@@ -618,7 +618,7 @@ Decisions confirmed on 2026-09-13:
 | E10-T18 | The loop picks the model itself: RF-DETR-Seg Nano when most confirmed labels are polygons, RF-DETR Nano otherwise; reason recorded on the round | `tests/api/test_loop_train.py` |
 | E10-T19 | Loop settings chosen once and kept in `loop.json`: training model (auto / any trainable key), suggestions on/off, suggestion shapes auto / box / polygon (SAM refines boxes); Select step controls, API GET/PUT, CLI flags | `tests/api/test_loop_settings.py` |
 | E10-T20 | Photo groups on the Dataset page: spherical k-means (`core/clustering.py`) over the DINOv2 embeddings, `k` chosen or automatic; each group shows its closest samples, label and skip counts; "Skip group" / "Restore" go through `images.skip` / `images.restore` so a whole group of unfit photos leaves the pool in one action | `tests/unit/test_clustering.py`, `tests/api/test_image_clusters.py`, interface scenario (`tests/ui_scenarios/E1-T10.md`) |
-| E10-T17 | The loop lives in the annotate page (`/annotate` is the four-step shell, the canvas is its Label step); one nav entry, no separate loop page; wording trimmed to short, plain labels with an Apple-like calm look | Interface scenario (`tests/ui_scenarios/E10-T14.md`) |
+| E10-T17 | Reversed 2026-09-14 on the user's request: the loop is its own page again (`/loop`, template `loop.html`, four-step shell) and `/annotate` is the plain annotator (`canvas.html`); the Label step still embeds the annotator via `/annotate?embed=1&round=<n>`; both have a nav entry; wording stays short and plain with an Apple-like calm look | Interface scenario (`tests/ui_scenarios/E10-T14.md`) |
 
 #### How it is accepted
 
