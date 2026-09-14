@@ -100,6 +100,17 @@ def _train_kwargs(spec: TrainSpec) -> dict[str, Any]:
     return kwargs
 
 
+def _snapshot_num_classes(dataset_dir: Path) -> int:
+    """Number of classes in a horos training snapshot: the categories of
+    train/_annotations.coco.json (rfdetr assigns label indices by their
+    position, so a class with labels only in valid/test still counts)."""
+    import json
+
+    path = Path(dataset_dir) / "train" / "_annotations.coco.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return len({int(c["id"]) for c in data["categories"]})
+
+
 #: confidence floor for the raw candidate boxes reported next to the final
 #: detections (see infer_one); below it a DETR query is noise, not a proposal
 CANDIDATE_FLOOR = 0.05
@@ -403,11 +414,15 @@ class RFDETRBackend(ModelBackend):
                     ) from exc
 
                 if spec.init_from is not None:
-                    # warm start from an earlier run: rfdetr loads the weights and
-                    # expands or trims the class head to the new class count
-                    # (load_pretrain_weights); no published weights are needed
+                    # warm start from an earlier run. rfdetr sizes the class head
+                    # from the checkpoint unless num_classes is given explicitly —
+                    # a dataset with more classes then indexes past the head and
+                    # training dies with a CUDA device-side assert. With the
+                    # count from this run's snapshot, load_pretrain_weights
+                    # expands or trims the head to it (classes may change)
                     model = self._model_class()(
-                        device=kwargs["device"], pretrain_weights=str(spec.init_from)
+                        device=kwargs["device"], pretrain_weights=str(spec.init_from),
+                        num_classes=_snapshot_num_classes(spec.dataset_dir),
                     )
                 else:
                     yield from self._pretrained_weights_events()

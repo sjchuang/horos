@@ -166,6 +166,16 @@ def test_warm_start_continues_with_a_new_class(tmp_path):
     assert second.state == "completed", second.error
     assert second.config["init_from"] == first.checkpoint
     assert _snapshot_class_names(Path(second.checkpoint)) == ["block", "extra"]
+    # the head itself grew: 2 classes + background (rfdetr keeps the checkpoint's
+    # head size unless told the new count — demo_project died with a CUDA
+    # device-side assert when a 2-class head met 7 classes)
+    import torch
+
+    def head_rows(checkpoint):
+        state = torch.load(checkpoint, map_location="cpu", weights_only=False)["model"]
+        return state["class_embed.weight"].shape[0]
+
+    assert head_rows(first.checkpoint) == 2 and head_rows(second.checkpoint) == 3
 
     from horos.backends import get_backend
 
