@@ -154,6 +154,8 @@ def test_annotator_builds_multi_part_objects_with_plus(client):
     html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'id="sam-part"' in html and 'case "Equal": case "NumpadAdd":' in html
     assert "parts: []" in html and "...(s.parts || []).map((r) => r.flat())" in html
+    # Edit: clicking a part makes it the ring with handles
+    assert "_activatePartAt(this.editorShapes[sIdx], x, y)" in html
 
 
 def test_annotator_has_the_sam_tool(client):

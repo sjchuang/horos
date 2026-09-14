@@ -1593,19 +1593,32 @@ const Page = {
         if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) &&
             y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return i;
       } else if (s.shape_type === "polygon" && s.points.length > 2) {
-        const inRing = (ring) => {
-          let inside = false;
-          for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {
-            const [xj, yj] = ring[j], [xk, yk] = ring[k];
-            if ((yj > y) !== (yk > y) && x < ((xk - xj) * (y - yj)) / (yk - yj) + xj)
-              inside = !inside;
-          }
-          return inside;
-        };
-        if ([s.points, ...(s.parts || [])].some(inRing)) return i;
+        if ([s.points, ...(s.parts || [])].some((ring) => this._pointInRing(ring, x, y))) return i;
       }
     }
     return -1;
+  },
+  _pointInRing(ring, x, y) {
+    let inside = false;
+    for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {
+      const [xj, yj] = ring[j], [xk, yk] = ring[k];
+      if ((yj > y) !== (yk > y) && x < ((xk - xj) * (y - yj)) / (yk - yj) + xj)
+        inside = !inside;
+    }
+    return inside;
+  },
+  // a multi-part object edits one ring at a time: clicking a part makes it
+  // the active ring (the one with handles) by swapping it with ring 0 — the
+  // annotation's polygons are a set, their order carries no meaning
+  _activatePartAt(shape, x, y) {
+    if (!shape || shape.shape_type !== "polygon" || !shape.parts || !shape.parts.length) return false;
+    if (this._pointInRing(shape.points, x, y)) return false;
+    const k = shape.parts.findIndex((ring) => this._pointInRing(ring, x, y));
+    if (k === -1) return false;
+    const ring = shape.parts[k];
+    shape.parts[k] = shape.points;
+    shape.points = ring;
+    return true;
   },
 
   // ---------------------------------------------------------- canvas view
@@ -1854,6 +1867,10 @@ const Page = {
         this.selectShape(sIdx);
         if (sIdx !== -1) {
           this._pushHistory();
+          if (this._activatePartAt(this.editorShapes[sIdx], x, y)) {
+            this._triggerChange();  // the rings were reordered: save it like any edit
+            this.renderShapesList();
+          }
           this.dragMode = "shape"; this.dragStart = [x, y];
         }
       } else if (this.activeTool === "sam") {
