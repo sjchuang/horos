@@ -132,6 +132,16 @@ def test_lab_serve_offers_every_artifact_format_from_the_capability_list(client)
     assert "not supported on this platform" in lab
 
 
+def test_annotator_never_lets_a_previous_image_overwrite_the_current_one(client):
+    """E2-T7: every open carries a sequence number; the previous image's late
+    load, save response, refetch or assist result is dropped when it lands
+    after the user moved on (the user saw stale shapes when paging fast)."""
+    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    assert "const seq = this._openSeq = (this._openSeq || 0) + 1;" in html
+    assert html.count("if (seq !== this._openSeq) return;") >= 5
+    assert "if (this.sam) this._samReset(false, true);" in html  # prompts do not carry over
+
+
 def test_annotator_has_the_sam_tool(client):
     html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html

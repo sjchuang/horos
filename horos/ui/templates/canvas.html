@@ -930,6 +930,11 @@ const Page = {
     if (this._saveTimer) { clearTimeout(this._saveTimer); this._saveTimer = null; }
     if (this.currentIdx >= 0) this._releaseClaim();
     this.currentIdx = idx;
+    // every open gets a sequence number; anything the PREVIOUS open (or a save
+    // of the previous image) finishes later is dropped, so its shapes can never
+    // land on the image now on screen
+    const seq = this._openSeq = (this._openSeq || 0) + 1;
+    if (this.sam) this._samReset(false, true);  // prompts and queued masks belong to the old image
     $("grid-view").style.display = "none";
     $("editor-view").style.display = "block";
     this.zoom = 1; this.history = []; this.isDirty = false;
@@ -944,15 +949,18 @@ const Page = {
     const [view] = await Promise.all([
       api(`/images/${item.image.id}/annotations`), this._claim(item.image.id),
     ]);
+    if (seq !== this._openSeq) return;  // the user moved on while this loaded
     // another session (or a background job) may have added classes since this
     // page loaded — refresh before an unknown id would render as a number
     const known = new Set(this.categories.map((c) => c.id));
     if (view.annotations.some((a) => !known.has(a.category_id))) {
       this.categories = (await api("/project")).categories;
+      if (seq !== this._openSeq) return;
     }
     this.version = view.version;
     this.editorImage = new Image();
     this.editorImage.onload = () => {
+      if (seq !== this._openSeq) return;  // a later image is already open
       this.zoom = 1;
       this.editorShapes = view.annotations.map((a) => this._toShape(a));
       this.isDirty = false;
@@ -990,6 +998,7 @@ const Page = {
     if (!await this._checkUnsaved()) return;
     if (this.currentIdx >= 0) this._releaseClaim();
     this.currentIdx = -1;
+    this._openSeq = (this._openSeq || 0) + 1;  // late loads of the closed image are dropped
     $("editor-view").style.display = "none";
     $("grid-view").style.display = "block";
     this.editorShapes = []; this.editorImage = null; this.history = [];
@@ -1120,32 +1129,41 @@ const Page = {
   async saveAnnotations(isAuto = false) {
     if (this.currentIdx < 0) return;
     const item = this.queue[this.currentIdx];
+    const seq = this._openSeq;  // which image this save belongs to
+    const version = this.version;
     this._setSaveState("saving", "saving…");
     try {
       const annotations = await this._toAnnotations();
       const view = await api(`/images/${item.image.id}/annotations`,
-        json("PUT", { expected_version: this.version, annotations }));
-      this.version = view.version;
-      this.isDirty = false;
-      // rebuild from the server response so shape ids stay in sync for the
-      // per-shape review actions (order is preserved, selection stays valid)
-      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+        json("PUT", { expected_version: version, annotations }));
+      // the queue row is about the saved image whatever is on screen now
       const confirmed = view.annotations.filter((a) => a.status === "confirmed");
       item.num_annotations = confirmed.length;
       item.annotated = confirmed.length > 0;
       item.num_pending = view.annotations.length - confirmed.length;
-      this._setSaveState("saved", "saved");
-      this._syncReviewBar();
-      this._drawCanvas();
       if (ROUND) {
         const done = this.queue.filter((q) => q.annotated).length;
         $("progress-line").innerHTML =
           `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} labeled`;
         this._notifyRound(done, done === this.queue.length);
       }
+      if (seq !== this._openSeq) return;  // the user moved to another image meanwhile
+      this.version = view.version;
+      this.isDirty = false;
+      // rebuild from the server response so shape ids stay in sync for the
+      // per-shape review actions (order is preserved, selection stays valid)
+      this.editorShapes = view.annotations.map((a) => this._toShape(a));
+      this._setSaveState("saved", "saved");
+      this._syncReviewBar();
+      this._drawCanvas();
     } catch (e) {
+      if (seq !== this._openSeq) {
+        if (!isAuto) toast(`Save of ${item.image.file_name} failed: ${e.message}`, "err", 4200);
+        return;  // never rebuild the current image from the previous one's reload
+      }
       if (e.code === "annotation_conflict") {
         const view = await api(`/images/${item.image.id}/annotations`);
+        if (seq !== this._openSeq) return;
         this.editorShapes = view.annotations.map((a) => this._toShape(a));
         this.version = view.version;
         this.selectedShapeIdx = -1; this.history = []; this.isDirty = false;
@@ -2235,11 +2253,13 @@ const Page = {
   // ------------------------------------------------------ review + assist
   async _refetch() {
     const item = this.queue[this.currentIdx];
+    const seq = this._openSeq;
     const view = await api(`/images/${item.image.id}/annotations`);
     const known = new Set(this.categories.map((c) => c.id));
     if (view.annotations.some((a) => !known.has(a.category_id))) {
       this.categories = (await api("/project")).categories;
     }
+    if (seq !== this._openSeq) return;  // another image is open by now
     this.version = view.version;
     this.editorShapes = view.annotations.map((a) => this._toShape(a));
     const confirmed = view.annotations.filter((a) => a.status === "confirmed");
@@ -2297,6 +2317,7 @@ const Page = {
     const prompts = this._parsePrompts($("assist-input").value);
     if (!item || !Object.keys(prompts).length) return;
     const btn = $("assist-run");
+    const seq = this._openSeq;  // the prompt belongs to the image open right now
     btn.disabled = true;
     $("assist-status").textContent =
       "running… (the first call loads the model and may download weights)";
@@ -2307,6 +2328,7 @@ const Page = {
       }));
       const project = await api("/project");
       this.categories = project.categories;  // assist may have created classes
+      if (seq !== this._openSeq) { $("assist-status").textContent = ""; return; }  // image changed meanwhile
       this.version = result.version;
       this.editorShapes = result.annotations.map((a) => this._toShape(a));
       const n = this._pendingShapes().length;
