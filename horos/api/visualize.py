@@ -205,12 +205,15 @@ def error_overlay_boxes(errors: ImageErrors) -> list[OverlayBox]:
             label = f"{item.pred_name} {item.score:.2f} (gt: {item.gt_name})"
         else:
             label = f"{item.pred_name} {item.score:.2f}"
+        seg = item.segmentation or []
         boxes.append(
             OverlayBox(
                 bbox=item.bbox,
                 color=ERROR_COLORS[item.kind],
                 label=label,
                 style="dashed" if item.kind == "fn" else "solid",
+                polygon=seg[0] if seg else None,
+                more_polygons=list(seg[1:]),
             )
         )
     return boxes

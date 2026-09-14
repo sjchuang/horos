@@ -147,6 +147,21 @@ def test_prediction_boxes_filter_by_threshold_and_colour_per_class():
     assert len({b.color for b in everything}) == 2  # one colour per class
 
 
+def test_error_boxes_carry_the_item_polygons():
+    from horos.api.error_analysis import ImageErrorItem, ImageErrors
+    from horos.api.visualize import error_overlay_boxes
+
+    ring, part = [1.0, 1.0, 5.0, 1.0, 5.0, 5.0], [6.0, 6.0, 9.0, 6.0, 9.0, 9.0]
+    errors = ImageErrors(
+        image_id=1, file_name="a.png", width=10, height=10, errors=1, tp=0, fn=1, fp=0,
+        confused=0, missed_area=0.1,
+        items=[ImageErrorItem(kind="fn", bbox=(1, 1, 8, 8), gt_name="a",
+                              segmentation=[ring, part])],
+    )
+    (box,) = error_overlay_boxes(errors)
+    assert box.polygon == ring and box.more_polygons == [part]
+
+
 def test_render_prediction_overlay_writes_the_file(blank, tmp_path):
     prediction = ImagePrediction(
         image=str(blank),

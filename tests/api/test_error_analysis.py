@@ -159,6 +159,31 @@ def test_greedy_matching_prefers_the_confident_prediction_and_same_class():
     assert matched.kind == "tp" and matched.gt_bbox == (12, 12, 30, 30)
 
 
+def test_matching_carries_the_polygons_of_predictions_and_missed_truth():
+    """A segmentation run's detections keep their mask outline; the overlay
+    draws it (E6-T6). RLE masks have no outline and are dropped."""
+    diamond = [25.0, 10.0, 40.0, 25.0, 25.0, 40.0, 10.0, 25.0]
+    items = match_image(
+        [
+            {"category_id": 1, "bbox": [10, 10, 30, 30], "segmentation": [diamond]},
+            {"category_id": 2, "bbox": [50, 50, 20, 20],
+             "segmentation": {"counts": [], "size": [1, 1]}},
+        ],
+        [{"category_id": 1, "bbox": [10, 10, 30, 30], "score": 0.9,
+          "segmentation": [[11.0, 11.0, 39.0, 11.0, 39.0, 39.0, 11.0, 39.0]]}],
+        iou_threshold=0.5,
+        names={1: "a", 2: "b"},
+    )
+    by_kind = {i.kind: i for i in items}
+    assert by_kind["tp"].segmentation == [[11.0, 11.0, 39.0, 11.0, 39.0, 39.0, 11.0, 39.0]]
+    assert by_kind["fn"].segmentation is None  # RLE, nothing to draw
+    missed = match_image(
+        [{"category_id": 1, "bbox": [10, 10, 30, 30], "segmentation": [diamond]}], [],
+        iou_threshold=0.5, names={1: "a"},
+    )
+    assert missed[0].kind == "fn" and missed[0].segmentation == [diamond]
+
+
 def test_predictions_of_a_class_unknown_to_the_split_do_not_crash():
     detections = _perfect() + [_det(1, 99, [0, 0, 5, 5], 0.9)]
     analysis, _ = _analysis(detections)

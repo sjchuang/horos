@@ -105,6 +105,10 @@ class ImageErrorItem(BaseModel):
     iou: float | None = None
     #: the ground-truth box the prediction matched (tp/confused)
     gt_bbox: tuple[float, float, float, float] | None = None
+    #: polygon rings of the drawn object — the prediction's mask for
+    #: tp/fp/confused, the ground truth's for fn — so the overlay of a
+    #: segmentation run shows masks, not just their boxes (E6-T6)
+    segmentation: list[list[float]] | None = None
 
 
 class ImageErrors(BaseModel):
@@ -166,6 +170,17 @@ def match_image(
     missed ground-truth box."""
     order = sorted(range(len(predictions)), key=lambda i: -predictions[i]["score"])
     taken = [False] * len(gt_boxes)
+
+    def rings(record: dict[str, Any]) -> list[list[float]] | None:
+        # COCO polygons only; RLE masks (dict) have no outline to draw
+        seg = record.get("segmentation")
+        if not isinstance(seg, list):
+            return None
+        out = [
+            [float(v) for v in ring] for ring in seg if isinstance(ring, list) and len(ring) >= 6
+        ]
+        return out or None
+
     items: list[ImageErrorItem] = []
     for pi in order:
         pred = predictions[pi]
@@ -190,6 +205,7 @@ def match_image(
                     bbox=tuple(pred["bbox"]),
                     pred_name=names[pred_cat],
                     score=pred["score"],
+                    segmentation=rings(pred),
                 )
             )
             continue
@@ -205,13 +221,15 @@ def match_image(
                 score=pred["score"],
                 iou=iou,
                 gt_bbox=tuple(gt["bbox"]),
+                segmentation=rings(pred),
             )
         )
     for gi, gt in enumerate(gt_boxes):
         if not taken[gi]:
             items.append(
                 ImageErrorItem(
-                    kind="fn", bbox=tuple(gt["bbox"]), gt_name=names[gt["category_id"]]
+                    kind="fn", bbox=tuple(gt["bbox"]), gt_name=names[gt["category_id"]],
+                    segmentation=rings(gt),
                 )
             )
     return items

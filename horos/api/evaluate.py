@@ -224,14 +224,15 @@ def evaluation_events(
                         category_id = id_by_name.get(inst.category_name, unmatched_id)
                     else:  # backend without names: ids are trusted as-is
                         category_id = inst.category_id
-                    detections.append(
-                        {
-                            "image_id": info["id"],
-                            "category_id": category_id,
-                            "bbox": list(inst.bbox),
-                            "score": inst.score,
-                        }
-                    )
+                    detection = {
+                        "image_id": info["id"],
+                        "category_id": category_id,
+                        "bbox": list(inst.bbox),
+                        "score": inst.score,
+                    }
+                    if inst.segmentation:  # segmentation runs: the mask outline too
+                        detection["segmentation"] = [list(r) for r in inst.segmentation]
+                    detections.append(detection)
                 yield ProgressUpdated(
                     run_id=run_id,
                     current=index + 1,
@@ -348,8 +349,9 @@ def _detections_path(project: Project, run_id: str, split: str) -> Path:
 def _write_detections(
     project: Project, run_id: str, split: str, detections: list[dict]
 ) -> Path:
-    """COCO-results-style list (image_id, category_id, bbox xywh, score),
-    category ids already mapped onto the split's ground-truth ids."""
+    """COCO-results-style list (image_id, category_id, bbox xywh, score,
+    polygon `segmentation` when the model predicts masks), category ids
+    already mapped onto the split's ground-truth ids."""
     path = _eval_dir(project, run_id) / f"{split}.detections.json"
     payload = {
         "run_id": run_id,

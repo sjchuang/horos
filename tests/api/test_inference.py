@@ -157,3 +157,49 @@ def test_evaluation_maps_predictions_by_class_name(trained, monkeypatch):
     events = list(evaluate_module.evaluation_events(project, run_id, split="valid"))
     report = events[-1].result
     assert report["map_50"] == pytest.approx(1.0)  # names matched, ids ignored
+
+
+def test_evaluation_persists_mask_polygons_for_the_overlay(trained, monkeypatch):
+    """A segmentation run's masks reach the persisted detections and the
+    error items the evaluate page's overlay is drawn from (E6-T6)."""
+    import json
+
+    from horos.api.error_analysis import image_errors
+    from horos.api.evaluate import load_detections
+    from horos.backends.base import ImagePrediction, PredictedInstance
+
+    project, run_id = trained
+    gt_path = project.root / "runs" / run_id / "dataset" / "valid" / "_annotations.coco.json"
+    gt = json.loads(gt_path.read_text("utf-8"))
+    name_by_id = {c["id"]: c["name"] for c in gt["categories"]}
+    file_to_id = {i["file_name"]: i["id"] for i in gt["images"]}
+    ann_by_image = {}
+    for ann in gt["annotations"]:
+        ann_by_image.setdefault(ann["image_id"], []).append(ann)
+
+    def outline(bbox):
+        x, y, w, h = bbox
+        return [x + 1, y + 1, x + w - 1, y + 1, x + w - 1, y + h - 1, x + 1, y + h - 1]
+
+    class SegEchoBackend:
+        def infer_one(self, image, *, threshold=0.5):
+            anns = ann_by_image.get(file_to_id[image.name], [])
+            return ImagePrediction(image=str(image), instances=[
+                PredictedInstance(bbox=tuple(a["bbox"]), score=0.95, category_id=0,
+                                  category_name=name_by_id[a["category_id"]],
+                                  segmentation=[outline(a["bbox"])])
+                for a in anns
+            ])
+
+    import horos.api.evaluate as evaluate_module
+
+    monkeypatch.setattr(
+        evaluate_module, "_load_run_backend",
+        lambda project, run_id, device=None: (SegEchoBackend(), None),
+    )
+    list(evaluate_module.evaluation_events(project, run_id, split="valid"))
+    detections = load_detections(project, run_id, "valid")
+    assert detections and all(len(d["segmentation"][0]) == 8 for d in detections)
+    image_id = detections[0]["image_id"]
+    errors = image_errors(project, run_id, "valid", image_id, threshold=0.5, iou=0.5)
+    assert errors.items and all(i.kind == "tp" and i.segmentation for i in errors.items)
