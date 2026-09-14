@@ -85,3 +85,14 @@ def test_rfdetr_seg_models_are_listed_as_apache_instance_segmentation():
     # detection listings (and the detection default) are untouched
     assert not (SEG_KEYS & {m.key for m in registry.list_models(task="detection")})
     assert registry.get_model_info("rfdetr-nano").resolution_step == 64
+
+
+def test_only_sam_models_are_promptable():
+    """The annotator's SAM picker lists promptable models only: RF-DETR-Seg is
+    a trained segmenter, not an interactive one, and used to fail on first click."""
+    from horos.core.registry import list_models
+
+    promptable = {m.key for m in list_models() if m.promptable}
+    assert promptable and all(k.startswith("sam") for k in promptable)
+    assert all(not m.promptable for m in list_models() if m.family == "rfdetr")
+    assert all(m.task == "instance_segmentation" for m in list_models() if m.promptable)

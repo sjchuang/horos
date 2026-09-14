@@ -42,6 +42,9 @@ class ModelInfo(BaseModel):
     hf_id: str | None = None  # HuggingFace hub id, for transformers-hosted weights
     #: can this model be fine-tuned through horos? (drives the training UI list)
     trainable: bool = False
+    #: answers point/box prompts with a mask (SAM and successors): the only
+    #: models the annotator's Draw tool and boxes → polygons may pick
+    promptable: bool = False
     #: a training resolution must be a multiple of this (backbone patch size ×
     #: window count); the hyperparameter rules snap derived values to it
     resolution_step: int = 64
@@ -290,6 +293,7 @@ _MODELS: dict[str, ModelInfo] = {
             params_millions=38.9,
             latency_hint="click/box to mask; encoder once per image, ms per click",
             entrypoint="horos.backends.sam2:SAM2Backend",
+            promptable=True,
             hf_id="facebook/sam2.1-hiera-tiny",
         ),
         ModelInfo(
@@ -304,6 +308,7 @@ _MODELS: dict[str, ModelInfo] = {
             params_millions=46.0,
             latency_hint="slightly better masks than tiny at a modest cost",
             entrypoint="horos.backends.sam2:SAM2Backend",
+            promptable=True,
             hf_id="facebook/sam2.1-hiera-small",
         ),
     ]

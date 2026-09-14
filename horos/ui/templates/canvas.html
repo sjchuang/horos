@@ -2313,7 +2313,9 @@ const Page = {
   },
   async _samLoadModels() {
     try {
-      const models = (await api("/models")).filter((m) => m.task === "instance_segmentation");
+      // only interactive segmenters answer clicks and boxes; RF-DETR-Seg is a
+      // trained detector and must not appear here (it would fail on first use)
+      const models = (await api("/models")).filter((m) => m.promptable);
       let saved = null;
       try { saved = localStorage.getItem("horos_sam_model"); } catch (e) {}
       const options = models.map((m) =>
