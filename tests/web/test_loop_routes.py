@@ -112,3 +112,16 @@ def test_history_readiness_assign_and_queue_routes(client):
     assert client.post("/api/v1/loop/rounds/1/train", json={"epochs": 0}).status_code == 400
     status = client.get("/api/v1/loop/rounds/1/training").get_json()
     assert status["round"]["number"] == 1 and status["training"] is None
+
+
+def test_image_clusters_route(client):
+    """E10-T20: the Dataset page's photo groups; needs embeddings first."""
+    resp = client.get("/api/v1/images/clusters?model=fake-embedder")
+    assert resp.status_code == 400 and "embedding job" in resp.get_data(as_text=True)
+    job = client.post("/api/v1/loop/embeddings", json={"model": "fake-embedder"}).get_json()
+    assert _wait_job(client, job["job_id"])["state"] == "completed"
+    body = client.get("/api/v1/images/clusters?model=fake-embedder&k=2&samples=1").get_json()
+    assert body["k"] == 2 and body["embedded"] == 6
+    assert sum(c["size"] for c in body["clusters"]) == 6
+    assert all(len(c["samples"]) == 1 and c["image_ids"] for c in body["clusters"])
+    assert client.get("/api/v1/images/clusters?model=fake-embedder&k=abc").status_code == 400

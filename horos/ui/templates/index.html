@@ -85,6 +85,17 @@
   details.fold > summary .sub { text-transform: none; letter-spacing: 0; margin-left: 8px; }
   details.fold[open] > summary { margin-bottom: 12px; }
   details.fold.inner { margin-top: 18px; }
+  .groups-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; margin-top: 14px; }
+  .group { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+  .group.skipped { opacity: .55; }
+  .group .strip { display: flex; gap: 4px; overflow: hidden; border-radius: 6px; }
+  .group .strip a { flex: 1 1 0; min-width: 0; aspect-ratio: 4 / 3; display: block; background: var(--line); }
+  .group .strip img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .group .row { display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12px; color: var(--dim); }
+  .group .row b { color: var(--text); }
+  .group button { border-radius: 6px; padding: 4px 10px; cursor: pointer; font-size: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  .group button.skip { color: #e03131; border-color: #e03131; }
+  .group button:disabled { opacity: .5; cursor: default; }
   /* the reset lives in a quiet fold at the very end: plain text until opened */
   details.quiet { padding: 0 18px; }
   details.quiet > summary { font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--dim);
@@ -232,6 +243,21 @@
         Reshuffle…</button>
       <span id="split-status" style="color:var(--dim);font-size:13px"></span>
     </div>
+    </details>
+    <details class="fold inner" id="groups-fold">
+      <summary title="Photos grouped by what they look like (DINOv2 embeddings, k-means). Look at a group's samples and skip the whole group when it is unfit for training — blank frames, a misfiled camera, duplicates of an empty scene. Skipped photos stay in the project and can be restored.">
+        Groups<span class="sub" id="groups-note">· find and skip unfit photos in bulk</span></summary>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <label class="split-label" title="How many groups to form. Empty = automatic (about √(photos ÷ 2), at most 24).">groups
+          <span class="stepper narrow"><input type="number" id="groups-k" min="1" max="64" step="1" placeholder="auto">
+            <span class="step-btns"><button data-step="1" data-for="groups-k" tabindex="-1" title="+1"></button>
+              <button data-step="-1" data-for="groups-k" tabindex="-1" title="−1"></button></span></span></label>
+        <button id="groups-btn" title="Embed every photo that is not embedded yet, then group them"
+                style="background:var(--bg);color:var(--accent);border:1px solid var(--accent);border-radius:6px;padding:6px 14px;cursor:pointer">
+          Analyze</button>
+        <span id="groups-status" style="color:var(--dim);font-size:13px"></span>
+      </div>
+      <div id="groups-grid" class="groups-grid"></div>
     </details>
   </section>
 
@@ -620,6 +646,108 @@ async function applySplits(reshuffle) {
   }
 }
 $("split-btn").addEventListener("click", () => applySplits(false));
+
+// ------------------------------------------------------------ photo groups
+// Groups are k-means over the loop's DINOv2 embeddings (E10-T20). The
+// embedding store is brought up to date first (a job with progress), then
+// one GET returns the groups with a few samples each; skipping a group is
+// the annotator's skip (images.skip), so the loop, stats and snapshots all
+// see it, and Restore undoes it.
+let groups = [];
+async function analyzeGroups() {
+  const status = $("groups-status");
+  const button = $("groups-btn");
+  button.disabled = true;
+  try {
+    const emb = await api("/loop/embeddings");
+    if (emb.missing || emb.stale) {
+      status.textContent = `embedding ${emb.missing + emb.stale} photos…`;
+      const job = await api("/loop/embeddings", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      await pollJob(job.job_id, (ev) => {
+        if (ev.type === "progress" && ev.total) status.textContent = `embedding ${ev.current}/${ev.total}…`;
+      });
+    }
+    status.textContent = "grouping…";
+    const k = Number($("groups-k").value);
+    const q = new URLSearchParams({ samples: "6" });
+    if (k) q.set("k", String(k));
+    const result = await api("/images/clusters?" + q);
+    groups = result.clusters;
+    status.textContent = `${result.k} groups · ${result.embedded} photos` +
+      (result.embedded < result.total_images ? ` (${result.total_images - result.embedded} not embedded)` : "");
+    renderGroups();
+  } catch (e) {
+    status.textContent = "failed: " + e.message;
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderGroups() {
+  $("groups-grid").innerHTML = groups.map((g, i) => {
+    const allSkipped = g.skipped === g.size;
+    const strip = g.samples.map((s) => `
+      <a href="/annotate?canvas=1#${s.id}" title="${s.file_name} — open in the annotator">
+        <img loading="lazy" src="/api/v1/images/${s.id}/file" alt=""></a>`).join("");
+    const facts = [`<b>${g.size}</b> photos`, `alike ${g.cohesion.toFixed(2)}`];
+    if (g.labeled) facts.push(`<b>${g.labeled}</b> labeled`);
+    if (g.skipped) facts.push(`<b>${g.skipped}</b> skipped`);
+    return `
+    <div class="group ${allSkipped ? "skipped" : ""}" data-i="${i}">
+      <div class="strip">${strip}</div>
+      <div class="row">
+        <span>${facts.join(" · ")}</span>
+        <span style="flex:1"></span>
+        ${g.skipped ? `<button class="restore" title="Bring the skipped photos of this group back">Restore</button>` : ""}
+        ${allSkipped ? "" : `<button class="skip" title="Skip every photo of this group — they leave the pool, statistics, snapshots and training">Skip group</button>`}
+      </div>
+    </div>`;
+  }).join("");
+  $("groups-grid").querySelectorAll(".group").forEach((el) => {
+    const g = groups[Number(el.dataset.i)];
+    const skip = el.querySelector(".skip"), restore = el.querySelector(".restore");
+    if (skip) skip.onclick = () => skipGroup(g, el);
+    if (restore) restore.onclick = () => restoreGroup(g, el);
+  });
+}
+
+async function skipGroup(g, el) {
+  if (g.labeled && !confirm(
+    `Skip this group of ${g.size} photos?\n\n${g.labeled} of them carry labels; skipped photos and their labels leave training.`
+  )) return;
+  el.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  try {
+    await api("/images/skip", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_ids: g.image_ids, note: "skipped as a group (Dataset page)" }),
+    });
+    g.skipped = g.size;
+    renderGroups();
+    await refreshStats();
+  } catch (e) {
+    $("groups-status").textContent = "skip failed: " + e.message;
+    renderGroups();
+  }
+}
+
+async function restoreGroup(g, el) {
+  el.querySelectorAll("button").forEach((b) => { b.disabled = true; });
+  try {
+    await api("/images/restore", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_ids: g.image_ids }),
+    });
+    g.skipped = 0;
+    renderGroups();
+    await refreshStats();
+  } catch (e) {
+    $("groups-status").textContent = "restore failed: " + e.message;
+    renderGroups();
+  }
+}
+$("groups-btn").addEventListener("click", analyzeGroups);
 $("reshuffle-btn").addEventListener("click", () => applySplits(true));
 
 api("/models").then((models) => {

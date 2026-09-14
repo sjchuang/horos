@@ -617,6 +617,7 @@ Decisions confirmed on 2026-09-13:
 | E10-T16 | Skip unfit photos, and similar ones with them: `ImageRecord.excluded`, skipped images leave the pool, statistics, snapshots and training; similar photos found by embedding cosine similarity with a threshold the user adjusts; undo via restore | `tests/api/test_loop_skip.py` |
 | E10-T18 | The loop picks the model itself: RF-DETR-Seg Nano when most confirmed labels are polygons, RF-DETR Nano otherwise; reason recorded on the round | `tests/api/test_loop_train.py` |
 | E10-T19 | Loop settings chosen once and kept in `loop.json`: training model (auto / any trainable key), suggestions on/off, suggestion shapes auto / box / polygon (SAM refines boxes); Select step controls, API GET/PUT, CLI flags | `tests/api/test_loop_settings.py` |
+| E10-T20 | Photo groups on the Dataset page: spherical k-means (`core/clustering.py`) over the DINOv2 embeddings, `k` chosen or automatic; each group shows its closest samples, label and skip counts; "Skip group" / "Restore" go through `images.skip` / `images.restore` so a whole group of unfit photos leaves the pool in one action | `tests/unit/test_clustering.py`, `tests/api/test_image_clusters.py`, interface scenario (`tests/ui_scenarios/E1-T10.md`) |
 | E10-T17 | The loop lives in the annotate page (`/annotate` is the four-step shell, the canvas is its Label step); one nav entry, no separate loop page; wording trimmed to short, plain labels with an Apple-like calm look | Interface scenario (`tests/ui_scenarios/E10-T14.md`) |
 
 #### How it is accepted

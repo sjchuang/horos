@@ -202,3 +202,12 @@ def test_canvas_class_menu_offers_to_keep_the_class(client):
     html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'id="label-keep"' in html and "horos_keep_class" in html
     assert "_askLabel(typed)" in html
+
+
+def test_dataset_page_groups_photos_and_skips_a_group(client):
+    """E10-T20: the Groups fold analyses (embed job, then /images/clusters) and
+    skips or restores a whole group through the annotator's skip endpoints."""
+    html = client.get("/").get_data(as_text=True)
+    assert 'id="groups-fold"' in html and 'id="groups-k"' in html and 'id="groups-btn"' in html
+    assert "/images/clusters?" in html and "/loop/embeddings" in html
+    assert '"/images/skip"' in html and '"/images/restore"' in html

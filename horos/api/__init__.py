@@ -25,6 +25,7 @@ from horos.api.autolabel import (
     review_pending,
     start_autolabel,
 )
+from horos.api.clusters import ClusterResult, ImageCluster, cluster_images
 from horos.api.dataset import (
     ClearDatasetSummary,
     DeleteImagesSummary,
@@ -221,6 +222,9 @@ __all__ = [
     "EmbeddingStatus",
     "embedding_status",
     "start_embedding_job",
+    "ClusterResult",
+    "ImageCluster",
+    "cluster_images",
     "ClearDatasetSummary",
     "clear_dataset",
     "PrefetchResult",

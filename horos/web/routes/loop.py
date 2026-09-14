@@ -152,6 +152,20 @@ def _ids(body: dict) -> list[int]:
 images_bp = Blueprint("loop_images", __name__, url_prefix="/api/v1/images")
 
 
+@images_bp.get("/clusters")
+def image_clusters():
+    k = request.args.get("k", type=int)
+    if request.args.get("k") and k is None:
+        raise ProjectError("'k' must be an integer")
+    result = api.cluster_images(
+        _project(), k=k,
+        model=_model(request.args, DEFAULT_EMBEDDING_MODEL),
+        samples=request.args.get("samples", default=6, type=int),
+        seed=request.args.get("seed", default=0, type=int),
+    )
+    return jsonify(result.model_dump())
+
+
 @images_bp.get("/<int:image_id>/similar")
 def similar_images(image_id: int):
     threshold = request.args.get("threshold", default=0.8, type=float)
