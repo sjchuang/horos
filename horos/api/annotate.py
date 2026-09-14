@@ -115,9 +115,10 @@ def _normalize(project: Project, raw: list[Annotation | dict], image_id: int) ->
                     f"got {len(poly)} values"
                 )
         if data.get("bbox") is None and segmentation:
-            xs = segmentation[0][0::2]
-            ys = segmentation[0][1::2]
-            data["bbox"] = (min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+            # an object in several pieces has several rings: the box spans them all
+            from horos.core.validate import polygons_extent
+
+            data["bbox"] = polygons_extent(segmentation)
         ann = clamp_to_image(
             Annotation.model_validate(data), record.width, record.height
         )

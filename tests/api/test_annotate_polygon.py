@@ -94,3 +94,20 @@ def test_odd_coordinate_count_is_rejected(project):
             [{"category_id": cat.id, "segmentation": [[1.0, 1.0, 2.0, 2.0, 3.0]]}],
             expected_version=project.load_annotations(record.id).version,
         )
+
+
+def test_multi_part_object_is_one_annotation_whose_bbox_spans_every_ring(project):
+    """An occluded object labeled in pieces (+ in the Draw tool) is ONE
+    annotation with several polygons; the derived box covers all of them and
+    the pieces come back unchanged."""
+    record = _image(project)
+    rings = [[10.0, 10.0, 20.0, 10.0, 20.0, 20.0, 10.0, 20.0],
+             [40.0, 30.0, 50.0, 30.0, 50.0, 44.0, 40.0, 44.0]]
+    saved = save_annotations(
+        project, record.id,
+        [{"category_id": project.categories[0].id, "segmentation": rings}],
+        expected_version=project.load_annotations(record.id).version,
+    )
+    ann = saved.annotations[0]
+    assert ann.segmentation == rings
+    assert ann.bbox == (10.0, 10.0, 40.0, 34.0)

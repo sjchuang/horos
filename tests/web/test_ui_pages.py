@@ -150,6 +150,12 @@ def test_annotator_deletes_classes_behind_a_blocking_progress_overlay(client):
     assert "if (this._busyJob) { e.preventDefault(); return; }" in html  # shortcuts off meanwhile
 
 
+def test_annotator_builds_multi_part_objects_with_plus(client):
+    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    assert 'id="sam-part"' in html and 'case "Equal": case "NumpadAdd":' in html
+    assert "parts: []" in html and "...(s.parts || []).map((r) => r.flat())" in html
+
+
 def test_annotator_has_the_sam_tool(client):
     html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html

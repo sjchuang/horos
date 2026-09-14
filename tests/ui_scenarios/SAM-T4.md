@@ -76,3 +76,11 @@ horos ui <project>
 - box → polygon 只用 box 當 prompt,沒有正負點;結果不滿意就 Ctrl+Z 後改用 SAM 工具點選修正
 - 候選 polygon 由 mask 邊界簡化而來,細碎孔洞不保留
 - 觸控裝置沒有右鍵與 Shift,負點需以滑鼠操作
+
+### F. 一個物件分成好幾塊（2026-09-14）
+
+20. 物件被遮擋成幾段：點第一段得到 mask 後按 <b>+</b>（或「+ Part」）：mask 保留、prompt 清空，狀態列「1 part kept — click the object's next piece; Enter / Space finishes it」
+21. 點第二段、第三段，每段按 +；Accept 按鈕顯示「Accept · 3 parts (Enter)」
+22. Enter 或 Space：寫入「一個」標註，segmentation 有三個多邊形，bbox 涵蓋全部；Shapes 清單顯示「(polygon ×3)」
+23. Esc 第一下清目前 prompt、第二下丟掉已保留的 parts、第三下才丟隊列；Output 為 Box 時 + 無效（提示需要 Polygon）
+24. Edit 工具：多段物件整體可拖曳、可選取（點任一段），控制點只在第一段可調

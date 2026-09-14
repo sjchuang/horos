@@ -318,6 +318,7 @@
           <div style="font-size:11px;color:var(--dim);line-height:1.5">
             Click the object, right-click what is not. <b>Enter</b> or <b>Space</b>
             accept as <span id="sam-class-echo" style="color:var(--text)">object</span>,
+            <b>+</b> keep this mask as a part and click the next piece of the same object,
             <b>Esc</b> clear.</div>
           <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
             <span>Output</span>
@@ -341,6 +342,8 @@
           </div>
           <div style="display:flex;gap:6px;margin-top:8px">
             <button class="btn primary" id="sam-accept" style="flex:1" disabled>Accept</button>
+            <button class="btn" id="sam-part" disabled
+                    title="Keep this mask as one part of the object (an occluded object in several pieces) and click its next part; Enter / Space finishes the whole object as one label (+)">+ Part</button>
             <button class="btn" id="sam-clear" disabled
                     title="Drop the prompts of this object; press again to drop queued objects too (Esc)">Clear (Esc)</button>
           </div>
@@ -557,6 +560,7 @@
       <tr><td>Edit: click an edge</td><td>add a control point there</td></tr>
       <tr><td>Edit: drop a point on another</td><td>merge them (points in between go too)</td></tr>
       <tr><td>Enter / Space</td><td>Draw ✦: accept the mask (asks for the class when it is blank)</td></tr>
+      <tr><td>+</td><td>Draw ✦: keep this mask as one part of the object, click its next piece; Enter finishes the object</td></tr>
       <tr><td>P</td><td>selected box → polygon (SAM uses the box as its prompt)</td></tr>
       <tr><td>A / D</td><td>previous / next image</td></tr>
       <tr><td>S</td><td>skip this photo (and look-alikes)</td></tr>
@@ -710,6 +714,7 @@ const Page = {
     $("autolabel-cancel").onclick = () => this.cancelAutolabel();
     $("assist-run").onclick = () => this.runAssist();
     $("sam-accept").onclick = () => this._samAccept();
+    $("sam-part").onclick = () => this._samAddPart();
     $("sam-clear").onclick = () => this._samClear();
     $("sam-convert-all").onclick = () => this.boxToPolygon(
       this.editorShapes.map((s, i) => (s.shape_type === "rectangle" ? i : -1)).filter((i) => i >= 0));
@@ -1050,10 +1055,10 @@ const Page = {
     const meta = { id: a.id, status: a.status || "confirmed",
                    source: a.source || "manual", score: a.score ?? null };
     if (a.segmentation && a.segmentation.length) {
-      const pts = [];
-      for (let k = 0; k < a.segmentation[0].length; k += 2)
-        pts.push([a.segmentation[0][k], a.segmentation[0][k + 1]]);
-      return { label, shape_type: "polygon", points: pts, ...meta };
+      const ring = (flat) => { const pts = []; for (let k = 0; k < flat.length; k += 2) pts.push([flat[k], flat[k + 1]]); return pts; };
+      const shape = { label, shape_type: "polygon", points: ring(a.segmentation[0]), ...meta };
+      if (a.segmentation.length > 1) shape.parts = a.segmentation.slice(1).map(ring);  // one object in several pieces
+      return shape;
     }
     const [x, y, w, h] = a.bbox;
     return { label, shape_type: "rectangle",
@@ -1073,7 +1078,8 @@ const Page = {
           bbox: [Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1)],
           segmentation: [] });
       } else {
-        anns.push({ ...meta, category_id: cat.id, segmentation: [s.points.flat()] });
+        anns.push({ ...meta, category_id: cat.id,
+                    segmentation: [s.points.flat(), ...(s.parts || []).map((r) => r.flat())] });
       }
     }
     return anns;
@@ -1338,6 +1344,7 @@ const Page = {
             s.status = "confirmed"; s.source = "manual"; s.score = null; delete s.id;
             const off = 20 / (this.baseScale * this.zoom);
             s.points = s.points.map((p) => [p[0] + off, p[1] + off]);
+            if (s.parts) s.parts = s.parts.map((r) => r.map((p) => [p[0] + off, p[1] + off]));
             this._clampShapePoints(s);
             this.editorShapes.push(s);
             this._triggerChange();
@@ -1358,9 +1365,13 @@ const Page = {
           break;
         case "Enter": case "NumpadEnter": case "Space":
           // Space and Enter both confirm the mask — one key under the thumb while clicking
-          if (this.activeTool === "sam" && (this.sam.candidate || this.sam.queued.length)) {
+          if (this.activeTool === "sam" && (this.sam.candidate || this.sam.queued.length || this.sam.parts.length)) {
             e.preventDefault(); this._samAccept();
           }
+          break;
+        case "Equal": case "NumpadAdd":
+          // "+": this mask is one part of the object; the next click starts its next part
+          if (this.activeTool === "sam" && this.sam.candidate) { e.preventDefault(); this._samAddPart(); }
           break;
         case "KeyP": {
           // SAM-T6: the selected box becomes the prompt for its own polygon
@@ -1493,6 +1504,7 @@ const Page = {
   },
   _clampShapePoints(shape) {
     shape.points = shape.points.map((p) => this._clampPoint(p));
+    if (shape.parts) shape.parts = shape.parts.map((r) => r.map((p) => this._clampPoint(p)));
     if (shape.shape_type === "rectangle" && shape.points.length >= 2) {
       const [x1, y1] = shape.points[0], [x2, y2] = shape.points[1];
       shape.points = [[Math.min(x1, x2), Math.min(y1, y2)],
@@ -1500,7 +1512,8 @@ const Page = {
     }
   },
   _clampShapeDelta(shape, dx, dy) {
-    const xs = shape.points.map((p) => p[0]), ys = shape.points.map((p) => p[1]);
+    const all = [...shape.points, ...(shape.parts || []).flat()];
+    const xs = all.map((p) => p[0]), ys = all.map((p) => p[1]);
     return [
       this._clamp(dx, -Math.min(...xs), this.editorImage.naturalWidth - Math.max(...xs)),
       this._clamp(dy, -Math.min(...ys), this.editorImage.naturalHeight - Math.max(...ys)),
@@ -1580,13 +1593,16 @@ const Page = {
         if (x >= Math.min(x1, x2) && x <= Math.max(x1, x2) &&
             y >= Math.min(y1, y2) && y <= Math.max(y1, y2)) return i;
       } else if (s.shape_type === "polygon" && s.points.length > 2) {
-        let inside = false;
-        for (let j = 0, k = s.points.length - 1; j < s.points.length; k = j++) {
-          const [xj, yj] = s.points[j], [xk, yk] = s.points[k];
-          if ((yj > y) !== (yk > y) && x < ((xk - xj) * (y - yj)) / (yk - yj) + xj)
-            inside = !inside;
-        }
-        if (inside) return i;
+        const inRing = (ring) => {
+          let inside = false;
+          for (let j = 0, k = ring.length - 1; j < ring.length; k = j++) {
+            const [xj, yj] = ring[j], [xk, yk] = ring[k];
+            if ((yj > y) !== (yk > y) && x < ((xk - xj) * (y - yj)) / (yk - yj) + xj)
+              inside = !inside;
+          }
+          return inside;
+        };
+        if ([s.points, ...(s.parts || [])].some(inRing)) return i;
       }
     }
     return -1;
@@ -1673,10 +1689,13 @@ const Page = {
         ctx.beginPath(); ctx.rect(x1, y1, x2 - x1, y2 - y1);
         ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
       } else if (shape.shape_type === "polygon" && shape.points.length) {
-        ctx.beginPath();
-        shape.points.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-        ctx.closePath();
-        ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
+        // every ring of a multi-part object is drawn the same way; only ring 0 has handles
+        for (const ring of [shape.points, ...(shape.parts || [])]) {
+          ctx.beginPath();
+          ring.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+          ctx.closePath();
+          ctx.fillStyle = color; ctx.globalAlpha = fillAlpha; ctx.fill(); stroke();
+        }
       }
       ctx.globalAlpha = ghosted ? 0.35 : 1;
       ctx.font = `600 ${14 * inv}px system-ui, sans-serif`;
@@ -1687,9 +1706,10 @@ const Page = {
       // corner can be far from a polygon's outline); at the top edge of the
       // view (or the image) it moves inside the shape, and it is kept inside
       // the visible canvas sideways — a class name must never be cut off
-      const apex = shape.points.reduce((best, p) =>
-        (p[1] < best[1] || (p[1] === best[1] && p[0] < best[0])) ? p : best, shape.points[0]);
-      const top = apex[1], left = Math.max(apex[0] - tw / 2, Math.min(...shape.points.map((p) => p[0])));
+      const allPts = [...shape.points, ...(shape.parts || []).flat()];
+      const apex = allPts.reduce((best, p) =>
+        (p[1] < best[1] || (p[1] === best[1] && p[0] < best[0])) ? p : best, allPts[0]);
+      const top = apex[1], left = Math.max(apex[0] - tw / 2, Math.min(...allPts.map((p) => p[0])));
       const view = {  // the canvas rectangle in image coordinates
         x0: -this.panX * inv, y0: -this.panY * inv,
         x1: (canvas.width - this.panX) * inv, y1: (canvas.height - this.panY) * inv,
@@ -1739,7 +1759,7 @@ const Page = {
         <span><span class="dot" style="background:${this._getColor(s.label)}"></span>
           ${s.label} <small>${s.status === "pending"
             ? `pending ${s.score != null ? Number(s.score).toFixed(2) : ""}`
-            : `(${s.shape_type})`}</small></span>
+            : `(${s.shape_type}${s.parts && s.parts.length ? ` ×${s.parts.length + 1}` : ""})`}</small></span>
         <span style="display:flex;gap:2px">
           ${s.shape_type === "rectangle"
             ? `<button class="del" data-poly="${i}" title="Box → polygon: SAM uses this box as its prompt (P)">⬠</button>`
@@ -1865,6 +1885,7 @@ const Page = {
           const [dx, dy] = this._clampShapeDelta(
             shape, x - this.dragStart[0], y - this.dragStart[1]);
           shape.points = shape.points.map((p) => [p[0] + dx, p[1] + dy]);
+          if (shape.parts) shape.parts = shape.parts.map((r) => r.map((p) => [p[0] + dx, p[1] + dy]));
           this.dragStart = [this.dragStart[0] + dx, this.dragStart[1] + dy];
           this._drawCanvas(); return;
         }
@@ -1965,7 +1986,8 @@ const Page = {
   // Prompt state lives here; the server answers with a CANDIDATE shape that
   // is only written when the user accepts it (through the ordinary save).
   sam: { points: [], labels: [], box: null, candidate: null, down: null, dragBox: null, seq: 0,
-         queued: [] },  // queued: masks kept when a new box is dragged over a live one, written together on Enter / Space (SAM-T5)
+         queued: [],  // queued: masks kept when a new box is dragged over a live one, written together on Enter / Space (SAM-T5)
+         parts: [] },  // parts: masks of the object being built (+): one annotation with several polygons
 
   _samModel() { return $("sam-model").value || "sam2.1-tiny"; },
   _samMaxPoints() {
@@ -1983,16 +2005,19 @@ const Page = {
   _samSyncButtons() {
     const has = this.sam.points.length || this.sam.box;
     const live = !!(this.sam.candidate && this.sam.candidate.points.length);
-    const total = this.sam.queued.length + (live ? 1 : 0);
+    const parts = this.sam.parts.length;
+    const total = this.sam.queued.length + (live || parts ? 1 : 0);
     $("sam-accept").disabled = !total;
-    $("sam-accept").textContent = total > 1 ? `Accept ${total} (Enter)` : "Accept (Enter)";
-    $("sam-clear").disabled = !(has || this.sam.queued.length);
+    $("sam-accept").textContent = parts ? `Accept · ${parts + (live ? 1 : 0)} parts (Enter)`
+      : total > 1 ? `Accept ${total} (Enter)` : "Accept (Enter)";
+    $("sam-part").disabled = !live;
+    $("sam-clear").disabled = !(has || this.sam.queued.length || parts);
     $("sam-class-echo").textContent = $("class-input").value.trim() || "the class you will be asked for";
   },
   _samReset(redraw, dropQueue = false) {
     this.sam.points = []; this.sam.labels = []; this.sam.box = null;
     this.sam.candidate = null; this.sam.down = null; this.sam.dragBox = null;
-    if (dropQueue) this.sam.queued = [];
+    if (dropQueue) { this.sam.queued = []; this.sam.parts = []; }
     this.sam.seq++;
     if ($("sam-panel")) { this._samSyncButtons(); if (this.activeTool !== "sam") this._samSetStatus(""); }
     if (redraw) this._drawCanvas();
@@ -2000,6 +2025,13 @@ const Page = {
   // Esc: first the prompts of the object being worked on, then the queue
   _samClear() {
     if (this.sam.points.length || this.sam.box) { this._samReset(true); this._samQueueStatus(); return; }
+    if (this.sam.parts.length) {
+      const n = this.sam.parts.length;
+      this.sam.parts = [];
+      this._samSyncButtons(); this._drawCanvas(); this._samQueueStatus();
+      toast(`Dropped ${n} part${n > 1 ? "s" : ""}`, "", 900);
+      return;
+    }
     if (this.sam.queued.length) {
       const n = this.sam.queued.length;
       this._samReset(true, true);
@@ -2007,8 +2039,19 @@ const Page = {
     }
   },
   _samQueueStatus() {
-    const n = this.sam.queued.length;
-    if (n) this._samSetStatus(`${n} object${n > 1 ? "s" : ""} queued — prompt the next one, Enter / Space accepts all`);
+    const n = this.sam.queued.length, k = this.sam.parts.length;
+    if (k) this._samSetStatus(`${k} part${k > 1 ? "s" : ""} kept — click the object's next piece; Enter / Space finishes it`);
+    else if (n) this._samSetStatus(`${n} object${n > 1 ? "s" : ""} queued — prompt the next one, Enter / Space accepts all`);
+    else this._samSetStatus("");
+  },
+  // "+": the live mask is one part of the object being built; prompts clear for the next part
+  _samAddPart() {
+    const cand = this.sam.candidate;
+    if (!cand || !cand.points.length) return;
+    if (cand.shape_type !== "polygon") { toast("Parts need Polygon output — a box has no pieces", "warn", 2500); return; }
+    this.sam.parts.push(cand.points.map((p) => [p[0], p[1]]));
+    this._samReset(true);
+    this._samQueueStatus();
   },
   // a new box dragged while a mask is live: keep that mask with its class, prompt the next object
   async _samQueue(redraw = true) {
@@ -2018,7 +2061,9 @@ const Page = {
     const cls = await this._labelFor();
     if (!cls || seq !== this.sam.seq || this.sam.candidate !== cand) return;  // changed meanwhile
     this.sam.queued.push({ label: cls, shape_type: cand.shape_type,
-                           points: cand.points.map((p) => [p[0], p[1]]) });
+                           points: cand.points.map((p) => [p[0], p[1]]),
+                           parts: this.sam.parts.map((r) => r.map((p) => [p[0], p[1]])) });
+    this.sam.parts = [];
     this._samReset(redraw);
     this._samQueueStatus();
   },
@@ -2066,17 +2111,23 @@ const Page = {
   async _samAccept() {
     const cand = this.sam.candidate;
     const items = [...this.sam.queued];
-    if (cand && cand.points.length) {
+    const live = cand && cand.points.length ? cand : null;
+    if (live || this.sam.parts.length) {
       const seq = this.sam.seq;
       const label = await this._labelFor();
       if (!label || seq !== this.sam.seq) return;  // discarded, or the prompt changed
-      items.push({ label, shape_type: cand.shape_type, points: cand.points });
+      // the parts kept with "+" and the live mask are ONE object: one label,
+      // several polygons (ring 0 is the first part)
+      const rings = [...this.sam.parts, ...(live && live.shape_type === "polygon" ? [live.points] : [])];
+      if (rings.length) items.push({ label, shape_type: "polygon", points: rings[0], parts: rings.slice(1) });
+      else items.push({ label, shape_type: live.shape_type, points: live.points });
     }
     if (!items.length) return;
     this._pushHistory();  // one undo step for the whole batch
     for (const item of items) {
       const shape = { label: item.label, shape_type: item.shape_type,
                       points: item.points.map((p) => this._clampPoint([p[0], p[1]])) };
+      if (item.parts && item.parts.length) shape.parts = item.parts.map((r) => r.map((p) => this._clampPoint([p[0], p[1]])));
       this._clampShapePoints(shape);
       this.editorShapes.push(shape);
       this.sessionNames.add(item.label);
@@ -2084,7 +2135,7 @@ const Page = {
     this._triggerChange();
     this.renderChips();
     toast(items.length === 1
-      ? `Added ${items[0].label} (${items[0].shape_type})`
+      ? `Added ${items[0].label} (${items[0].shape_type}${items[0].parts && items[0].parts.length ? ` · ${items[0].parts.length + 1} parts` : ""})`
       : `Added ${items.length} objects`, "ok", 900);
     this._samReset(true, true);  // stay in the tool: the next object is one click away
   },

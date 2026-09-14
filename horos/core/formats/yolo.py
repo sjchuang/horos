@@ -233,7 +233,11 @@ def write_yolo(
             for ann in dataset.annotations_for(record.id):
                 cls = class_index[ann.category_id]
                 if ann.segmentation:
-                    poly = ann.segmentation[0]
+                    # YOLO-seg takes one polygon per object: for a multi-part
+                    # object the largest ring stands in (the box is unaffected)
+                    from horos.core.validate import polygon_area
+
+                    poly = max(ann.segmentation, key=polygon_area)
                     coords: list[float] = []
                     for x, y in zip(poly[0::2], poly[1::2], strict=True):
                         coords.extend((x / record.width, y / record.height))
