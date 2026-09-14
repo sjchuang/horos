@@ -1683,11 +1683,13 @@ const Page = {
       const text = isPending && shape.score != null
         ? `${shape.label} ${Number(shape.score).toFixed(2)}` : shape.label;
       const tw = ctx.measureText(text).width;
-      // the tag sits above the shape's top-left corner; at the top edge of the
+      // the tag sits right above the shape's topmost vertex (a bounding-box
+      // corner can be far from a polygon's outline); at the top edge of the
       // view (or the image) it moves inside the shape, and it is kept inside
       // the visible canvas sideways — a class name must never be cut off
-      const xs = shape.points.map((p) => p[0]), ys = shape.points.map((p) => p[1]);
-      const top = Math.min(...ys), left = Math.min(...xs);
+      const apex = shape.points.reduce((best, p) =>
+        (p[1] < best[1] || (p[1] === best[1] && p[0] < best[0])) ? p : best, shape.points[0]);
+      const top = apex[1], left = Math.max(apex[0] - tw / 2, Math.min(...shape.points.map((p) => p[0])));
       const view = {  // the canvas rectangle in image coordinates
         x0: -this.panX * inv, y0: -this.panY * inv,
         x1: (canvas.width - this.panX) * inv, y1: (canvas.height - this.panY) * inv,
