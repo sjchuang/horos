@@ -49,6 +49,7 @@ def test_defaults_persist_and_validate(tmp_path):
     s = get_loop_settings(project)
     assert (s.model, s.preannotate, s.shapes, s.refiner) == (None, True, "auto", "sam2.1-tiny")
     assert s.scan_factor == 100  # the scorer looks at 100× the round size by default
+    assert s.training == "continue"  # rounds warm-start from the previous run by default
     assert loop_status(project).settings == s
     assert update_loop_settings(project, scan_factor=0).scan_factor is None  # 0 = no cap
     assert update_loop_settings(project, scan_factor=50).scan_factor == 50

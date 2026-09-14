@@ -172,7 +172,12 @@ class TrainSpec(BaseModel):
     resolution: int | None = None
     device: str | None = None  # resolved via backends/device.py when None
     seed: int | None = None
+    #: full-state resume: weights + optimizer + schedule, same class set
     resume_from: Path | None = None
+    #: warm start: weights of an earlier run's best checkpoint, fresh optimizer;
+    #: the class head is resized to this run's class set, so classes may be
+    #: added or dropped between runs (E5-S6, E10-T8 continuous training)
+    init_from: Path | None = None
     checkpoint_criterion: CheckpointCriterion = "map"
     extra: dict[str, Any] = Field(default_factory=dict)
 

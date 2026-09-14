@@ -231,6 +231,14 @@
         <span id="model-license" class="license hidden"></span>
       </div>
       <div id="model-hint" style="color:var(--dim);font-size:12px;margin-top:4px"></div>
+      <div class="row" id="init-row" style="gap:10px;margin-top:8px">
+        <span style="color:var(--dim);font-size:12px;min-width:64px"
+              title="Fresh: the published weights. Continue: an earlier run's best weights — optimizer starts fresh, the class head is resized, so classes may differ; about half the epochs are derived.">Start from</span>
+        <select id="init-select" style="flex:1;min-width:0"
+                title="continue from an earlier run of this model (weights kept, classes may change) or start fresh">
+          <option value="">published weights (fresh)</option>
+        </select>
+      </div>
     </div>
     <div style="margin-bottom:12px">
       <div style="color:var(--dim);font-size:12px;margin-bottom:4px">Classes</div>
@@ -573,6 +581,7 @@ async function derive() {
     body.categories = picked;
     body.include_background = includeBackground();
   }
+  if (!resumeState && $("init-select").value) body.init_from = $("init-select").value;
   try {
     currentPlan = await post("/train/derive", body);
     renderPlan(currentPlan);
@@ -870,6 +879,24 @@ function renderRun(run) {
   $("run-notes").innerHTML = (run.hparam_notes || [])
     .concat(warnings)
     .map((n) => `<p class="note">⚠ ${n}</p>`).join("");
+}
+
+// completed runs of the selected model that a new run can continue from (E5-S6)
+async function refreshInitOptions() {
+  const select = $("init-select");
+  const model = $("model-select").value;
+  const keep = select.value;
+  let runs = [];
+  try { runs = (await api("/train/runs")).filter((r) => r.state === "completed" && r.checkpoint && r.model === model); }
+  catch (e) { runs = []; }
+  runs.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  select.innerHTML = '<option value="">published weights (fresh)</option>' + runs.map((r) =>
+    `<option value="${r.checkpoint}">continue from ${r.run_id}` +
+    (r.dataset_classes && r.dataset_classes.length ? ` · ${r.dataset_classes.length} class${r.dataset_classes.length === 1 ? "" : "es"}` : "") +
+    `</option>`).join("");
+  if ([...select.options].some((o) => o.value === keep)) select.value = keep;
+  $("init-row").style.display = runs.length ? "" : "none";
+  select.disabled = !!resumeState;
 }
 
 // -------------------------------------------------------------------- export (E8)
@@ -1309,6 +1336,7 @@ $("start-btn").onclick = async () => {
     body.include_background = includeBackground();
   }
   if (resumeState) body.resume_from = resumeState.checkpoint;
+  else if ($("init-select").value) body.init_from = $("init-select").value;
   $("start-btn").disabled = true;
   setStatus("Starting…", "");
   try {
@@ -1431,8 +1459,10 @@ async function init() {
     $("model-license").classList.remove("hidden");
     $("model-hint").textContent = m.latency_hint;
   };
-  $("model-select").onchange = () => { updateModelMeta(); derive(); };
+  $("model-select").onchange = () => { updateModelMeta(); refreshInitOptions(); derive(); };
   updateModelMeta();
+  refreshInitOptions();
+  $("init-select").onchange = () => derive();
   // the background toggle changes the training set: re-count and re-derive
   $("include-bg").onchange = () => scheduleDerive();
 

@@ -183,6 +183,53 @@ def test_held_out_sets_grow_with_the_labels_and_never_lose_a_photo(tmp_path):
     assert get_round(project, second.number).state == "reviewing"
 
 
+def test_rounds_continue_from_the_previous_run_of_the_same_model(tmp_path):
+    """E10-T8 continuous training: the first round starts fresh (nothing to
+    continue from); the next warm-starts from round 1's best checkpoint —
+    recorded on the round and passed to the run as init_from — and derives
+    fewer epochs. "fresh" in the settings (or warm_start=False) opts out."""
+    from horos.api.loop import update_loop_settings
+
+    get_run = lambda project, run_id: training_status(project, run_id).run  # noqa: E731
+
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path)
+    first = _open_round(project, count=2)
+    first = train_round(project, first.number, entrypoint_override=FAKE)
+    assert first.training["init_from"] is None and "fresh start" in first.training["init_reason"]
+    run1 = _wait(project, first.train_run_id)
+    assert run1.state == "completed" and run1.checkpoint
+    fresh_epochs = next(h.value for h in run1.hparams if h.name == "epochs")
+    close_round(project, first.number)
+
+    second = _open_round(project, count=2)
+    second = train_round(project, second.number, entrypoint_override=FAKE)
+    assert second.training["init_from"] == first.train_run_id
+    assert "continues from run" in second.training["init_reason"]
+    run2 = get_run(project, second.train_run_id)
+    assert run2.config["init_from"] == run1.checkpoint
+    warm_epochs = next(h for h in run2.hparams if h.name == "epochs")
+    assert warm_epochs.value == max(5, round(fresh_epochs * 0.5))
+    assert "continuing from an earlier run" in warm_epochs.reason
+    _wait(project, second.train_run_id)
+    close_round(project, second.number)
+
+    # opting out: the settings say fresh, or the call says so
+    update_loop_settings(project, training="fresh")
+    third = _open_round(project, count=2)
+    third = train_round(project, third.number, entrypoint_override=FAKE, epochs=1)
+    assert third.training["init_from"] is None
+    assert third.training["init_reason"] == "fresh start by choice"
+    assert get_run(project, third.train_run_id).config["init_from"] is None
+    _wait(project, third.train_run_id)
+    close_round(project, third.number)
+    fourth = _open_round(project, count=2)
+    fourth = train_round(project, fourth.number, entrypoint_override=FAKE, epochs=1,
+                         warm_start=True)
+    assert fourth.training["init_from"] == third.train_run_id  # newest completed run of the model
+    _wait(project, fourth.train_run_id)
+
+
 def test_failed_training_returns_the_round_to_labeling(tmp_path):
     ensure_worker_can_import_helpers()
     project = _project(tmp_path)

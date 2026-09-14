@@ -12,6 +12,26 @@ from horos.core.stats import ClassStats, DatasetStats, RelativeAreaStats
 NANO = get_model_info("rfdetr-nano")
 
 
+def test_warm_start_halves_the_epochs_and_says_why():
+    from horos.api.hparams import WARM_START_MIN_EPOCHS
+
+    def _mem():
+        return MemoryInfo(kind="cuda", total_gb=24.0, available_gb=22.0, source="test")
+
+    fresh = derive_plan(_stats(num_images=50), model="rfdetr-nano",
+                        model_info=get_model_info("rfdetr-nano"), memory=_mem())
+    warm = derive_plan(_stats(num_images=50), model="rfdetr-nano",
+                       model_info=get_model_info("rfdetr-nano"), memory=_mem(), warm_start=True)
+    assert warm.values["epochs"] == max(WARM_START_MIN_EPOCHS, round(fresh.values["epochs"] / 2))
+    reason = next(d.reason for d in warm.derivations if d.name == "epochs")
+    assert "continuing from an earlier run" in reason
+    # an explicit override still wins
+    forced = derive_plan(_stats(num_images=50), model="rfdetr-nano",
+                         model_info=get_model_info("rfdetr-nano"), memory=_mem(),
+                         warm_start=True, overrides={"epochs": 7})
+    assert forced.values["epochs"] == 7
+
+
 def _stats(
     *,
     num_images=50,

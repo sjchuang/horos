@@ -493,6 +493,13 @@ const Loop = {
           <select data-opt="size" style="display:none"></select>
         </div>
         <div class="opt">
+          <span class="k" title="Continue: each round's training starts from the previous run of the same model — weights kept, optimizer fresh, class head resized, so new classes are fine — and trains about half the epochs. Fresh: every round trains from the published weights.">Training</span>
+          <div class="seg" data-opt="training">
+            <button data-v="continue" title="start from the previous run's weights; fewer epochs">Continue</button>
+            <button data-v="fresh" title="start from the published weights every round">Fresh</button>
+          </div>
+        </div>
+        <div class="opt">
           <span class="k" title="On: the picked photos arrive pre-labeled by the current model (OWLv2 zero-shot before there is one) as pending suggestions to accept or fix. Off: every photo starts blank.">Pseudo labeling</span>
           <div class="seg" data-opt="suggest">
             <button data-v="1" title="pseudo-label the picked photos">On</button>
@@ -533,6 +540,8 @@ const Loop = {
       const setSeg = (name, v) => seg(name).querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.v === String(v)));
       setSeg("model", kind);
       setSeg("suggest", st.preannotate === false ? 0 : 1);
+      setSeg("training", st.training || "continue");
+      seg("training").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ training: b.dataset.v }); });
       setSeg("shapes", st.shapes || "auto");
       seg("shapes-wrap").style.opacity = st.preannotate === false ? ".4" : "1";
       const size = seg("size");
@@ -732,7 +741,10 @@ const Loop = {
 
   // ------------------------------------------------------------- 3 train
   renderTrain(cur) {
-    $("train-badge").innerHTML = `${ICON.loop} round ${cur.number} · ${(cur.training || {}).model || ""}`;
+    const tr = cur.training || {};
+    $("train-badge").innerHTML = `${ICON.loop} round ${cur.number} · ${tr.model || ""}`
+      + (tr.init_from ? ` · continues ${tr.init_from}` : tr.init_reason ? " · fresh start" : "");
+    $("train-badge").title = tr.init_reason || "";
     this.seen = 0; this.series = {}; this.epochs = null;
     $("train-bar").style.width = "0";
     $("metric-chips").innerHTML = "";

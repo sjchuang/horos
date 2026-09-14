@@ -29,6 +29,7 @@ import logging
 import random
 import threading
 from collections.abc import Iterator
+from pathlib import Path
 from threading import Event as CancelEvent
 from typing import TYPE_CHECKING, Literal
 
@@ -161,6 +162,10 @@ class LoopSettings(BaseModel):
     #: how many times the round size the scorer looks at (random sample when
     #: the pool is bigger); None = score the whole pool, however long it takes
     scan_factor: int | None = Field(default=DEFAULT_SCAN_FACTOR, ge=1)
+    #: "continue": each round starts from the previous run of the same model
+    #: (weights kept, optimizer fresh, class head resized — new classes are
+    #: fine) and trains fewer epochs; "fresh": from the published weights
+    training: Literal["continue", "fresh"] = "continue"
     #: stop-when-reached value of the headline metric (mAP flavours are in
     #: [0, 1]); None = keep going until the pool is empty or gains flatten
     target: float | None = Field(default=None, gt=0.0)
@@ -1021,12 +1026,18 @@ def train_round(
     seed: int = 42,
     extra: dict | None = None,
     entrypoint_override: str | None = None,
+    warm_start: bool | None = None,
 ) -> LoopRound:
     """Start training for a round in state "labeling". Newly labeled photos
     are first bucketed into test / valid / train (see _assign_holdouts), only
     labeled images enter the snapshot (pending pre-labels are dropped by
     start_training), hyperparameters not given are derived by the E5 rules,
-    and the run id is recorded on the round, which moves to "training"."""
+    and the run id is recorded on the round, which moves to "training".
+
+    With the loop's training set to "continue" (or `warm_start=True`) the run
+    starts from the newest completed run of the same model: weights kept,
+    optimizer fresh, class head resized to today's classes. Without such a
+    run — or with "fresh" — it starts from the published weights."""
     record = _reconcile_round(project, load_round(project, number))
     if record.state != "labeling":
         raise ProjectError(
@@ -1045,9 +1056,23 @@ def train_round(
         model_reason = "chosen explicitly"
     if model is None:
         model, model_reason = default_model_for(project, labeled)
+    continue_wanted = settings.training == "continue" if warm_start is None else warm_start
+    init_from = init_reason = None
+    if continue_wanted:
+        same = [r for r in list_runs(project)
+                if r.state == "completed" and r.checkpoint and r.model == model]
+        source = max(same, key=lambda r: r.created_at) if same else None
+        if source is not None and Path(source.checkpoint).is_file():
+            init_from = source.run_id
+            init_reason = f"continues from run {source.run_id} (newest completed {model})"
+        else:
+            init_reason = f"fresh start: no completed {model} run to continue from"
+    else:
+        init_reason = "fresh start by choice"
     config = TrainRunConfig(
         model=model, epochs=epochs, batch_size=batch_size, resolution=resolution,
         device=device, seed=seed, image_ids=sorted(labeled), extra=extra or {},
+        init_from=source.checkpoint if init_from else None,
         entrypoint_override=entrypoint_override,
     )
     run = start_training(project, config)
@@ -1055,6 +1080,7 @@ def train_round(
         "train_run_id": run.run_id,
         "training": {
             "model": model, "model_reason": model_reason,
+            "init_from": init_from, "init_reason": init_reason,
             "labeled_images": len(labeled), "holdout": holdout,
             "labeled_in_round": sum(1 for i in record.image_ids if i in labeled),
         },

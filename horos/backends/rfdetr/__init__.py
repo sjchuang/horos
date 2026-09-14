@@ -402,8 +402,16 @@ class RFDETRBackend(ModelBackend):
                         backend=self.family,
                     ) from exc
 
-                yield from self._pretrained_weights_events()
-                model = self._model_class()(device=kwargs["device"])
+                if spec.init_from is not None:
+                    # warm start from an earlier run: rfdetr loads the weights and
+                    # expands or trims the class head to the new class count
+                    # (load_pretrain_weights); no published weights are needed
+                    model = self._model_class()(
+                        device=kwargs["device"], pretrain_weights=str(spec.init_from)
+                    )
+                else:
+                    yield from self._pretrained_weights_events()
+                    model = self._model_class()(device=kwargs["device"])
                 events: queue_mod.Queue = queue_mod.Queue()
                 tracker = _BestTracker()
 

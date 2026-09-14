@@ -57,6 +57,21 @@ def _config(**overrides):
     return TrainRunConfig(**defaults)
 
 
+def test_init_from_is_validated_before_anything_is_written(project, tmp_path):
+    """E5-S6 warm start: a missing checkpoint or init_from together with
+    resume_from is refused up front, with no run directory left behind."""
+    with pytest.raises(ProjectError, match="init_from checkpoint not found"):
+        start_training(project, _config(init_from=str(tmp_path / "missing.pth")))
+    weights = tmp_path / "w.pth"
+    weights.write_bytes(b"x")
+    with pytest.raises(ProjectError, match="either resume_from or init_from"):
+        start_training(project, _config(init_from=str(weights), resume_from=str(weights)))
+    assert not list((project.root / "runs").glob("*"))
+    record = start_training(project, _config(init_from=str(weights)))
+    assert record.config["init_from"] == str(weights)
+    _wait_terminal(project, record.run_id)
+
+
 def test_run_completes_and_keeps_artifacts(project):
     record = start_training(project, _config())
     assert record.state == "running" and record.pid

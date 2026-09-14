@@ -107,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
                     resume_from=(
                         Path(config.resume_from) if config.resume_from else None
                     ),
+                    init_from=Path(config.init_from) if config.init_from else None,
                     checkpoint_criterion=config.checkpoint_criterion,
                     extra=extra,
                 )

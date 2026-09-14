@@ -124,7 +124,10 @@ Annotation is a four-step loop you can follow without reading any help text:
   similarity, adjustable threshold) — skipped photos leave the pool and the
   round refills at the end of the queue. Several annotators can open the same
   round and each get their own share of its photos.
-- **Train.** One button. Newly labeled photos are bucketed by a stable hash
+- **Train.** One button. Each round continues from the previous run's weights
+  (optimizer fresh, class head resized, so new classes are fine) and trains
+  about half the epochs; switch to Fresh to start from the published weights.
+  Newly labeled photos are bucketed by a stable hash
   into a held-out test set (20 %), a validation set (10 %) and training data;
   a photo never changes split, and the test set is never trained on. Live
   loss curves while it runs.

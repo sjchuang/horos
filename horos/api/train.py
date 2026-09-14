@@ -90,7 +90,14 @@ class TrainRunConfig(BaseModel):
     mosaic_ratio: float | None = None
     device: str | None = None
     seed: int | None = None
+    #: full-state resume (weights + optimizer + schedule); the class set must
+    #: match the checkpoint's
     resume_from: str | None = None
+    #: warm start from an earlier run's best checkpoint: the weights are kept,
+    #: the optimizer starts fresh and the class head is resized, so classes
+    #: may differ — the way a loop round continues from the previous one
+    #: instead of training from the published weights again (E5-S6)
+    init_from: str | None = None
     #: category names to train on; None = all. Unselected classes' objects
     #: become background in this run's dataset snapshot.
     categories: list[str] | None = None
@@ -515,6 +522,7 @@ def derive_hyperparameters(
         model=config.model,
         model_info=model_info,
         memory=memory,
+        warm_start=bool(config.init_from),
         overrides={
             # any derived knob the user set in `extra` (grad_accum_steps,
             # warmup_epochs, early_stopping_* ...) is an override too: the plan
@@ -604,6 +612,11 @@ def start_training(project: Project, config: TrainRunConfig | None = None) -> Ru
                 f"annotations in the train split — nothing to learn from."
             )
 
+    if config.init_from:
+        if config.resume_from:
+            raise ProjectError("Give either resume_from or init_from, not both")
+        if not Path(config.init_from).is_file():
+            raise ProjectError(f"init_from checkpoint not found: {config.init_from}")
     if config.resume_from:
         # the checkpoint's class head has a fixed shape: resuming with a
         # different class set fails deep inside the backend with a raw

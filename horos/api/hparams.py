@@ -124,6 +124,12 @@ class HyperparameterPlan(BaseModel):
         return {k: v for k, v in self.values.items() if k in _API_FIELDS}
 
 
+#: a run that starts from an earlier run's weights needs fewer passes: the
+#: features are learned, only the new photos and classes move the model
+WARM_START_EPOCH_FACTOR = 0.5
+WARM_START_MIN_EPOCHS = 5
+
+
 def _derive_epochs(stats: DatasetStats) -> tuple[int, str]:
     n = stats.num_images
     if n < 500:
@@ -204,9 +210,12 @@ def derive_plan(
     model_info: ModelInfo | None,
     memory: MemoryInfo,
     overrides: dict[str, Any] | None = None,
+    warm_start: bool = False,
 ) -> HyperparameterPlan:
     """Apply the derivation rules; `overrides` values (non-None) win per-key
-    without disturbing how the other keys are derived (E5-T2)."""
+    without disturbing how the other keys are derived (E5-T2). `warm_start`
+    says the run continues from an earlier run's weights, which needs fewer
+    passes than learning the task from the published weights."""
     overrides = {k: v for k, v in (overrides or {}).items() if v is not None}
     plan = HyperparameterPlan(model=model)
 
@@ -223,6 +232,10 @@ def derive_plan(
         return value
 
     epochs, why = _derive_epochs(stats)
+    if warm_start:
+        epochs = max(WARM_START_MIN_EPOCHS, round(epochs * WARM_START_EPOCH_FACTOR))
+        why = (f"continuing from an earlier run's weights: {WARM_START_EPOCH_FACTOR:g}× the "
+               f"fresh-start count (the model already knows the task) — {why}")
     put("epochs", epochs, why)
 
     resolution: int | None = None

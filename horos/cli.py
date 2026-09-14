@@ -551,6 +551,11 @@ def build_parser() -> argparse.ArgumentParser:
                         "when the labels are mostly polygons)"
     )
     p.add_argument("--epochs", type=int, help="loop train: epochs (default: derived)")
+    p.add_argument(
+        "--fresh", action="store_true",
+        help="loop train: start from the published weights instead of continuing from the "
+             "previous run of the same model (default: the loop settings, continue)",
+    )
 
     p = sub.add_parser("ui", help="Start the Web API + WebUI server")
     p.add_argument(
@@ -1120,7 +1125,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 if args.action == "train":
                     record = api.train_round(
                         project, status.current.number, model=args.model, epochs=args.epochs,
-                        device=args.device,
+                        device=args.device, warm_start=False if args.fresh else None,
                     )
                     print(  # noqa: T201
                         f"training run {record.train_run_id} started for round {record.number}; "
