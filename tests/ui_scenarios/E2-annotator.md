@@ -32,7 +32,9 @@ horos ui ./demo_project
 ## 測試步驟
 
 ### A. 網格（入口）
-1. 開 /annotate：縮圖網格顯示、頂欄有進度（N/M images annotated）
+1. 開 /annotate：縮圖網格顯示、頂欄有進度（N/M images annotated）；佇列預設「To do」（只列未標註）。
+   若 loop 有一輪在 Label 階段，佇列多一個選項「Round N · to label」且預設選它：網格就是該輪的照片、
+   未標的排前面、頂欄顯示「round N · done/total labeled」，split／類別篩選停用；切回其他模式即回到全專案
 2. 佇列模式切「Only unannotated」、split 切「valid」、類別切任一類：網格即時過濾，
    三個篩選可疊加（類別篩選＝含該類別標註或預標的照片；在 Classes 改名／刪除後選單同步）
 3. 每頁數量切 20：分頁按鈕出現；縮圖角標 ✓ 已標、🔒 他人標註中

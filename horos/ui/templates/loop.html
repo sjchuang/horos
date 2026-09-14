@@ -280,6 +280,10 @@
         </div>
         <span class="badge tip" id="prelabel-badge" data-tip="" style="display:none;flex:none"></span>
         <span class="muted" id="reasons-compact" style="flex:none;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
+        <a class="btn" id="btn-open-annotate" href="/annotate" title="Open the annotate page on this round's photos (full window)" style="flex:none">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+          Annotate</a>
         <button class="btn primary" id="btn-train" disabled style="flex:none">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -677,8 +681,10 @@ const Loop = {
     $("names").innerHTML = names.map((n) => `<span class="name ${n === this.annotator ? "on" : ""}" data-n="${n}">${n}</span>`).join("");
     $("names").querySelectorAll(".name").forEach((el) => { el.onclick = () => this.setAnnotator(el.dataset.n); });
     if (names.length && !names.includes(this.annotator)) this.annotator = "";
-    const src = `/annotate?embed=1&round=${cur.number}${this.annotator ? "&annotator=" + encodeURIComponent(this.annotator) : ""}`;
+    const who = this.annotator ? "&annotator=" + encodeURIComponent(this.annotator) : "";
+    const src = `/annotate?embed=1&round=${cur.number}${who}`;
     if ($("annotator").getAttribute("src") !== src) $("annotator").setAttribute("src", src);
+    $("btn-open-annotate").href = `/annotate?round=${cur.number}${who}`;  // same queue, full page
     this.updateRing(picks);
     await this.renderReadiness();
     clearTimeout(this.pollTimer);  // renderLabel re-runs after a settings change

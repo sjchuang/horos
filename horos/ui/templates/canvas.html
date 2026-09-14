@@ -253,9 +253,9 @@
     <span id="progress-line"></span>
     <span style="margin-left:auto"></span>
     <select id="queue-mode">
+      <option value="unannotated" selected>To do</option>
       <option value="unannotated_first">To do first</option>
       <option value="file_name">By name</option>
-      <option value="unannotated">To do</option>
       <option value="annotated">Done</option>
       <option value="pending">To review</option>
     </select>
@@ -664,6 +664,7 @@ const Page = {
   autoSave: true, isDirty: false, _saveTimer: null, _claimTimer: null,
   classCounts: {}, sessionNames: new Set(),
   reviewThreshold: 0.5, _jobTimer: null,
+  openRound: null,  // the labeling round offered as the to-do queue (plain page)
 
   // ------------------------------------------------------------------ boot
   async init() {
@@ -688,6 +689,20 @@ const Page = {
         $(id).style.display = "none";
       }
       $("btn-back").textContent = "← Round overview";
+    } else {
+      // an open round in its Label step IS the to-do list: the queue offers
+      // it first, so the plain annotate page lands on the round's photos
+      try {
+        const status = await api("/loop");
+        const cur = status.current;
+        if (cur && cur.state === "labeling") {
+          this.openRound = cur.number;
+          const opt = document.createElement("option");
+          opt.value = "round"; opt.textContent = `Round ${cur.number} · to label`;
+          $("queue-mode").prepend(opt);
+          $("queue-mode").value = "round";
+        }
+      } catch (e) {}
     }
     try {
       const stats = await api("/dataset/stats");
@@ -827,19 +842,26 @@ const Page = {
   },
 
   async loadImages(page) {
-    if (ROUND) {
+    const roundMode = !ROUND && $("queue-mode").value === "round";
+    // the project-wide filters do not apply to a round's picks
+    for (const id of ["split-filter", "class-filter"]) $(id).disabled = roundMode;
+    const round = ROUND || (roundMode ? this.openRound : null);
+    if (round) {
       const q = new URLSearchParams({ session });
       if (ANNOTATOR) q.set("annotator", ANNOTATOR);
       // RoundQueueItem carries the same fields the grid and editor read
-      this.queue = (await api(`/loop/rounds/${ROUND}/queue?` + q))
+      this.queue = (await api(`/loop/rounds/${round}/queue?` + q))
         .filter((item) => !item.excluded)   // skipped photos were replaced; see All photos
         .map((item) => ({ ...item, num_annotations: item.annotated ? 1 : 0 }));
+      if (roundMode) {  // the to-do view: what is left comes first, labeled ones sink
+        this.queue.sort((a, b) => Number(a.annotated) - Number(b.annotated));
+      }
       this.page = page;
       this.renderGrid();
       const done = this.queue.filter((item) => item.annotated).length;
       $("progress-line").innerHTML =
-        `round ${ROUND}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} labeled`;
-      this._notifyRound(done, done === this.queue.length && this.queue.length > 0);
+        `round ${round}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} labeled`;
+      if (ROUND) this._notifyRound(done, done === this.queue.length && this.queue.length > 0);
       return;
     }
     this._syncClassFilter();

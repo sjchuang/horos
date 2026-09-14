@@ -221,3 +221,13 @@ def test_dataset_page_groups_photos_and_skips_a_group(client):
     assert "/images/clusters?" in html and "/loop/embeddings" in html
     assert '"/images/skip"' in html and '"/images/restore"' in html
     assert "skip-unlabeled" in html and "labeled_ids" in html  # skip without / with labeled
+
+
+def test_annotate_defaults_to_the_to_do_queue_and_offers_the_open_round(client):
+    """The plain annotate page opens on "To do"; a round in its Label step is
+    prepended as the to-do queue, and the loop page links straight to it."""
+    canvas = client.get("/annotate").get_data(as_text=True)
+    assert '<option value="unannotated" selected>To do</option>' in canvas
+    assert 'cur.state === "labeling"' in canvas and "to label" in canvas
+    loop = client.get("/loop").get_data(as_text=True)
+    assert 'id="btn-open-annotate"' in loop and "/annotate?round=" in loop
