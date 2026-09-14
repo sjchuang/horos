@@ -84,3 +84,5 @@ horos ui <project>
 22. Enter 或 Space：寫入「一個」標註，segmentation 有三個多邊形，bbox 涵蓋全部；Shapes 清單顯示「(polygon ×3)」
 23. Esc 第一下清目前 prompt、第二下丟掉已保留的 parts、第三下才丟隊列；Output 為 Box 時 + 無效（提示需要 Polygon）
 24. Edit 工具：多段物件整體可拖曳、可選取（點任一段），控制點只在第一段可調
+25. 按 + 之後點下一段：新的 mask 只包含被點到的那一段（伺服器改取「點所在的連通區塊」而不是最大的區塊），
+    已保留的段以實線淡色顯示在畫布上；prompt 完全重新開始，不會沿用前一段的點或框

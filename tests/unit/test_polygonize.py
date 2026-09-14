@@ -171,3 +171,25 @@ def test_simplify_polygon_leaves_small_polygons_alone_and_never_drops_below_thre
     assert simplify_polygon(square, 100) == square
     assert len(simplify_polygon(square, 3)) == 6
     assert len(simplify_polygon(square, 1)) == 6  # a cap below 3 means 3
+
+
+def test_anchor_picks_the_blob_under_the_click_not_the_largest():
+    """Two pieces of one object in a mask: without an anchor the bigger piece
+    wins; with the click on the small piece, the small piece is the answer
+    (the annotator building an object part by part must get the part they
+    clicked, not the one they already kept)."""
+    from horos.backends.sam.polygonize import mask_to_shape
+
+    mask = [[0] * 20 for _ in range(10)]
+    for y in range(1, 9):
+        for x in range(1, 10):
+            mask[y][x] = 1  # big piece, left
+    for y in range(3, 6):
+        for x in range(14, 18):
+            mask[y][x] = 1  # small piece, right
+    big = mask_to_shape(mask)
+    assert big.bbox[0] == 1 and big.area == 72
+    small = mask_to_shape(mask, anchor=(15, 4))
+    assert small.bbox == (14.0, 3.0, 4.0, 3.0) and small.area == 12
+    # an anchor on background falls back to the largest blob
+    assert mask_to_shape(mask, anchor=(12, 4)).area == 72

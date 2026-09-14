@@ -53,8 +53,13 @@ def _row_runs(row, width: int) -> list[tuple[int, int]]:
     return runs
 
 
-def largest_blob(mask) -> tuple[list[tuple[int, int, int]], int, tuple[int, int, int, int]] | None:
-    """The largest 8-connected foreground component as (runs, area, box).
+def largest_blob(
+    mask, anchor: tuple[int, int] | None = None
+) -> tuple[list[tuple[int, int, int]], int, tuple[int, int, int, int]] | None:
+    """The largest 8-connected foreground component as (runs, area, box) —
+    or, with `anchor` = (x, y) on a foreground pixel, the component under
+    that pixel: the piece the annotator clicked, even when the model's mask
+    also covers a bigger piece of the same object elsewhere.
 
     `runs` are (y, start, stop) half-open row runs; `box` is (x0, y0, x1, y1)
     in half-open pixel coordinates. None for an empty mask. Row runs are
@@ -95,7 +100,15 @@ def largest_blob(mask) -> tuple[list[tuple[int, int, int]], int, tuple[int, int,
     members: dict[int, list[int]] = {}
     for index in range(len(runs)):
         members.setdefault(find(index), []).append(index)
-    best = max(members.values(), key=lambda idx: sum(runs[i][2] - runs[i][1] for i in idx))
+    best = None
+    if anchor is not None:
+        ax, ay = int(anchor[0]), int(anchor[1])
+        hit = next((i for i, (y, start, stop) in enumerate(runs)
+                    if y == ay and start <= ax < stop), None)
+        if hit is not None:
+            best = members[find(hit)]
+    if best is None:
+        best = max(members.values(), key=lambda idx: sum(runs[i][2] - runs[i][1] for i in idx))
     blob = [runs[i] for i in best]
     area = sum(stop - start for _, start, stop in blob)
     x0 = min(start for _, start, _ in blob)
@@ -204,15 +217,18 @@ def _douglas_peucker(points: list[tuple[int, int]], epsilon: float) -> list[tupl
     return [p for p, k in zip(points, keep, strict=True) if k]
 
 
-def mask_to_shape(mask, *, epsilon: float = 1.5, min_points: int = 3) -> MaskShape | None:
-    """Trace the mask's largest blob and return its simplified flat polygon
+def mask_to_shape(
+    mask, *, epsilon: float = 1.5, min_points: int = 3, anchor: tuple[int, int] | None = None
+) -> MaskShape | None:
+    """Trace the mask's largest blob — or the blob under `anchor` when that
+    pixel is foreground — and return its simplified flat polygon
     [x1, y1, x2, y2, ...] with the blob's box and area, or None when the mask
     is empty or the blob is degenerate (fewer than `min_points` corners)."""
     height = len(mask)
     width = len(mask[0]) if height else 0
     if not height or not width:
         return None
-    found = largest_blob(mask)
+    found = largest_blob(mask, anchor)
     if found is None:
         return None
     blob, area, (x0, y0, x1, y1) = found

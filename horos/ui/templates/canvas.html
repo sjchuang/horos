@@ -2199,6 +2199,23 @@ const Page = {
       ctx.globalAlpha = 1; ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#ffffff"; ctx.stroke();
     }
     const color = liveClass ? this._getColor(liveClass) : "#9aa0a6";
+    // parts already kept with "+": the object being built, solid edge in its
+    // colour, so the annotator sees what the next click adds to
+    const drawRing = (ring) => {
+      ctx.beginPath();
+      ring.forEach(([x, y], j) => (j ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+      ctx.closePath();
+    };
+    for (const q of this.sam.queued) for (const ring of (q.parts || [])) {
+      drawRing(ring);
+      ctx.fillStyle = this._getColor(q.label); ctx.globalAlpha = 0.22; ctx.fill();
+      ctx.globalAlpha = 1; ctx.lineWidth = 1.5 * inv; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    }
+    for (const ring of this.sam.parts) {
+      drawRing(ring);
+      ctx.fillStyle = color; ctx.globalAlpha = 0.3; ctx.fill();
+      ctx.globalAlpha = 1; ctx.lineWidth = 2 * inv; ctx.strokeStyle = "#ffffff"; ctx.stroke();
+    }
     const cand = this.sam.candidate;
     if (cand && cand.points.length) {
       ctx.beginPath();

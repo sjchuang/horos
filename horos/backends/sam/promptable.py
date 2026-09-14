@@ -93,13 +93,26 @@ class TransformersPromptableMixin:
         masks = self._processor.post_process_masks(*post_args)[0]
         mask = masks.reshape(-1, masks.shape[-2], masks.shape[-1])[0].numpy().astype(bool)
         score = float(outputs.iou_scores.flatten()[0])
-        return self._result_from_mask(mask, score)
+        # the piece under the click (or the box centre) is the answer — the
+        # model may paint the whole object, and a part kept earlier must not
+        # come back as this prompt's polygon
+        anchor = None
+        positives = [p for p, label in zip(prompt.points, prompt.labels, strict=True) if label == 1]
+        if positives:
+            anchor = (int(positives[0][0]), int(positives[0][1]))
+        elif prompt.box is not None:
+            x, y, w, h = prompt.box
+            anchor = (int(x + w / 2), int(y + h / 2))
+        return self._result_from_mask(mask, score, anchor)
 
     @staticmethod
-    def _result_from_mask(mask, score: float) -> SegmentResult:
-        """Polygon, box and area all from the mask's largest blob, so the three
-        agree (stray specks neither widen the box nor become the polygon)."""
-        shape = mask_to_shape(mask)
+    def _result_from_mask(
+        mask, score: float, anchor: tuple[int, int] | None = None
+    ) -> SegmentResult:
+        """Polygon, box and area all from one blob — the one under `anchor`
+        when it is foreground, else the largest — so the three agree (stray
+        specks neither widen the box nor become the polygon)."""
+        shape = mask_to_shape(mask, anchor=anchor)
         if shape is None:
             return SegmentResult(polygon=None, bbox=None, score=score, area=0)
         return SegmentResult(polygon=shape.polygon, bbox=shape.bbox, score=score, area=shape.area)
