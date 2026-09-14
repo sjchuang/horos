@@ -459,6 +459,17 @@
   </div>
 </div>
 
+<!-- a long project-wide operation (class deletion): the page blocks itself -->
+<div class="modal" id="busy-modal" style="z-index:2000">
+  <div class="card" style="width:380px">
+    <h4 id="busy-title" style="margin:0 0 10px">Working…</h4>
+    <div style="background:var(--line);height:8px;border-radius:4px;overflow:hidden">
+      <div id="busy-bar" style="background:var(--accent);height:100%;width:0;transition:width .2s"></div></div>
+    <div id="busy-text" style="font-size:12px;color:var(--dim);margin-top:8px;min-height:16px"></div>
+    <p style="font-size:11px;color:var(--dim);margin:10px 0 0">Please wait — do not close or reload the page.</p>
+  </div>
+</div>
+
 <!-- autolabel modal -->
 <div class="modal" id="autolabel-modal">
   <div class="card">
@@ -1306,6 +1317,7 @@ const Page = {
     window.addEventListener("keydown", (e) => {
       if ($("editor-view").style.display !== "block") return;
       if (this._labelPrompt) return;  // naming a shape: the prompt owns the keyboard
+      if (this._busyJob) { e.preventDefault(); return; }  // a blocking job is running
       if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
       if (e.isComposing) return;
       const code = e.code;
@@ -2625,22 +2637,61 @@ const Page = {
       this.renderChips(); this._drawCanvas(); this.openClassManager();
     } catch (e) { toast(e.message, "err"); }
   },
+  // run a project-wide job behind a blocking overlay with a bar; keyboard
+  // shortcuts are off and leaving the page asks first while it runs.
+  // Resolves to {state, result, failed} — never throws for a failed job.
+  async _runBlockingJob(start, title) {
+    $("busy-title").textContent = title;
+    $("busy-bar").style.width = "0"; $("busy-text").textContent = "starting…";
+    $("busy-modal").style.display = "flex";
+    this._busyJob = true;
+    if (!this._unloadGuard) {
+      this._unloadGuard = (e) => { if (this._busyJob) { e.preventDefault(); e.returnValue = ""; } };
+      window.addEventListener("beforeunload", this._unloadGuard);
+    }
+    try {
+      const { job_id } = await start();
+      let seen = 0, failed = null, result = null, state = "running";
+      while (state === "running") {
+        const body = await api(`/jobs/${job_id}?after=${seen}`);
+        seen = body.num_events; state = body.state;
+        for (const ev of body.events) {
+          if (ev.type === "progress") {
+            $("busy-bar").style.width = (ev.total ? 100 * ev.current / ev.total : 0) + "%";
+            $("busy-text").textContent = `${ev.phase} · ${ev.current}/${ev.total ?? "?"}${ev.message ? " — " + ev.message : ""}`;
+          } else if (ev.type === "failed") failed = ev;
+          else if (ev.type === "completed") result = ev.result;
+        }
+        if (state === "running") await new Promise((r) => setTimeout(r, 300));
+      }
+      return { state, result, failed };
+    } catch (e) {
+      return { state: "failed", result: null, failed: { error_code: e.code || "error", message: e.message } };
+    } finally {
+      this._busyJob = false;
+      $("busy-modal").style.display = "none";
+    }
+  },
   async deleteClass(id) {
     const cat = this.categories.find((c) => c.id === id);
-    try {
-      await api(`/categories/${id}`, json("DELETE", {}));
-    } catch (e) {
+    const run = (force) => this._runBlockingJob(
+      () => api(`/categories/${id}/delete`, json("POST", { force })), `Deleting '${cat.name}'…`);
+    let outcome = await run(false);
+    if (outcome.state === "failed") {
+      const failed = outcome.failed || {};
       // only "still in use" is a question; anything else (a class another
       // session already removed, say) is an error and the list is refreshed
-      if (e.code !== "category_in_use") {
-        toast(e.message, "err", 4200);
+      if (failed.error_code !== "category_in_use") {
+        toast(failed.message || "delete failed", "err", 4200);
         try { this.categories = (await api("/project")).categories; this.renderChips(); this.openClassManager(); } catch (e2) {}
         return;
       }
-      if (!confirm(`${e.message.replace(/ Pass force=True.*$/, "")}\n\nDelete the class and those annotations?`)) return;
-      try { await api(`/categories/${id}`, json("DELETE", { force: true })); }
-      catch (e2) { toast(e2.message, "err", 4200); return; }
-    }
+      if (!confirm(`${(failed.message || "").replace(/ Pass force=True.*$/, "")}\n\nDelete the class and those annotations?`)) return;
+      outcome = await run(true);
+      if (outcome.state !== "completed") { toast((outcome.failed || {}).message || "delete failed", "err", 4200); return; }
+    } else if (outcome.state !== "completed") { toast("delete did not finish", "err", 4200); return; }
+    toast(`Deleted '${cat.name}'` + (outcome.result && outcome.result.deleted_annotations
+      ? ` and ${outcome.result.deleted_annotations} annotation(s)` : ""), "ok", 2500);
     this.categories = this.categories.filter((c) => c.id !== id);
     delete this.classCounts[cat.name];
     this.sessionNames.delete(cat.name);

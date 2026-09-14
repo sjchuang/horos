@@ -118,3 +118,11 @@ def delete_category(category_id: int):
         _project(), category_id, force=bool(_body().get("force", False))
     )
     return jsonify({"deleted_annotations": deleted})
+
+
+@bp.post("/categories/<int:category_id>/delete")
+def start_delete_category_job(category_id: int):
+    job_id = api.start_delete_category_job(
+        _project(), category_id, force=bool(_body().get("force", False))
+    )
+    return jsonify({"job_id": job_id}), 202

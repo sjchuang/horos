@@ -110,6 +110,7 @@ horos ui ./demo_project
 ## 2026-09-14 刪除類別
 
 1. Manage Classes 開啟時會先向伺服器重新抓類別清單，別的分頁刪掉或合併過的類別不會再出現
-2. 刪除仍有標註的類別：跳出確認「'Vest' is used by 120 annotation(s) on 87 photo(s). Delete the class and those annotations?」，
+2. 刪除時整頁蓋上「Deleting 'Vest'…」進度視窗（掃描 → 重寫），期間快捷鍵停用、關閉或重新整理分頁會先詢問；
+   刪除仍有標註的類別：跳出確認「'Vest' is used by 120 annotation(s) on 87 photo(s). Delete the class and those annotations?」，
    確認後連同標註刪除（API 回 409 `category_in_use`，不是錯誤）
 3. 刪除一個已不存在的類別（清單過期）：顯示錯誤 toast 並重新整理清單，不會再跳確認

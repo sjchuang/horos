@@ -91,6 +91,7 @@ from horos.api.labels import (
     add_category,
     delete_category,
     merge_categories,
+    start_delete_category_job,
     update_category,
 )
 from horos.api.loop import (
@@ -304,6 +305,7 @@ __all__ = [
     "create_project",
     "dataset_stats",
     "delete_category",
+    "start_delete_category_job",
     "delete_images",
     "delete_media",
     "delete_run",

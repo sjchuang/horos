@@ -142,6 +142,14 @@ def test_annotator_never_lets_a_previous_image_overwrite_the_current_one(client)
     assert "if (this.sam) this._samReset(false, true);" in html  # prompts do not carry over
 
 
+def test_annotator_deletes_classes_behind_a_blocking_progress_overlay(client):
+    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    assert 'id="busy-modal"' in html and 'id="busy-bar"' in html
+    assert "/delete`, json(\"POST\", { force })" in html  # the job route, not the sync DELETE
+    assert 'window.addEventListener("beforeunload", this._unloadGuard)' in html
+    assert "if (this._busyJob) { e.preventDefault(); return; }" in html  # shortcuts off meanwhile
+
+
 def test_annotator_has_the_sam_tool(client):
     html = client.get("/annotate?canvas=1").get_data(as_text=True)
     assert 'data-tool="sam"' in html and 'id="sam-panel"' in html

@@ -85,6 +85,31 @@ def test_delete_referenced_is_refused(project):
     assert f"'{target.name}' is used by" in str(info.value)
 
 
+def test_delete_streams_progress_and_asks_before_cascading(project):
+    """The deletion is an R4 stream (a project of thousands of photos takes
+    seconds to scan): scanning progress, then failed(category_in_use) with
+    the counts when force is off; with force, deleting progress and a
+    completed result."""
+    from horos.api.labels import delete_category_events
+
+    target = project.categories[0]
+    before = [len(project.load_annotations(r.id).annotations) for r in project.list_images()]
+    events = list(delete_category_events(project, target.id))
+    assert events[0].type == "started" and events[-1].type == "failed"
+    assert events[-1].error_code == "category_in_use"
+    assert events[-1].details["annotations"] >= 1
+    assert any(e.type == "progress" and e.phase == "scanning" for e in events)
+    after = [len(project.load_annotations(r.id).annotations) for r in project.list_images()]
+    assert after == before  # nothing changed without force
+
+    events = list(delete_category_events(project, target.id, force=True))
+    assert events[-1].type == "completed" and events[-1].result["deleted_annotations"] >= 1
+    assert any(e.type == "progress" and e.phase == "deleting" for e in events)
+    assert target.id not in {c.id for c in project.categories}
+    # an unknown id is a failed stream too, with the plain code
+    assert list(delete_category_events(project, 999))[-1].error_code == "project_error"
+
+
 def test_forced_delete_cascades_and_bumps_versions(project):
     target = next(c for c in project.categories if c.name == "forklift")
     affected = [

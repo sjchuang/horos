@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import threading
+from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -11,9 +14,15 @@ from horos.core.dataset import Category, default_color
 from horos.core.project import Project
 from horos.errors import CategoryInUseError, ProjectError
 
+if TYPE_CHECKING:
+    from horos.backends.base import Event
+
 logger = logging.getLogger(__name__)
 
-__all__ = ["MergeResult", "add_category", "update_category", "delete_category", "merge_categories"]
+__all__ = [
+    "MergeResult", "add_category", "update_category", "delete_category",
+    "delete_category_events", "start_delete_category_job", "merge_categories",
+]
 
 
 class MergeResult(BaseModel):
@@ -94,9 +103,74 @@ def update_category(
     return updated
 
 
+def delete_category_events(
+    project: Project,
+    category_id: int,
+    *,
+    force: bool = False,
+    cancel: threading.Event | None = None,
+) -> Iterator[Event]:
+    """R4 stream of a class deletion: started → progress while every photo's
+    labels are scanned ("scanning") and while the referencing photos are
+    rewritten ("deleting") → completed. Without force, a class still in use
+    ends the stream with failed(category_in_use) carrying the counts, so a
+    UI can ask "delete them too?" and start again with force. On a project
+    of ten thousand photos the scan alone takes seconds — hence a job with
+    a bar, not a request that seems to hang."""
+    from horos.backends.base import ProgressUpdated, RunCompleted, RunFailed, RunStarted
+
+    try:
+        category = _find(project, category_id)
+    except ProjectError as exc:
+        yield RunFailed(error_code=exc.code, message=str(exc))
+        return
+    images = project.list_images()
+    yield RunStarted(total=len(images), config={"category": category.name, "force": force})
+    referencing: dict[int, int] = {}  # image_id -> count
+    for n, record in enumerate(images, start=1):
+        if cancel is not None and cancel.is_set():
+            yield RunCompleted(result={"cancelled": True, "deleted_annotations": 0})
+            return
+        stored = project.load_annotations(record.id)
+        hits = sum(1 for a in stored.annotations if a.category_id == category_id)
+        if hits:
+            referencing[record.id] = hits
+        if n % 50 == 0 or n == len(images):
+            yield ProgressUpdated(
+                current=n, total=len(images), phase="scanning",
+                message=f"{len(referencing)} photo(s) use '{category.name}'",
+            )
+    total = sum(referencing.values())
+    if total and not force:
+        exc = CategoryInUseError(
+            f"'{category.name}' is used by {total} annotation(s) on {len(referencing)} "
+            f"photo(s). Pass force=True to delete them too.",
+            annotations=total, images=len(referencing),
+        )
+        yield RunFailed(error_code=exc.code, message=str(exc), details=exc.details)
+        return
+    for k, image_id in enumerate(referencing, start=1):
+        stored = project.load_annotations(image_id)
+        project.save_annotations(
+            image_id,
+            [a for a in stored.annotations if a.category_id != category_id],
+            expected_version=stored.version,
+        )
+        yield ProgressUpdated(
+            current=k, total=len(referencing), phase="deleting",
+            message=f"{k} of {len(referencing)} photo(s) rewritten",
+        )
+    project.set_categories([c for c in project.categories if c.id != category_id])
+    logger.info("deleted category %d and %d annotation(s)", category_id, total)
+    yield RunCompleted(result={
+        "cancelled": False, "deleted_annotations": total, "images": len(referencing),
+        "category": category.name,
+    })
+
+
 @capability(
     "labels.delete",
-    summary="Delete a category (refused while annotations reference it, unless forced)",
+    summary="Delete a class; force=True deletes its annotations too",
     web_route="/api/v1/categories/<int:category_id>",
     web_methods=("DELETE",),
     cli=None,
@@ -109,31 +183,38 @@ def delete_category(project: Project, category_id: int, *, force: bool = False) 
     category — never silently orphan or reassign labels. With force=True the
     referencing annotations are deleted too (each image's version bumps, so
     concurrent annotator sessions see a conflict instead of stale state).
-    """
-    category = _find(project, category_id)
-    referencing: dict[int, int] = {}  # image_id -> count
-    for record in project.list_images():
-        stored = project.load_annotations(record.id)
-        hits = sum(1 for a in stored.annotations if a.category_id == category_id)
-        if hits:
-            referencing[record.id] = hits
-    total = sum(referencing.values())
-    if total and not force:
-        raise CategoryInUseError(
-            f"'{category.name}' is used by {total} annotation(s) on {len(referencing)} "
-            f"photo(s). Pass force=True to delete them too.",
-            annotations=total, images=len(referencing),
-        )
-    for image_id in referencing:
-        stored = project.load_annotations(image_id)
-        project.save_annotations(
-            image_id,
-            [a for a in stored.annotations if a.category_id != category_id],
-            expected_version=stored.version,
-        )
-    project.set_categories([c for c in project.categories if c.id != category_id])
-    logger.info("deleted category %d and %d annotation(s)", category_id, total)
-    return total
+    Synchronous form of `delete_category_events`."""
+    last = None
+    for event in delete_category_events(project, category_id, force=force):
+        last = event
+    if last is None or last.type == "failed":
+        if last is not None and last.error_code == "category_in_use":
+            raise CategoryInUseError(
+                last.message, annotations=last.details.get("annotations", 0),
+                images=last.details.get("images", 0),
+            )
+        raise ProjectError(getattr(last, "message", "deletion produced no result"))
+    return int(last.result.get("deleted_annotations", 0))
+
+
+@capability(
+    "labels.delete_job",
+    summary="Delete a class as a background job with progress (poll via jobs.status)",
+    web_route="/api/v1/categories/<int:category_id>/delete",
+    web_methods=("POST",),
+    cli=None,
+    not_cli_because="Label management is interactive; scripts call delete_category.",
+)
+def start_delete_category_job(project: Project, category_id: int, *, force: bool = False) -> str:
+    """The deletion as a job: the page shows a bar and blocks itself while
+    the scan and the rewrites run. Returns the job id."""
+    from horos.api.jobs import start_job
+
+    _find(project, category_id)  # an unknown id fails synchronously
+    return start_job(
+        project, "labels-delete",
+        lambda cancel: delete_category_events(project, category_id, force=force, cancel=cancel),
+    )
 
 
 @capability(

@@ -134,6 +134,37 @@ def test_merge_categories_route(client, project):
     assert client.post("/api/v1/categories/merge", json={"sources": [1]}).status_code == 400
 
 
+def test_class_deletion_runs_as_a_job_with_progress(client):
+    """The annotate page deletes behind a blocking bar: POST starts a job,
+    the job fails with category_in_use until force, then completes."""
+    import time
+
+    anns = client.get("/api/v1/images/1/annotations").get_json()["annotations"]
+    used_id = anns[0]["category_id"]
+
+    def wait(job_id):
+        for _ in range(200):
+            body = client.get(f"/api/v1/jobs/{job_id}").get_json()
+            if body["state"] != "running":
+                return body
+            time.sleep(0.02)
+        raise AssertionError("job still running")
+
+    r = client.post(f"/api/v1/categories/{used_id}/delete", json={})
+    assert r.status_code == 202
+    body = wait(r.get_json()["job_id"])
+    assert body["state"] == "failed"
+    failed = next(e for e in body["events"] if e["type"] == "failed")
+    assert failed["error_code"] == "category_in_use" and failed["details"]["annotations"] >= 1
+    r = client.post(f"/api/v1/categories/{used_id}/delete", json={"force": True})
+    body = wait(r.get_json()["job_id"])
+    assert body["state"] == "completed"
+    done = next(e for e in body["events"] if e["type"] == "completed")
+    assert done["result"]["deleted_annotations"] >= 1
+    assert any(e.get("phase") == "scanning" for e in body["events"])
+    assert client.post("/api/v1/categories/999/delete", json={}).status_code == 400
+
+
 def test_deleting_a_class_in_use_is_a_409_with_its_own_code(client):
     """The annotate page confirms only on category_in_use; a missing class is
     a plain error (the user saw both as bare 400s in the log)."""
