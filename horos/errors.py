@@ -101,6 +101,18 @@ class ImportConflictError(HorosError):
         self.details = {"conflicts": conflicts}
 
 
+class CategoryInUseError(ProjectError):
+    """Deleting a class that annotations still reference was asked without
+    force. The UI turns this into a confirm ("delete the class and its N
+    labels?"); any other failure is a real error."""
+
+    code = "category_in_use"
+
+    def __init__(self, message: str, *, annotations: int, images: int):
+        super().__init__(message)
+        self.details = {"annotations": annotations, "images": images}
+
+
 class ClassNamesRequiredError(HorosError):
     """A Darknet import has no _darknet.labels and the caller requires explicit
     class names (the WebUI upload path — it shows an editable list instead)."""

@@ -9,6 +9,7 @@ from flask import Flask, jsonify
 
 from horos.errors import (
     AnnotationConflictError,
+    CategoryInUseError,
     ClassNamesRequiredError,
     HorosError,
     ImportConflictError,
@@ -22,6 +23,7 @@ logger = logging.getLogger(__name__)
 
 _STATUS_BY_ERROR: list[tuple[type[HorosError], int]] = [
     (AnnotationConflictError, 409),
+    (CategoryInUseError, 409),  # a question for the UI, not a bad request
     (ImportConflictError, 409),
     (ClassNamesRequiredError, 422),
     (LicenseError, 403),

@@ -75,8 +75,14 @@ def test_delete_unreferenced(project):
 
 def test_delete_referenced_is_refused(project):
     target = next(c for c in project.categories if c.name == "forklift")
-    with pytest.raises(ProjectError, match="force=True"):
+    with pytest.raises(ProjectError, match="force=True") as info:
         delete_category(project, target.id)
+    # a distinct code with the counts: the UI asks "delete them too?" only for this
+    from horos.errors import CategoryInUseError
+
+    assert isinstance(info.value, CategoryInUseError) and info.value.code == "category_in_use"
+    assert info.value.details["annotations"] >= 1 and info.value.details["images"] >= 1
+    assert f"'{target.name}' is used by" in str(info.value)
 
 
 def test_forced_delete_cascades_and_bumps_versions(project):

@@ -2490,7 +2490,10 @@ const Page = {
     $("class-modal").style.display = "flex";
     let counts = {};
     try {
-      const stats = await api("/dataset/stats");
+      // the list is the server's, not this tab's memory: another session may
+      // have added, merged or deleted classes since the page loaded
+      const [project, stats] = await Promise.all([api("/project"), api("/dataset/stats")]);
+      this.categories = project.categories;
       stats.per_class.forEach((c) => { counts[c.name] = c.instances; });
     } catch (e) {}
     $("class-tbody").innerHTML = this.categories.map((c) => `
@@ -2627,10 +2630,16 @@ const Page = {
     try {
       await api(`/categories/${id}`, json("DELETE", {}));
     } catch (e) {
-      if (e.status !== 400) { toast(e.message, "err"); return; }
-      if (!confirm(`${e.message}\n\nDelete the class AND those annotations?`)) return;
+      // only "still in use" is a question; anything else (a class another
+      // session already removed, say) is an error and the list is refreshed
+      if (e.code !== "category_in_use") {
+        toast(e.message, "err", 4200);
+        try { this.categories = (await api("/project")).categories; this.renderChips(); this.openClassManager(); } catch (e2) {}
+        return;
+      }
+      if (!confirm(`${e.message.replace(/ Pass force=True.*$/, "")}\n\nDelete the class and those annotations?`)) return;
       try { await api(`/categories/${id}`, json("DELETE", { force: true })); }
-      catch (e2) { toast(e2.message, "err"); return; }
+      catch (e2) { toast(e2.message, "err", 4200); return; }
     }
     this.categories = this.categories.filter((c) => c.id !== id);
     delete this.classCounts[cat.name];

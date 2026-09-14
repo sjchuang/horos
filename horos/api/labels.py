@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from horos.api.manifest import capability
 from horos.core.dataset import Category, default_color
 from horos.core.project import Project
-from horos.errors import ProjectError
+from horos.errors import CategoryInUseError, ProjectError
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +110,7 @@ def delete_category(project: Project, category_id: int, *, force: bool = False) 
     referencing annotations are deleted too (each image's version bumps, so
     concurrent annotator sessions see a conflict instead of stale state).
     """
-    _find(project, category_id)
+    category = _find(project, category_id)
     referencing: dict[int, int] = {}  # image_id -> count
     for record in project.list_images():
         stored = project.load_annotations(record.id)
@@ -119,9 +119,10 @@ def delete_category(project: Project, category_id: int, *, force: bool = False) 
             referencing[record.id] = hits
     total = sum(referencing.values())
     if total and not force:
-        raise ProjectError(
-            f"Category {category_id} is referenced by {total} annotation(s) across "
-            f"{len(referencing)} image(s). Pass force=True to delete them too."
+        raise CategoryInUseError(
+            f"'{category.name}' is used by {total} annotation(s) on {len(referencing)} "
+            f"photo(s). Pass force=True to delete them too.",
+            annotations=total, images=len(referencing),
         )
     for image_id in referencing:
         stored = project.load_annotations(image_id)

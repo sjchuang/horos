@@ -105,10 +105,10 @@ def test_category_crud(client):
     assert deleted.get_json()["deleted_annotations"] == 0
 
 
-def test_delete_referenced_category_is_400_without_force(client, project):
+def test_delete_referenced_category_is_409_without_force(client, project):
     cat_id = project.categories[0].id
     response = client.delete(f"/api/v1/categories/{cat_id}", json={})
-    assert response.status_code == 400
+    assert response.status_code == 409
     forced = client.delete(f"/api/v1/categories/{cat_id}", json={"force": True})
     assert forced.status_code == 200
     assert forced.get_json()["deleted_annotations"] > 0
@@ -133,3 +133,16 @@ def test_merge_categories_route(client, project):
     ).status_code == 400
     assert client.post("/api/v1/categories/merge", json={"sources": [1]}).status_code == 400
 
+
+def test_deleting_a_class_in_use_is_a_409_with_its_own_code(client):
+    """The annotate page confirms only on category_in_use; a missing class is
+    a plain error (the user saw both as bare 400s in the log)."""
+    anns = client.get("/api/v1/images/1/annotations").get_json()["annotations"]
+    used_id = anns[0]["category_id"]
+    r = client.delete(f"/api/v1/categories/{used_id}", json={})
+    assert r.status_code == 409
+    body = r.get_json()["error"]
+    assert body["code"] == "category_in_use"
+    assert body["details"]["annotations"] >= 1 and " is used by " in body["message"]
+    r = client.delete("/api/v1/categories/999", json={})
+    assert r.status_code == 400 and r.get_json()["error"]["code"] == "project_error"
