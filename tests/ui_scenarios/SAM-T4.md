@@ -30,8 +30,13 @@ horos ui <project>
 
 ### C. 接受與輸出型別
 
-8. Enter(或按「Accept」):形狀以當前類別加入(polygon),工具維持在 SAM,狀態清空,
-   可立刻點下一個物體;Auto Save 開著會在 0.5 s 後儲存,Ctrl+Z 可還原
+8. Enter(或按「Accept」):跳出「Which class?」選單,輸入框已帶入目前類別(全選狀態)、
+   對應 chip 高亮:再按 Enter 沿用,直接打字可換類別,點 chip 也可;Esc/Discard 丟棄這個形狀。
+   形狀以選定類別加入(polygon),工具維持在 SAM,狀態清空,可立刻點下一個物體;
+   Auto Save 開著會在 0.5 s 後儲存,Ctrl+Z 可還原
+8b. 選單裡勾「Keep this class for the next objects」(記在 localStorage `horos_keep_class`,預設不勾):
+   之後 Enter 直接以 Object Class 的類別寫入、不再跳選單;Object Class 清空時仍會問。
+   取消勾選要再開一次選單(清空 Object Class 後 Enter)
 9. Output 切成 Box:預覽變成 mask 的外接矩形,Enter 加入的是 rectangle
 9b. 「Points ≤」步進器(預設空白 = 完整輪廓):填 16 後正在預覽的 mask 立刻重算成最多 16 個控制點,
     右側顯示「n points」;數值會記住(localStorage),也套用到 ⬠ / P 與「Boxes to polygons」的轉換;

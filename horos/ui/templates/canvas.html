@@ -547,6 +547,10 @@
            style="width:100%" autocomplete="off">
     <datalist id="label-datalist"></datalist>
     <div id="label-chips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px"></div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;color:var(--dim);cursor:pointer"
+           title="Skip this menu: every new object takes the current class until you change it in Object Class">
+      <input type="checkbox" id="label-keep"> Keep this class for the next objects
+    </label>
     <div style="display:flex;gap:6px;margin-top:10px">
       <button class="btn primary" id="label-ok" style="flex:1">Use</button>
       <button class="btn" id="label-cancel">Discard</button>
@@ -562,7 +566,7 @@
       <tr><td>1 / 2 / 3</td><td>Draw ✦ (click the object) / Edit ✎ / Prompt T</td></tr>
       <tr><td>Edit: click an edge</td><td>add a control point there</td></tr>
       <tr><td>Edit: drop a point on another</td><td>merge them (points in between go too)</td></tr>
-      <tr><td>Enter / Space</td><td>Draw ✦: accept the mask (asks for the class when it is blank)</td></tr>
+      <tr><td>Enter / Space</td><td>Draw ✦: accept the mask — the class menu opens with the current class; Enter again keeps it (tick “Keep this class” to skip the menu)</td></tr>
       <tr><td>+</td><td>Draw ✦: keep this mask as one part of the object, click its next piece; Enter finishes the object</td></tr>
       <tr><td>P</td><td>selected box → polygon (SAM uses the box as its prompt)</td></tr>
       <tr><td>A / D</td><td>previous / next image</td></tr>
@@ -2333,11 +2337,13 @@ const Page = {
     this.renderChips();
     this._drawCanvas();
   },
-  // the class for a new shape: what is typed in Object Class, else ask
+  // the class for a new shape: the menu, pre-filled with the current class so
+  // Enter twice keeps it — unless "Keep this class" is ticked, in which case
+  // the current class is used silently (an empty Object Class still asks)
   async _labelFor() {
     const typed = $("class-input").value.trim();
-    if (typed) { this._rememberClass(typed); return typed; }
-    const name = await this._askLabel();
+    if (typed && this._keepClass()) { this._rememberClass(typed); return typed; }
+    const name = await this._askLabel(typed);
     if (name) {
       $("class-input").value = name;
       this.sessionNames.add(name);
@@ -2352,6 +2358,11 @@ const Page = {
   _rememberClass(name) {
     try { localStorage.setItem("horos_last_class", name); } catch (e) {}
   },
+  // "Keep this class for the next objects" — a working preference kept in
+  // the browser; off by default so every object gets a deliberate class
+  _keepClass() {
+    try { return localStorage.getItem("horos_keep_class") === "1"; } catch (e) { return false; }
+  },
   _applyRememberedClass() {
     if ($("class-input").value.trim()) return;  // the user already typed one
     let last = null;
@@ -2360,12 +2371,16 @@ const Page = {
     const pick = last && names.includes(last) ? last : (names.length === 1 ? names[0] : null);
     if (pick) { $("class-input").value = pick; this._samSyncButtons(); }
   },
-  _askLabel() {
+  _askLabel(prefill = "") {
     return new Promise((resolve) => {
       const modal = $("label-modal"), input = $("label-input");
       $("label-datalist").innerHTML = this.categories.map((c) => `<option value="${c.name}">`).join("");
       $("label-chips").innerHTML = this._visibleCategories().map((c) => `
-        <span class="chip" data-name="${c.name}"><span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
+        <span class="chip ${c.name === prefill ? "on" : ""}" data-name="${c.name}"><span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
+      $("label-keep").checked = this._keepClass();
+      $("label-keep").onchange = (e) => {
+        try { localStorage.setItem("horos_keep_class", e.target.checked ? "1" : "0"); } catch (err) {}
+      };
       const cleanup = () => {
         input.removeEventListener("keydown", onKey);
         $("label-ok").onclick = null; $("label-cancel").onclick = null;
@@ -2381,10 +2396,11 @@ const Page = {
       $("label-ok").onclick = ok;
       $("label-cancel").onclick = () => finish(null);
       input.addEventListener("keydown", onKey);
-      input.value = "";
+      input.value = prefill;
       this._labelPrompt = true;
       modal.style.display = "flex";
       input.focus();
+      if (prefill) input.select();  // Enter keeps it, typing replaces it
     });
   },
 

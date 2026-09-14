@@ -195,3 +195,10 @@ def test_canvas_grid_filters_by_class_and_remembers_the_review_threshold(client)
     assert 'q.set("category_id"' in html
     assert 'id="review-threshold" min="0" max="1" step="0.01" value="0.5"' in html
     assert "horos_review_threshold" in html
+
+
+def test_canvas_class_menu_offers_to_keep_the_class(client):
+    """SAM-T4 step 8/8b: accept opens the class menu; a tick skips it next time."""
+    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    assert 'id="label-keep"' in html and "horos_keep_class" in html
+    assert "_askLabel(typed)" in html
