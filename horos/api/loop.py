@@ -108,6 +108,10 @@ Strategy = Literal["auto", "pal", "diversity", "random"]
 #: a detection counts as "final" for PAL scoring at or above this confidence;
 #: the backends report raw candidates below it (down to their own floor)
 SCORE_THRESHOLD = 0.3
+#: pseudo-labels of one class overlapping at least this much are one object:
+#: RF-DETR has no NMS of its own, so a young model answers one object with
+#: several queries and the annotator saw the same class stacked on it
+PRELABEL_NMS_IOU = 0.5
 #: background job kinds the loop page owns — LoopStatus.job reports the one in flight
 LOOP_JOB_KINDS = ("loop-select", "loop-preannotate", "embeddings")
 #: labeled images used to fit PAL's logistic classifiers per round — a cap
@@ -577,11 +581,11 @@ def _preannotate_images(
     are reused, so a PAL round costs no second inference. Images that
     already hold confirmed annotations are left alone. Returns the summary
     dict via StopIteration.value; use `result = yield from ...`."""
-    from horos.api.autolabel import _ensure_categories, _write_pending
+    from horos.api.autolabel import _ensure_categories, _iou, _write_pending
     from horos.backends.base import ProgressUpdated
 
     by_id = {r.id: r for r in project.list_images()}
-    images = annotations = 0
+    images = annotations = duplicates = 0
     for n, image_id in enumerate(image_ids):
         if cancel is not None and cancel.is_set():
             raise _Cancelled()
@@ -595,9 +599,14 @@ def _preannotate_images(
         if pred is None:
             pred = backend.infer_one(project.image_path(record), threshold=threshold)
         detections, polygons = [], []
-        for inst in pred.instances:
+        # highest score first, then per-class NMS: one pseudo-label per object
+        ranked = sorted((i for i in pred.instances if i.score >= threshold), key=lambda i: -i.score)
+        for inst in ranked:
             name = inst.category_name or name_of.get(inst.category_id)
-            if name is None or inst.score < threshold:
+            if name is None:
+                continue
+            if any(c == name and _iou(b, inst.bbox) >= PRELABEL_NMS_IOU for c, b, _ in detections):
+                duplicates += 1
                 continue
             detections.append((name, inst.bbox, inst.score))
             # a segmentation scorer's polygon rides along unless boxes were asked for
@@ -621,7 +630,8 @@ def _preannotate_images(
             current=n + 1, total=len(image_ids), phase=phase,
             message=f"{record.file_name}: {len(detections)} pre-label(s)",
         )
-    return {"images": images, "annotations": annotations, "threshold": threshold}
+    return {"images": images, "annotations": annotations, "threshold": threshold,
+            "duplicates_dropped": duplicates, "nms_iou": PRELABEL_NMS_IOU}
 
 
 def select_round_events(

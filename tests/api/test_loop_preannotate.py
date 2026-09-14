@@ -70,6 +70,43 @@ def test_pal_round_prelabels_its_picks_without_a_second_inference_pass(tmp_path)
     assert len(human) == 1 and human[0].status == "confirmed"
 
 
+def test_one_pseudo_label_per_object_even_when_the_model_stacks_queries(tmp_path):
+    """RF-DETR has no NMS: a young model answers one object with several
+    queries of the same class, and the annotator saw the class stacked on
+    it several times. Per-class NMS keeps the best box; a different class on
+    the same spot is a real ambiguity and stays."""
+    from horos.backends.base import ImagePrediction, PredictedInstance
+
+    class Stacking(FakeDetector):
+        def infer_one(self, image, *, threshold=0.5):
+            self.seen.append(str(image))
+            mk = lambda name, box, score: PredictedInstance(  # noqa: E731
+                bbox=box, score=score, category_id=0, category_name=name)
+            inst = [mk("box", (10, 10, 30, 20), 0.9), mk("box", (11, 11, 29, 19), 0.8),
+                    mk("box", (12, 9, 30, 21), 0.6), mk("pallet", (10, 10, 30, 20), 0.7),
+                    mk("box", (40, 5, 20, 20), 0.5)]
+            return ImagePrediction(image=str(image), width=64, height=48,
+                                   instances=[i for i in inst if i.score >= threshold],
+                                   candidates=inst)
+
+    project = _project(tmp_path, ["red"] * 4, labeled={1: "box"})
+    record = _select(project, count=2, detector=Stacking(), detector_label="fake-run")
+    for image_id in record.image_ids:
+        pending = _pending(project, image_id)
+        by_class = {}
+        for a in pending:
+            by_class.setdefault(a.category_id, []).append(a)
+        names = {c.id: c.name for c in project.categories}
+        assert sorted(names[c] for c in by_class) == ["box", "pallet"]
+        box_id = next(c for c in by_class if names[c] == "box")
+        boxes = sorted(by_class[box_id], key=lambda a: -a.score)
+        # the best of the stack plus the other object
+        assert len(boxes) == 2 and boxes[0].score == pytest.approx(0.9)
+    # two stacked queries dropped on each of the 2 photos
+    assert record.preannotation["duplicates_dropped"] == 2 * 2
+    assert record.preannotation["nms_iou"] == 0.5
+
+
 def test_cold_start_round_is_prelabeled_by_the_zero_shot_stand_in(tmp_path):
     project = _project(tmp_path, ["red", "green", "blue", "grey"])
     detector = FakeDetector()
