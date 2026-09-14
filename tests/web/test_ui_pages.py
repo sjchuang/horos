@@ -73,14 +73,14 @@ def test_experiments_page_holds_the_comparison_table_and_editor(client):
     assert "/experiments/runs" in html and "/experiments/compare" in html
 
 
-def test_loop_page_is_the_four_step_shell_and_embeds_the_canvas(client):
+def test_loop_page_is_the_four_step_shell_without_a_canvas(client):
     """E10-T17 (reversed 2026-09-14): /loop is the four-step loop, /annotate the
-    annotator; the loop's Label step embeds the annotator."""
+    annotator; the Label step links to the annotate page instead of embedding it."""
     shell = client.get("/loop").get_data(as_text=True)
     for element in ("steps", "panel-select", "panel-label", "panel-train", "panel-review",
-                    "annotator", "btn-select", "btn-train", "btn-next-round"):
+                    "btn-open-annotate", "btn-select", "btn-train", "btn-next-round"):
         assert f'id="{element}"' in shell, element
-    assert "/annotate?embed=1&round=" in shell and 'href="/annotate"' in shell
+    assert "<iframe" not in shell and "embed=1" not in shell and 'href="/annotate"' in shell
     assert "/loop/rounds" in shell and "/loop/readiness" in shell
     canvas = client.get("/annotate?embed=1&round=1").get_data(as_text=True)
     assert 'id="anno-canvas"' in canvas and 'id="skip-modal"' in canvas

@@ -113,7 +113,7 @@ prediction under it; one tick keeps a class for the next objects.
 
 The loop is a four-step page you can follow without reading any help text:
 **Select → Label → Train → Review**, then the next round. Its Label step
-embeds the same annotator on the round's photos.
+opens the annotate page on the round's photos and tracks the progress.
 
 - **Select.** Choose how many photos the round should have (a fixed count, or a
   percentage of the unlabeled pool). With no labels yet, the batch is spread
@@ -125,7 +125,7 @@ embeds the same annotator on the round's photos.
   budgets and a similarity penalty. Every pick records its score and reason.
   Pick the model family (boxes or segmentation), pseudo-labeling on/off and
   box vs. polygon shapes right here; the choices persist per project.
-- **Label.** The keyboard-first canvas opens on the round's photos, pre-filled
+- **Label.** The annotate page opens on the round's photos, pre-filled
   with pending pseudo-labels to correct instead of a blank image. Boxes and
   polygons are drawn by clicking with SAM 2.1; the edit tool adds a vertex on
   an edge click and merges vertices when one is dragged onto another. Photos

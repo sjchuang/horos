@@ -115,9 +115,6 @@
   .ring .track { stroke: var(--line); }
   .ring .fill { stroke: var(--ok); transition: stroke-dasharray .3s; }
   .label-layout { display: grid; grid-template-columns: 1fr 300px; gap: 14px; margin-top: 14px; }
-  iframe#annotator { width: 100%; height: calc(100vh - 172px); min-height: 480px; border: 1px solid var(--line);
-                     border-radius: 12px; background: var(--bg); }
-  body.label-expanded iframe#annotator { height: calc(100vh - 330px); }
   .reasons { margin: 8px 0 0; padding: 0; list-style: none; }
   .reasons li { display: flex; gap: 8px; align-items: center; color: var(--warn); font-size: 12px; margin: 4px 0; }
   .reasons li svg { width: 14px; height: 14px; flex: none; }
@@ -280,11 +277,11 @@
         </div>
         <span class="badge tip" id="prelabel-badge" data-tip="" style="display:none;flex:none"></span>
         <span class="muted" id="reasons-compact" style="flex:none;max-width:34vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
-        <a class="btn" id="btn-open-annotate" href="/annotate" title="Open the annotate page on this round's photos (full window)" style="flex:none">
+        <a class="btn primary" id="btn-open-annotate" href="/annotate" title="Label this round's photos in the annotate page" style="flex:none">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Annotate</a>
-        <button class="btn primary" id="btn-train" disabled style="flex:none">
+        <button class="btn" id="btn-train" disabled style="flex:none">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Train</button>
@@ -308,7 +305,6 @@
         <ul class="reasons" id="reasons"></ul>
       </div>
     </div>
-    <iframe id="annotator" title="annotator" style="margin-top:10px"></iframe>
   </section>
 
   <!-- ------------------------------------------------------------- 3 train -->
@@ -421,25 +417,6 @@ const Loop = {
     $("btn-stop").onclick = () => this.stop();
     $("btn-next-round").onclick = () => this.closeRound();
     $("btn-finish").onclick = () => this.closeRound("Done", true);
-    window.addEventListener("message", (e) => {
-      if (e.data && e.data.type === "horos-round") this.onRoundProgress(e.data);
-    });
-    // shortcuts work wherever the focus is: keystrokes on this page are
-    // forwarded to the embedded canvas (unless typing into a field here)
-    window.addEventListener("keydown", (e) => {
-      const frame = $("annotator");
-      if (!frame || !frame.contentWindow || !$("panel-label").classList.contains("on")) return;
-      const tag = (e.target.tagName || "").toUpperCase();
-      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.isComposing) return;
-      frame.contentWindow.postMessage({
-        type: "horos-key", code: e.code, key: e.key, ctrlKey: e.ctrlKey, metaKey: e.metaKey,
-        shiftKey: e.shiftKey, altKey: e.altKey,
-      }, "*");
-      if ((e.ctrlKey || e.metaKey) && ["KeyS", "KeyZ"].includes(e.code)) e.preventDefault();
-      if (["KeyA", "KeyD", "KeyS", "Space", "Backspace"].includes(e.code)) e.preventDefault();
-    });
-    $("annotator").addEventListener("load", () => { try { $("annotator").contentWindow.focus(); } catch (err) {} });
-    $("annotator").addEventListener("mouseenter", () => { try { $("annotator").contentWindow.focus(); } catch (err) {} });
     window.addEventListener("resize", () => { if (this.status) { this.drawChart(); this.drawSpark(); } });
     await this.refresh();
   },
@@ -681,10 +658,10 @@ const Loop = {
     $("names").innerHTML = names.map((n) => `<span class="name ${n === this.annotator ? "on" : ""}" data-n="${n}">${n}</span>`).join("");
     $("names").querySelectorAll(".name").forEach((el) => { el.onclick = () => this.setAnnotator(el.dataset.n); });
     if (names.length && !names.includes(this.annotator)) this.annotator = "";
+    // labeling happens on the annotate page (the user dropped the embedded
+    // canvas, 2026-09-14); progress comes back through the 5 s poll below
     const who = this.annotator ? "&annotator=" + encodeURIComponent(this.annotator) : "";
-    const src = `/annotate?embed=1&round=${cur.number}${who}`;
-    if ($("annotator").getAttribute("src") !== src) $("annotator").setAttribute("src", src);
-    $("btn-open-annotate").href = `/annotate?round=${cur.number}${who}`;  // same queue, full page
+    $("btn-open-annotate").href = `/annotate?round=${cur.number}${who}`;
     this.updateRing(picks);
     await this.renderReadiness();
     clearTimeout(this.pollTimer);  // renderLabel re-runs after a settings change
@@ -716,12 +693,6 @@ const Loop = {
     const frac = total ? done / total : 0;
     $("ring-fill").style.width = `${Math.round(100 * frac)}%`;
     $("ring-text").textContent = `${done}/${total}`;
-  },
-  onRoundProgress(data) {
-    if (!this.status.current || data.round !== this.status.current.number) return;
-    this.setRing(data.labeled, data.total);
-    if (data.done) toast("Round done — train when ready", "ok", 3200);
-    this.renderReadiness();
   },
   async renderReadiness() {
     const r = await api("/loop/readiness");
