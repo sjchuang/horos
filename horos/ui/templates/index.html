@@ -78,6 +78,18 @@
              border-radius: 4px; padding: 1px 6px;
              display: inline-block; white-space: nowrap; }
   .hidden { display: none; }
+  /* rarely-touched sections fold away; the page stays one screen (user request 2026-09-14) */
+  details.fold > summary { cursor: pointer; list-style: none; color: var(--dim); font-size: 14px;
+                           text-transform: uppercase; letter-spacing: .08em; user-select: none; }
+  details.fold > summary::-webkit-details-marker { display: none; }
+  details.fold > summary .sub { text-transform: none; letter-spacing: 0; margin-left: 8px; }
+  details.fold[open] > summary { margin-bottom: 12px; }
+  details.fold.inner { margin-top: 18px; }
+  /* the reset lives in a quiet fold at the very end: plain text until opened */
+  details.quiet { padding: 0 18px; }
+  details.quiet > summary { font-size: 12px; text-transform: none; letter-spacing: 0; color: var(--dim);
+                            opacity: .7; }
+  details.quiet > summary:hover { opacity: 1; }
   dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line);
            border-radius: 10px; padding: 20px; max-width: 480px; }
   dialog::backdrop { background: rgba(0, 0, 0, .55); }
@@ -140,13 +152,13 @@
 </header>
 <main>
   <section class="panel">
-    <h2>Upload dataset</h2>
+    <h2>Upload</h2>
     <div id="dropzone">
       <input type="file" id="file-input" accept=".zip">
-      <p><strong>Drop a dataset .zip here</strong> or click to choose a file</p>
-      <p>COCO (<code>_annotations.coco.json</code>), YOLO (<code>data.yaml</code>),
-         Pascal VOC, Darknet, VIA (<code>via_region_data.json</code>), or LabelMe
-         (one <code>.json</code> per image) — format is detected automatically</p>
+      <p><strong>Drop a .zip here</strong> or click to choose</p>
+      <p style="font-size:12px;margin:4px 0 0"
+         title="COCO: _annotations.coco.json · YOLO: data.yaml · VIA: via_region_data.json · LabelMe: one .json per image · Pascal VOC and Darknet by their files">
+        COCO · YOLO · VOC · Darknet · VIA · LabelMe — detected automatically</p>
     </div>
     <div id="upload-progress-row" class="hidden">
       <div class="bar"><div id="upload-bar"></div></div>
@@ -156,9 +168,8 @@
   </section>
 
   <dialog id="conflict-dialog">
-    <h3>Some file names already exist</h3>
-    <p>These images are already in the project with <strong>different</strong> content.
-       Identical duplicates are skipped automatically.</p>
+    <h3>Same names, different content</h3>
+    <p>These photos already exist with other content. Identical copies are skipped.</p>
     <ul id="conflict-list"></ul>
     <div class="actions">
       <button data-policy="">Cancel</button>
@@ -169,18 +180,17 @@
   </dialog>
 
   <dialog id="class-names-dialog">
-    <h3>Class names needed</h3>
-    <p>This dataset doesn't name its classes.
-       Edit the class names below before importing.</p>
+    <h3>Name the classes</h3>
+    <p>This dataset has no class names.</p>
     <div id="class-names-list"></div>
     <div class="actions">
       <button data-ok="">Cancel</button>
-      <button data-ok="1" class="primary">Import with these names</button>
+      <button data-ok="1" class="primary">Import</button>
     </div>
   </dialog>
 
   <section class="panel hidden" id="summary-panel">
-    <h2>Dataset summary</h2>
+    <h2>Dataset</h2>
     <div class="cards">
       <div class="card"><div class="num" id="n-images">0</div><div class="label">images</div></div>
       <div class="card"><div class="num" id="n-annotations">0</div><div class="label">annotations</div></div>
@@ -188,20 +198,14 @@
       <div class="card"><div class="num" id="n-splits">—</div><div class="label">train / valid / test</div></div>
       <div class="card"><div class="num" id="n-unlabeled">—</div><div class="label">unlabeled · in no set</div></div>
     </div>
-    <h2 style="margin-top:18px">Instances per class</h2>
+    <h2 style="margin-top:18px">Classes</h2>
     <table id="class-table">
       <thead><tr><th>class</th><th>instances</th><th>images</th><th style="width:40%"></th></tr></thead>
       <tbody></tbody>
     </table>
-    <h2 style="margin-top:18px">Splits</h2>
-    <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
-      Only labeled photos belong to a set. A photo joins train / valid / test the first time it is
-      labeled, by a stable hash in these shares, and never changes set — so the test set is never
-      trained on. Unlabeled photos are in no set.</p>
-    <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
-      Training uses this allocation: <code>train</code> trains,
-      <code>valid</code> validates and picks the best checkpoint,
-      <code>test</code> is never touched by training.</p>
+    <details class="fold inner" id="splits-fold">
+      <summary title="Only labeled photos belong to a set. A photo joins train / valid / test the first time it is labeled, by a stable hash in these shares, and never moves — so test is never trained on. valid picks the best checkpoint.">
+        Splits<span class="sub" id="splits-note"></span></summary>
     <div id="split-controls" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
       <label class="split-label">train %
         <span class="stepper narrow"><input type="number" id="split-train" value="80" min="1" max="100" step="5">
@@ -228,22 +232,7 @@
         Reshuffle…</button>
       <span id="split-status" style="color:var(--dim);font-size:13px"></span>
     </div>
-  </section>
-
-  <section class="panel hidden" id="danger-panel">
-    <h2 style="color:var(--err)">Danger zone</h2>
-    <p style="color:var(--dim);font-size:13px;margin:0 0 10px">
-      Delete every image and annotation of this project to start over. Training runs keep
-      their own dataset snapshots and are not touched. Images another annotator is
-      working on right now are skipped.</p>
-    <div class="row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <label style="display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px;cursor:pointer">
-        <input type="checkbox" id="clear-classes"> also delete the class list</label>
-      <button id="clear-btn" style="background:var(--bg);color:var(--err);
-        border:1px solid var(--err);border-radius:6px;padding:6px 14px;cursor:pointer">
-        Delete all images and annotations…</button>
-      <span id="clear-status" style="color:var(--dim);font-size:13px"></span>
-    </div>
+    </details>
   </section>
 
   <section class="panel hidden" id="issues-panel">
@@ -257,13 +246,25 @@
     </div>
   </section>
 
-  <section class="panel">
-    <h2>Available models</h2>
+  <details class="panel fold" id="models-fold">
+    <summary>Models<span class="sub">· licenses</span></summary>
     <table id="models-table">
       <thead><tr><th>model</th><th>input</th><th>params</th><th>latency</th><th>license</th></tr></thead>
       <tbody></tbody>
     </table>
-  </section>
+  </details>
+
+  <details class="fold quiet hidden" id="danger-panel">
+    <summary title="Delete every photo and annotation of this project to start over. Training runs keep their own snapshots; photos another annotator holds right now are skipped.">Reset project…</summary>
+    <div class="row" style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <label style="display:flex;align-items:center;gap:6px;color:var(--dim);font-size:13px;cursor:pointer">
+        <input type="checkbox" id="clear-classes"> also delete the classes</label>
+      <button id="clear-btn" style="background:var(--bg);color:var(--err);
+        border:1px solid var(--err);border-radius:6px;padding:6px 14px;cursor:pointer">
+        Delete all photos and annotations…</button>
+      <span id="clear-status" style="color:var(--dim);font-size:13px"></span>
+    </div>
+  </details>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
@@ -289,6 +290,8 @@ async function refreshProject() {
       $("split-valid").value = Math.round(p.split_ratios.valid * 100);
       $("split-test").value = Math.round(p.split_ratios.test * 100);
       $("split-seed").value = p.split_seed;
+      $("splits-note").textContent = `· ${Math.round(p.split_ratios.train * 100)} / `
+        + `${Math.round(p.split_ratios.valid * 100)} / ${Math.round(p.split_ratios.test * 100)} %`;
     }
     $("project-name").textContent = p.name;
     $("project-name").title = p.root;   // full path on hover
@@ -305,7 +308,7 @@ async function refreshProject() {
 $("clear-btn").addEventListener("click", async () => {
   if (!projectName) return;
   const typed = prompt(
-    `Delete EVERY image and annotation of "${projectName}"?\n\n`
+    `Delete every photo and annotation of "${projectName}"?\n\n`
     + `Training runs are kept. Type the project name to confirm:`);
   if (typed === null) return;
   const status = $("clear-status");
