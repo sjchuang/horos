@@ -109,6 +109,9 @@ def test_history_readiness_assign_and_queue_routes(client):
     # training is refused with the readiness reasons, not a stack trace
     resp = client.post("/api/v1/loop/rounds/1/train", json={})
     assert resp.status_code == 400 and "Not ready to train" in resp.get_data(as_text=True)
+    assert "short_classes" in ready and "ready_without_short" in ready
+    resp = client.post("/api/v1/loop/rounds/1/train", json={"ignore_short_classes": True})
+    assert resp.status_code == 400  # six photos: dropping classes does not help either
     assert client.post("/api/v1/loop/rounds/1/train", json={"epochs": 0}).status_code == 400
     status = client.get("/api/v1/loop/rounds/1/training").get_json()
     assert status["round"]["number"] == 1 and status["training"] is None

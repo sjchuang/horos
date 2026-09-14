@@ -1029,6 +1029,12 @@ class TrainReadiness(BaseModel):
     test_images: int = 0
     #: what still blocks training; empty when ready
     reasons: list[str] = Field(default_factory=list)
+    #: classes below the per-class minimum — the ones "train without them" drops
+    short_classes: list[str] = Field(default_factory=list)
+    #: would training be possible with the short classes left out of the run?
+    ready_without_short: bool = False
+    #: labeled images that still carry a kept class in that case
+    labeled_without_short: int = 0
 
 
 def _confirmed_instances(project: Project, labeled: set[int]) -> dict[str, int]:
@@ -1056,6 +1062,10 @@ def train_readiness(
     min_images: int = MIN_LABELED_IMAGES,
     min_instances: int = MIN_INSTANCES_PER_CLASS,
 ) -> TrainReadiness:
+    """Blockers for training now. `short_classes` are the classes under the
+    per-class minimum; `ready_without_short` says whether dropping them from
+    the run (TrainRunConfig.categories) would clear every blocker — the
+    "train without them" option the user asked for (E10-T8)."""
     labeled = _labeled_ids(project)
     instances = _confirmed_instances(project, labeled)
     reasons: list[str] = []
@@ -1065,18 +1075,36 @@ def train_readiness(
         )
     if not instances:
         reasons.append("no confirmed annotations yet")
-    for name, count in sorted(instances.items()):
-        if count < min_instances:
-            reasons.append(
-                f"class '{name}' has {count} instance(s); needs at least {min_instances}"
-            )
+    short = sorted(name for name, count in instances.items() if count < min_instances)
+    for name in short:
+        reasons.append(
+            f"class '{name}' has {instances[name]} instance(s); needs at least {min_instances}"
+        )
+    kept = {name for name in instances if name not in short}
+    without = _images_with_classes(project, labeled, kept) if kept and short else set()
+    ready_without = bool(short) and bool(kept) and len(without) >= min_images
     by_id = {r.id: r for r in project.list_images()}
     valid = sum(1 for i in labeled if by_id[i].split == "valid")
     test = sum(1 for i in labeled if by_id[i].split == "test")
     return TrainReadiness(
         ready=not reasons, labeled_images=len(labeled), instances=instances,
         validation_images=valid, test_images=test, reasons=reasons,
+        short_classes=short, ready_without_short=ready_without,
+        labeled_without_short=len(without),
     )
+
+
+def _images_with_classes(project: Project, labeled: set[int], names: set[str]) -> set[int]:
+    """Labeled images carrying at least one confirmed instance of `names`."""
+    by_name = {c.name: c.id for c in project.categories}
+    wanted = {by_name[n] for n in names if n in by_name}
+    return {
+        image_id for image_id in labeled
+        if any(
+            a.status == "confirmed" and a.category_id in wanted
+            for a in project.load_annotations(image_id).annotations
+        )
+    }
 
 
 def _assign_holdouts(project: Project, labeled: set[int]) -> dict:
@@ -1143,6 +1171,7 @@ def train_round(
     extra: dict | None = None,
     entrypoint_override: str | None = None,
     warm_start: bool | None = None,
+    ignore_short_classes: bool = False,
 ) -> LoopRound:
     """Start training for a round in state "labeling". Newly labeled photos
     are first bucketed into test / valid / train (see _assign_holdouts), only
@@ -1153,14 +1182,31 @@ def train_round(
     With the loop's training set to "continue" (or `warm_start=True`) the run
     starts from the newest completed run of the same model: weights kept,
     optimizer fresh, class head resized to today's classes. Without such a
-    run — or with "fresh" — it starts from the published weights."""
+    run — or with "fresh" — it starts from the published weights.
+
+    `ignore_short_classes=True` trains without the classes under the
+    per-class minimum: their annotations leave the snapshot and photos that
+    carry nothing else leave with them (TrainRunConfig.categories,
+    include_background=False), so the run learns the classes that have
+    enough labels while the short ones keep collecting."""
     record = _reconcile_round(project, load_round(project, number))
     if record.state != "labeling":
         raise ProjectError(
             f"Round {number} is '{record.state}'; training starts from 'labeling'"
         )
     readiness = train_readiness(project)
-    if not readiness.ready:
+    categories: list[str] | None = None
+    ignored: list[str] = []
+    if ignore_short_classes and readiness.short_classes:
+        if not readiness.ready_without_short:
+            others = [r for r in readiness.reasons if not r.startswith("class '")]
+            raise ProjectError(
+                "Not ready to train even without the short classes: "
+                + ("; ".join(others) or "no class has enough labels")
+            )
+        ignored = readiness.short_classes
+        categories = sorted(n for n in readiness.instances if n not in ignored)
+    elif not readiness.ready:
         raise ProjectError("Not ready to train: " + "; ".join(readiness.reasons))
     labeled = _labeled_ids(project)
     settings = get_loop_settings(project)
@@ -1190,6 +1236,7 @@ def train_round(
         device=device, seed=seed, image_ids=sorted(labeled), extra=extra or {},
         init_from=source.checkpoint if init_from else None,
         entrypoint_override=entrypoint_override,
+        categories=categories,
     )
     run = start_training(project, config)
     record = record.model_copy(update={
@@ -1199,6 +1246,11 @@ def train_round(
             "init_from": init_from, "init_reason": init_reason,
             "labeled_images": len(labeled), "holdout": holdout,
             "labeled_in_round": sum(1 for i in record.image_ids if i in labeled),
+            "ignored_classes": ignored,
+            "ignored_reason": (
+                f"trained without {', '.join(ignored)}: fewer than "
+                f"{MIN_INSTANCES_PER_CLASS} instances each" if ignored else None
+            ),
         },
     }).advance("training")
     return save_round(project, record)

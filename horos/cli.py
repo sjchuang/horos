@@ -560,6 +560,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="loop train: start from the published weights instead of continuing from the "
              "previous run of the same model (default: the loop settings, continue)",
     )
+    p.add_argument(
+        "--ignore-short-classes", action="store_true",
+        help="loop train: leave out the classes with too few labels instead of waiting "
+             "for them",
+    )
 
     p = sub.add_parser("ui", help="Start the Web API + WebUI server")
     p.add_argument(
@@ -1130,6 +1135,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     record = api.train_round(
                         project, status.current.number, model=args.model, epochs=args.epochs,
                         device=args.device, warm_start=False if args.fresh else None,
+                        ignore_short_classes=args.ignore_short_classes,
                     )
                     print(  # noqa: T201
                         f"training run {record.train_run_id} started for round {record.number}; "

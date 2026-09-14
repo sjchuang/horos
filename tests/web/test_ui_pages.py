@@ -231,3 +231,11 @@ def test_annotate_defaults_to_the_to_do_queue_and_offers_the_open_round(client):
     assert 'cur.state === "labeling"' in canvas and "to label" in canvas
     loop = client.get("/loop").get_data(as_text=True)
     assert 'id="btn-open-annotate"' in loop and "/annotate?round=" in loop
+
+
+def test_loop_page_offers_training_without_short_classes(client):
+    """E10-T8: when only the per-class minimum blocks, a second button trains
+    without those classes."""
+    html = client.get("/loop").get_data(as_text=True)
+    assert 'id="btn-train-without"' in html and "ignore_short_classes" in html
+    assert "ready_without_short" in html

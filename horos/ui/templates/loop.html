@@ -281,6 +281,8 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
           Annotate</a>
+        <button class="btn" id="btn-train-without" hidden style="flex:none"
+                title="Train on the classes that have enough labels; the short ones sit this round out"></button>
         <button class="btn" id="btn-train" disabled style="flex:none">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
@@ -410,7 +412,8 @@ const Loop = {
     $("btn-select").onclick = () => this.select();
     $("btn-select-cancel").onclick = () => this.cancelJob();
     $("btn-assign").onclick = () => this.assign();
-    $("btn-train").onclick = () => this.train();
+    $("btn-train").onclick = () => this.train(false);
+    $("btn-train-without").onclick = () => this.train(true);
     $("btn-discard").onclick = () => this.closeRound("Round dropped");
     $("btn-expand").onclick = () => this.setExpanded(!this.expanded);
     this.setExpanded(this.expanded);
@@ -701,6 +704,16 @@ const Loop = {
     $("reasons-compact").textContent = r.ready ? "" : r.reasons[0] + (r.reasons.length > 1 ? ` (+${r.reasons.length - 1})` : "");
     $("reasons-compact").title = r.reasons.join("\n");
     $("btn-train").title = r.ready ? `train on ${r.labeled_images} labeled photos` : "not yet — see below";
+    // only the per-class minimum blocks: offer to train without those classes
+    const without = $("btn-train-without");
+    without.hidden = !(r.ready_without_short && !r.ready);
+    without.disabled = false;
+    if (!without.hidden) {
+      const n = r.short_classes.length;
+      without.textContent = `Train without ${n} class${n > 1 ? "es" : ""}`;
+      without.title = `Train on ${r.labeled_without_short} photos of the classes that have enough labels; `
+        + `${r.short_classes.join(", ")} sit this round out and keep collecting labels`;
+    }
   },
   async assign() {
     const names = $("annotators-input").value.split(",").map((s) => s.trim()).filter(Boolean);
@@ -711,10 +724,11 @@ const Loop = {
       await this.refresh();
     } catch (e) { toast(e.message, "err", 4000); }
   },
-  async train() {
+  async train(withoutShort) {
     try {
-      $("btn-train").disabled = true;
-      await api(`/loop/rounds/${this.status.current.number}/train`, json("POST", {}));
+      $("btn-train").disabled = true; $("btn-train-without").disabled = true;
+      await api(`/loop/rounds/${this.status.current.number}/train`,
+        json("POST", withoutShort ? { ignore_short_classes: true } : {}));
       this.series = {}; this.epochs = null;
       await this.refresh();
     } catch (e) { toast(e.message, "err", 5000); this.renderReadiness(); }
@@ -734,6 +748,7 @@ const Loop = {
   renderTrain(cur) {
     const tr = cur.training || {};
     $("train-badge").innerHTML = `${ICON.loop} round ${cur.number} · ${tr.model || ""}`
+      + (tr.ignored_classes && tr.ignored_classes.length ? ` · without ${tr.ignored_classes.join(", ")}` : "")
       + (tr.init_from ? ` · continues ${tr.init_from}` : tr.init_reason ? " · fresh start" : "");
     $("train-badge").title = tr.init_reason || "";
     this.seen = 0; this.series = {}; this.epochs = null;

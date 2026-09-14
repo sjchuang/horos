@@ -102,7 +102,8 @@ def train_round(number: int):
     if not isinstance(extra, dict):
         raise ProjectError("'extra' must be an object")
     record = api.train_round(
-        _project(), number, model=model, device=body.get("device") or None, extra=extra, **kwargs
+        _project(), number, model=model, device=body.get("device") or None, extra=extra,
+        ignore_short_classes=bool(body.get("ignore_short_classes", False)), **kwargs
     )
     return jsonify(record.model_dump()), 202
 

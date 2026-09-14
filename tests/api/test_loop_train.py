@@ -269,3 +269,40 @@ def test_loop_picks_segmentation_model_when_labels_are_polygons(tmp_path):
     assert trained.training["model"] == "rfdetr-seg-nano"
     assert "instance segmentation" in trained.training["model_reason"]
     _wait(project, trained.train_run_id)
+
+
+def test_readiness_offers_to_train_without_the_short_classes(tmp_path):
+    """Only the per-class minimum blocks: readiness names the short classes
+    and says training without them would work (E10-T8)."""
+    project = _project(tmp_path, total=40, labeled=30, pallet_every=10)
+    ready = train_readiness(project)
+    assert not ready.ready and ready.short_classes == ["pallet"]
+    assert ready.instances == {"box": 27, "pallet": 3}
+    assert ready.ready_without_short and ready.labeled_without_short == 27
+
+    # too few labeled photos overall: dropping classes does not help
+    few = _project(tmp_path / "b", total=12, labeled=10)
+    assert few.root and not train_readiness(few).ready_without_short
+
+
+def test_round_can_train_without_the_short_classes(tmp_path):
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path, total=40, labeled=30, pallet_every=10)
+    record = _open_round(project, count=3)
+    with pytest.raises(ProjectError, match="class 'pallet' has 3"):
+        train_round(project, record.number, entrypoint_override=FAKE, epochs=1)
+
+    trained = train_round(
+        project, record.number, entrypoint_override=FAKE, epochs=1, ignore_short_classes=True
+    )
+    assert trained.training["ignored_classes"] == ["pallet"]
+    assert "without pallet" in trained.training["ignored_reason"]
+    # the snapshot keeps the 27 box photos and their 27 boxes; pallet is gone
+    images, annotations, pending = _snapshot_counts(project, trained.train_run_id)
+    assert (images, annotations, pending) == (27, 27, 0)
+    assert _wait(project, trained.train_run_id).state == "completed"
+
+    few = _project(tmp_path / "b", total=12, labeled=10)
+    rec = _open_round(few)
+    with pytest.raises(ProjectError, match="even without the short classes: 10 labeled"):
+        train_round(few, rec.number, entrypoint_override=FAKE, epochs=1, ignore_short_classes=True)
