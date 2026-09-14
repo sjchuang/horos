@@ -733,13 +733,14 @@ let activeRun = null;
 let seenEvents = 0;
 let pollTimer = null;
 let series = {};   // metric key -> [[step, value], ...]
+let inherited = [];  // metrics events of the runs this one resumed from (drawn first)
 let warnings = [];
 
 function attach(runId, { live }) {
   clearTimeout(pollTimer);
   activeRun = runId;
   seenEvents = 0;
-  series = {};
+  series = {}; inherited = [];
   warnings = [];
   $("run-panel").classList.remove("hidden");
   $("right-empty").classList.add("hidden");
@@ -770,9 +771,14 @@ async function poll() {
     setStatus("Lost contact with the run: " + e.message, "error");
     return;
   }
+  if (s.inherited_events && s.inherited_events.length) {
+    // a resumed run: its parents' epochs come first so the curve is whole
+    inherited = s.inherited_events;
+    inherited.forEach(addMetrics);
+  }
   s.events.forEach(handleEvent);
   seenEvents = s.num_events;
-  renderRun(s.run);
+  renderRun(s.run, s.resumed_from || []);
   if (["queued", "pending", "running"].includes(s.run.state)) {
     // a queued run keeps polling too: the server promotes it when the
     // active run finishes and this same loop starts streaming its events
@@ -804,6 +810,7 @@ function handleEvent(ev) {
     // an OOM backoff restarts training in the same run: fresh curves,
     // and the previous attempt's failure is no longer the current state
     series = {};
+    inherited.forEach(addMetrics);  // the parents' history is not this run's to lose
     $("run-error").classList.add("hidden");
     drawChart();
     renderMetricChips();
@@ -811,10 +818,7 @@ function handleEvent(ev) {
     if (ev.total) $("run-bar").style.width = (100 * ev.current / ev.total) + "%";
     if (ev.phase) $("run-phase").textContent = ev.phase;
   } else if (ev.type === "metrics") {
-    for (const [key, value] of Object.entries(ev.metrics || {})) {
-      if (!Number.isFinite(value)) continue;
-      (series[key] = series[key] || []).push([ev.step, value]);
-    }
+    addMetrics(ev);
     drawChart();
     renderMetricChips();
   } else if (ev.type === "warning") {
@@ -825,7 +829,14 @@ function handleEvent(ev) {
   }
 }
 
-function renderRun(run) {
+function addMetrics(ev) {
+  for (const [key, value] of Object.entries(ev.metrics || {})) {
+    if (!Number.isFinite(value)) continue;
+    (series[key] = series[key] || []).push([ev.step, value]);
+  }
+}
+
+function renderRun(run, resumedFrom = []) {
   $("run-state").textContent = run.state === "queued" ? "pending" : run.state;
   $("run-state").className = "state " + run.state;
   $("run-id").textContent = run.run_id;
@@ -833,7 +844,10 @@ function renderRun(run) {
   const criterionLabel = { map: "best by mAP", smoothed_map: "best by smoothed mAP",
                            loss: "best by val loss" }[criterion];
   $("run-model").textContent = run.model + " · " + run.dataset_images + " images"
-    + (criterionLabel ? " · " + criterionLabel : "");
+    + (criterionLabel ? " · " + criterionLabel : "")
+    + (resumedFrom.length ? ` · resumed ${resumedFrom[0]}` : "");
+  $("run-model").title = resumedFrom.length
+    ? `continues ${resumedFrom.join(" ← ")}; the curve includes their epochs` : "";
   const active = run.state === "pending" || run.state === "running";
   const queued = run.state === "queued";
   $("stop-btn").classList.toggle("hidden", !active);

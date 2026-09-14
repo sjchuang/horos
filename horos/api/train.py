@@ -158,6 +158,13 @@ class TrainStatus(BaseModel):
     run: RunRecord
     events: list[dict[str, Any]] = Field(default_factory=list)  # events[after:]
     num_events: int = 0
+    #: metrics events of the run(s) this one resumed from, oldest first, so a
+    #: resumed run's curves start where training really started instead of
+    #: at the checkpoint's epoch; only filled for a poll from the beginning
+    #: (after == 0). Empty for a run that did not resume
+    inherited_events: list[dict[str, Any]] = Field(default_factory=list)
+    #: run ids of the resume chain, nearest parent first
+    resumed_from: list[str] = Field(default_factory=list)
 
 
 # ------------------------------------------------------------------ run storage
@@ -720,7 +727,63 @@ def training_status(project: Project, run_id: str, *, after: int = 0) -> TrainSt
     run_dir = _run_dir(project, run_id)
     record = _reconcile(run_dir, read_record(run_dir))
     events, num_events = _read_events(run_dir, after)
-    return TrainStatus(run=record, events=events, num_events=num_events)
+    inherited: list[dict[str, Any]] = []
+    chain: list[str] = []
+    if after == 0:
+        inherited, chain = _inherited_metrics(project, record, events)
+    return TrainStatus(
+        run=record, events=events, num_events=num_events,
+        inherited_events=inherited, resumed_from=chain,
+    )
+
+
+_MAX_RESUME_CHAIN = 12
+
+
+def _inherited_metrics(
+    project: Project, record: RunRecord, own_events: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Metrics events of the resume chain (resume_from points into another
+    run's checkpoints/), oldest run first, each cut at the epoch where the
+    next run took over. A resumed run's own log starts at the checkpoint's
+    epoch, so without this the training page showed a two-point curve."""
+    root = runs_root(project).resolve()
+    first_own = min(
+        (e.get("step") for e in own_events if e.get("type") == "metrics"
+         and isinstance(e.get("step"), int | float)),
+        default=None,
+    )
+    chain: list[str] = []
+    collected: list[list[dict[str, Any]]] = []
+    resume_from = (record.config or {}).get("resume_from")
+    cutoff = first_own
+    while resume_from and len(chain) < _MAX_RESUME_CHAIN:
+        source_dir = Path(resume_from).parent.parent
+        try:
+            resolved = source_dir.resolve()
+        except OSError:
+            break
+        if resolved.parent != root or not (source_dir / _RUN_JSON).is_file():
+            break
+        source_id = resolved.name
+        if source_id in chain or source_id == record.run_id:
+            break
+        chain.append(source_id)
+        events, _ = _read_events(source_dir)
+        metrics = [e for e in events if e.get("type") == "metrics"]
+        if cutoff is not None:
+            metrics = [e for e in metrics if (e.get("step") or 0) < cutoff]
+        collected.append(metrics)
+        cutoff = min(
+            (e.get("step") for e in metrics if isinstance(e.get("step"), int | float)),
+            default=cutoff,
+        )
+        try:
+            resume_from = (read_record(source_dir).config or {}).get("resume_from")
+        except (OSError, ValueError):
+            break
+    inherited = [e for group in reversed(collected) for e in group]
+    return inherited, chain
 
 
 @capability(

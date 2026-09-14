@@ -68,6 +68,28 @@ def test_resume_from_a_previous_runs_checkpoint(project):
     assert config["resume_from"] == checkpoint
     assert second_status.run.config["resume_from"] == checkpoint
 
+    # the training page draws the whole story: the first run's epochs come
+    # back as inherited events, cut where the resumed run took over
+    assert second_status.resumed_from == [first.run_id]
+    # the fake trainer restarts its epoch count at 1, so nothing of the first
+    # run lies before the resumed run's first epoch: no overlap is inherited
+    assert second_status.inherited_events == []
+    assert training_status(project, second.run_id, after=1).inherited_events == []
+    assert first_status.inherited_events == [] and first_status.resumed_from == []
+
+    # a real trainer continues the epoch count (rfdetr restores epoch 29 and
+    # logs 29, 30, …): the parent's earlier epochs are handed over, cut where
+    # the resumed run took over
+    from horos.api.train import _inherited_metrics
+
+    own = [{"type": "metrics", "step": 2, "metrics": {"loss": 0.1}}]
+    inherited, chain = _inherited_metrics(project, second_status.run, own)
+    assert chain == [first.run_id]
+    assert [e["step"] for e in inherited] == [1]
+    assert _inherited_metrics(project, second_status.run, []) == (
+        [e for e in first_status.events if e["type"] == "metrics"], [first.run_id]
+    )
+
 
 def test_each_run_keeps_its_own_checkpoints(project):
     first = start_training(project, TrainRunConfig(entrypoint_override=FAKE, epochs=1))
