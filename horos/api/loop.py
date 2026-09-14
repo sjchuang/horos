@@ -1737,9 +1737,14 @@ def loop_advice(project: Project) -> LoopAdvice:
                    + "). Either stop and export, pick a bigger round, or try a larger model.",
             **base,
         )
+    # no delta when the previous round was headlined by another metric (a
+    # test set that only exists from this round on, say): not comparable
+    change = (f", {last.delta:+.3f} against the previous round" if last.delta is not None
+              else f" — not comparable to the previous round, which was measured on "
+                   f"{history[-2].metric_key or 'another metric'}")
     return LoopAdvice(
         verdict="continue", title="Keep going — labels still pay off",
-        reason=f"{metric_text}, {last.delta:+.3f} against the previous round"
+        reason=f"{metric_text}{change}"
                + (f" ({gain:+.3f} per 100 labels)" if gain is not None else "")
                + f". {status.pool_size} photos are still unlabeled.",
         **base,

@@ -63,6 +63,19 @@ def test_clear_gains_say_keep_going_with_gain_per_100(tmp_path):
     assert "still pay off" in a.title and "per 100 labels" in a.reason
 
 
+def test_rounds_headlined_by_different_metrics_are_not_compared(tmp_path):
+    """demo_project: round 5 was headlined by eval/valid, round 6 by the new
+    eval/test — no delta exists, and the advice must say so, not crash."""
+    project = _project(tmp_path)
+    _closed_round(project, 1, metric=0.70, labeled_before=10, labeled_after=30,
+                  key="eval/valid/map_5095")
+    _closed_round(project, 2, metric=0.68, labeled_before=30, labeled_after=50,
+                  key="eval/test/map_5095")
+    a = loop_advice(project)
+    assert a.verdict == "continue" and a.delta is None and a.gain_per_100 is None
+    assert "not comparable" in a.reason and "eval/valid/map_5095" in a.reason
+
+
 def test_two_flat_rounds_say_flattening(tmp_path):
     project = _project(tmp_path)
     _closed_round(project, 1, metric=0.60, labeled_before=10, labeled_after=30)
