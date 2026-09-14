@@ -193,12 +193,17 @@ def image_queue(
     *,
     mode: str = "unannotated_first",
     split: str | None = None,
+    category_id: int | None = None,
     session_id: str | None = None,
 ) -> list[QueueItem]:
     """Server-side queue so WebUI and Python API resume at the same place
-    (E2-S2). `session_id` hides that session's own claims from claimed_by."""
+    (E2-S2). `category_id` keeps only the photos that carry that class
+    (confirmed or pending). `session_id` hides that session's own claims
+    from claimed_by."""
     if mode not in QUEUE_MODES:
         raise ProjectError(f"queue mode must be one of {QUEUE_MODES}")
+    if category_id is not None and all(c.id != category_id for c in project.categories):
+        raise ProjectError(f"Unknown category id {category_id}")
     claims = _load_claims(project)
     items: list[QueueItem] = []
     for record in project.list_images():
@@ -206,6 +211,10 @@ def image_queue(
         if split and (record.split or "unlabeled") != split:
             continue
         stored = project.load_annotations(record.id)
+        if category_id is not None and all(
+            a.category_id != category_id for a in stored.annotations
+        ):
+            continue
         holder = claims.get(record.id)
         pending_scores = [
             a.score or 0.0 for a in stored.annotations if a.status == "pending"

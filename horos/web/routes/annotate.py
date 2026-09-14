@@ -30,6 +30,7 @@ def queue():
         _project(),
         mode=request.args.get("mode", "unannotated_first"),
         split=request.args.get("split") or None,
+        category_id=request.args.get("category_id", type=int),
         session_id=request.args.get("session") or None,
     )
     return jsonify([i.model_dump() for i in items])

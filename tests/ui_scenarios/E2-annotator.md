@@ -33,7 +33,8 @@ horos ui ./demo_project
 
 ### A. 網格（入口）
 1. 開 /annotate：縮圖網格顯示、頂欄有進度（N/M images annotated）
-2. 佇列模式切「Only unannotated」、split 切「valid」：網格即時過濾
+2. 佇列模式切「Only unannotated」、split 切「valid」、類別切任一類：網格即時過濾，
+   三個篩選可疊加（類別篩選＝含該類別標註或預標的照片；在 Classes 改名／刪除後選單同步）
 3. 每頁數量切 20：分頁按鈕出現；縮圖角標 ✓ 已標、🔒 他人標註中
 4. 點任一縮圖進入編輯器，影像自動縮放至符合畫面（小圖也放大適配）；「← Back to Grid」返回且網格刷新
 

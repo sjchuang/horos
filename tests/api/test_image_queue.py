@@ -39,6 +39,25 @@ def test_split_filter(project):
     assert queue and all(i.image.split == "valid" for i in queue)
 
 
+def test_class_filter_keeps_photos_carrying_that_class(project):
+    forklift, pallet = (c.id for c in project.categories)
+    assert [i.image.file_name for i in image_queue(project, category_id=forklift)] == [
+        "a.png", "b.png",
+    ]
+    assert [i.image.file_name for i in image_queue(project, category_id=pallet)] == [
+        "a.png", "c.png",
+    ]
+    # filters combine: pallet photos in the valid set
+    assert [
+        i.image.file_name for i in image_queue(project, category_id=pallet, split="valid")
+    ] == ["c.png"]
+
+
+def test_class_filter_rejects_unknown_class(project):
+    with pytest.raises(ProjectError, match="Unknown category id 99"):
+        image_queue(project, category_id=99)
+
+
 def test_bad_mode_is_explicit(project):
     with pytest.raises(ProjectError, match="queue mode"):
         image_queue(project, mode="random")

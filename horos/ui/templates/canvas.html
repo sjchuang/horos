@@ -261,6 +261,9 @@
       <option value="test">test</option>
       <option value="unlabeled">unlabeled · in no set</option>
     </select>
+    <select id="class-filter" title="Only photos that carry this class">
+      <option value="">All classes</option>
+    </select>
     <select id="per-page">
       <option value="20">20 / page</option>
       <option value="50" selected>50 / page</option>
@@ -387,9 +390,9 @@
         <div style="display:flex;align-items:center;gap:8px;font-size:11px;color:var(--dim)">
           <span id="review-count"></span>
           <span style="flex:1"></span>
-          <span id="review-threshold-label">≥ 0.00</span>
+          <span id="review-threshold-label">≥ 0.50</span>
         </div>
-        <input type="range" id="review-threshold" min="0" max="1" step="0.01" value="0"
+        <input type="range" id="review-threshold" min="0" max="1" step="0.01" value="0.5"
                style="width:100%;margin:6px 0">
         <div style="display:flex;gap:6px">
           <button class="btn primary" id="review-accept" style="flex:1">Accept</button>
@@ -647,7 +650,7 @@ const Page = {
   history: [], clipboardShape: null,
   autoSave: true, isDirty: false, _saveTimer: null, _claimTimer: null,
   classCounts: {}, sessionNames: new Set(),
-  reviewThreshold: 0, _jobTimer: null,
+  reviewThreshold: 0.5, _jobTimer: null,
 
   // ------------------------------------------------------------------ boot
   async init() {
@@ -668,7 +671,7 @@ const Page = {
         }
       } catch (e) {}
       // the round decides what is in the queue; the project-wide filters do not apply
-      for (const id of ["queue-mode", "split-filter", "btn-autolabel", "btn-delete-selected", "btn-select-page"]) {
+      for (const id of ["queue-mode", "split-filter", "class-filter", "btn-autolabel", "btn-delete-selected", "btn-select-page"]) {
         $(id).style.display = "none";
       }
       $("btn-back").textContent = "← Round overview";
@@ -679,6 +682,7 @@ const Page = {
     } catch (e) {}
     $("queue-mode").onchange = () => this.loadImages(1);
     $("split-filter").onchange = () => this.loadImages(1);
+    $("class-filter").onchange = () => this.loadImages(1);
     $("per-page").onchange = (e) => { this.perPage = Number(e.target.value); this.loadImages(1); };
     $("btn-classes").onclick = () => this.openClassManager();
     $("btn-manage-2").onclick = () => this.openClassManager();
@@ -746,8 +750,18 @@ const Page = {
     });
     bindConf("autolabel-conf-slider", "autolabel-conf");
     bindConf("assist-conf-slider", "assist-conf");
+    // the pseudo-label threshold is a working preference, not a per-photo
+    // setting: it starts at 0.5, follows the annotator from photo to photo
+    // and survives a reload
+    try {
+      const saved = Number(localStorage.getItem("horos_review_threshold"));
+      if (localStorage.getItem("horos_review_threshold") !== null && saved >= 0 && saved <= 1)
+        this.reviewThreshold = saved;
+    } catch (e) {}
+    $("review-threshold").value = this.reviewThreshold;
     $("review-threshold").oninput = (e) => {
       this.reviewThreshold = Number(e.target.value);
+      try { localStorage.setItem("horos_review_threshold", String(this.reviewThreshold)); } catch (e) {}
       paintRange(e.target);
       this._syncReviewBar();
       this._drawCanvas();
@@ -815,8 +829,10 @@ const Page = {
       this._notifyRound(done, done === this.queue.length && this.queue.length > 0);
       return;
     }
+    this._syncClassFilter();
     const q = new URLSearchParams({ mode: $("queue-mode").value, session });
     if ($("split-filter").value) q.set("split", $("split-filter").value);
+    if ($("class-filter").value) q.set("category_id", $("class-filter").value);
     this.queue = (await api("/queue?" + q)).filter((item) => !item.excluded || $("queue-mode").value === "annotated");
     // drop selections that left the queue (deleted, or filtered out)
     const alive = new Set(this.queue.map((item) => item.image.id));
@@ -827,6 +843,18 @@ const Page = {
     $("progress-line").innerHTML =
       `<b>${p.annotated_images}</b> / ${p.total_images} images annotated · ` +
       `${p.total_annotations} annotations`;
+  },
+
+  // the class filter lists the project's classes as they are now — classes
+  // are added, renamed, merged and deleted while the grid is open, so it is
+  // rebuilt before every load; a filter on a class that vanished falls back
+  // to "All classes"
+  _syncClassFilter() {
+    const select = $("class-filter");
+    const current = select.value;
+    select.innerHTML = `<option value="">All classes</option>` + this.categories.map((c) =>
+      `<option value="${c.id}">${c.name}</option>`).join("");
+    select.value = this.categories.some((c) => String(c.id) === current) ? current : "";
   },
 
   renderGrid() {
@@ -980,8 +1008,7 @@ const Page = {
       this.zoom = 1;
       this.editorShapes = view.annotations.map((a) => this._toShape(a));
       this.isDirty = false;
-      this.reviewThreshold = 0;
-      $("review-threshold").value = 0;
+      $("review-threshold").value = this.reviewThreshold;  // kept from the previous photo
       paintRange($("review-threshold"));
       this._resizeCanvas();
       this._setSaveState("", "");
@@ -2595,6 +2622,7 @@ const Page = {
       this.categories = project.categories;
       stats.per_class.forEach((c) => { counts[c.name] = c.instances; });
     } catch (e) {}
+    this._syncClassFilter();
     $("class-tbody").innerHTML = this.categories.map((c) => `
       <tr>
         <td><input type="color" value="${c.color}" data-id="${c.id}"

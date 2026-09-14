@@ -36,6 +36,16 @@ def test_queue_and_progress(client):
     assert progress["annotated_images"] == 3
 
 
+def test_queue_class_filter(client, project):
+    pallet = project.categories[1].id
+    names = [
+        i["image"]["file_name"]
+        for i in client.get(f"/api/v1/queue?category_id={pallet}").get_json()
+    ]
+    assert names == ["a.png", "c.png"]
+    assert client.get("/api/v1/queue?category_id=99").status_code == 400
+
+
 def test_get_put_annotations_roundtrip(client, project):
     image_id = _first_image_id(client)
     cat_id = project.categories[0].id

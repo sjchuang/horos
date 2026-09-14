@@ -26,8 +26,9 @@ horos ui ./demo_project
 1. 「Needs review」模式下網格依不確定性排序（模型最沒把握的排前面），
    角標顯示黃色 ◌N（N＝待審數）
 2. 點入影像：預標以「虛線框＋類別名與信心度」呈現，與人工標註（實線）可區分
-3. 右欄「Review pre-labels」卡片：拉動門檻滑桿，低於門檻的預標即時淡化、
-   計數顯示「N pending · K above threshold」（E3-S2）
+3. 右欄「Pseudo labels」卡片：門檻預設 0.50；拉動滑桿，低於門檻的預標即時淡化、
+   計數顯示「N pending · K above threshold」（E3-S2）；切到下一張、甚至重新整理，
+   門檻維持上次調整的值（localStorage `horos_review_threshold`）
 4. 按「Accept ≥ t」：門檻以上轉正式標註（變實線）、以下刪除；「Reject all」全部刪除
 5. Shapes 清單中單一預標可按 ✓ 個別接受、× 個別刪除；拖曳修正預標的框
    再接受，修正會保留（E3-S5）

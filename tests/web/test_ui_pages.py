@@ -186,3 +186,12 @@ def test_dataset_page_has_the_danger_zone(client):
     html = client.get("/").get_data(as_text=True)
     assert 'id="danger-panel"' in html and 'id="clear-btn"' in html and 'id="clear-classes"' in html
     assert '"DELETE"' in html and "confirm" in html  # the name-typed confirmation flow
+
+
+def test_canvas_grid_filters_by_class_and_remembers_the_review_threshold(client):
+    """E2-T7 class filter; E3-S2 threshold starts at 0.5 and follows the annotator."""
+    html = client.get("/annotate?canvas=1").get_data(as_text=True)
+    assert 'id="class-filter"' in html and "All classes" in html
+    assert 'q.set("category_id"' in html
+    assert 'id="review-threshold" min="0" max="1" step="0.01" value="0.5"' in html
+    assert "horos_review_threshold" in html
