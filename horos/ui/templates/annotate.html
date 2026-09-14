@@ -506,8 +506,8 @@ const Loop = {
               <button type="button" data-step="-1"></button></span></span>
         </div>
         <div class="opt">
-          <span class="k" title="How many unlabeled photos the model scores when picking a round. Bigger pools are sampled at random (fixed seed) and the pick comes from that sample; photos left out can still be chosen for diversity and are sampled in later rounds. Empty or 0 = score them all — the most thorough, and slow on large pools.">Scan</span>
-          <span class="stepper narrow"><input type="number" data-opt="score_limit" min="0" step="500" placeholder="all" title="photos scored per round; empty or 0 = all (slow on large pools)">
+          <span class="k" title="How many unlabeled photos the model scores when picking a round, as a multiple of the round size: 20 photos × 100 = 2000 candidates. Bigger pools are sampled at random (fixed seed) and the pick comes from that sample; photos left out can still be chosen for diversity and are sampled in later rounds. Empty or 0 = score them all — the most thorough, and slow on large pools.">Scan ×</span>
+          <span class="stepper narrow"><input type="number" data-opt="scan_factor" min="0" step="25" placeholder="all" title="times the round size; empty or 0 = score every photo (slow on large pools)">
             <span class="step-btns"><button type="button" data-step="1"></button>
               <button type="button" data-step="-1"></button></span></span>
         </div>
@@ -552,9 +552,9 @@ const Loop = {
       const goal = root.querySelector('[data-opt="target"]');
       goal.value = st.target == null ? "" : st.target;
       goal.onchange = () => this.saveSettings({ target: goal.value === "" || Number(goal.value) <= 0 ? null : Number(goal.value) });
-      const scan = root.querySelector('[data-opt="score_limit"]');
-      scan.value = st.score_limit == null ? "" : st.score_limit;
-      scan.onchange = () => this.saveSettings({ score_limit: scan.value === "" || Number(scan.value) <= 0 ? null : Math.round(Number(scan.value)) });
+      const scan = root.querySelector('[data-opt="scan_factor"]');
+      scan.value = st.scan_factor == null ? "" : st.scan_factor;
+      scan.onchange = () => this.saveSettings({ scan_factor: scan.value === "" || Number(scan.value) <= 0 ? null : Math.round(Number(scan.value)) });
       if (window.horosControls) horosControls.wire(root);
       seg("shapes").querySelectorAll("button").forEach((b) => { b.onclick = () => this.saveSettings({ shapes: b.dataset.v }); });
     });

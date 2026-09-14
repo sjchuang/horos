@@ -142,17 +142,18 @@ def test_big_pools_are_scored_on_a_seeded_sample(tmp_path):
     layout = [("red", "train")] * 30
     project = _project(tmp_path, layout, labeled={1: "box", 2: "box", 3: "box"})
     detector = FakeDetector()
-    record = _select(project, count=4, detector=detector, score_limit=5)
+    # the cap is a multiple of the round size: 4 photos × 2 = 8 scored
+    record = _select(project, count=4, detector=detector, scan_factor=2)
     scored_unlabeled = [p for p in detector.seen if not p.endswith(("/1.png", "/2.png", "/3.png"))]
-    assert len(scored_unlabeled) == 5
-    assert any("scored 5 of 27 unlabeled photos" in n for n in record.selection.notes)
+    assert len(scored_unlabeled) == 8
+    assert any("scored 8 of 27 unlabeled photos (2× the round" in n for n in record.selection.notes)
     assert len(record.image_ids) == 4
     # 0 means no cap: every unlabeled photo is scored
     from horos.api.loop import close_round
 
     close_round(project, record.number)
     detector.seen.clear()
-    record = _select(project, count=2, detector=detector, score_limit=0)
+    record = _select(project, count=2, detector=detector, scan_factor=0)
     assert len(detector.seen) == 3 + 27  # labeled + the whole pool (round 1 stayed unlabeled)
     assert not any("scored" in n and "of" in n for n in record.selection.notes)
 

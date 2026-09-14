@@ -48,10 +48,16 @@ def test_defaults_persist_and_validate(tmp_path):
     project = _project(tmp_path)
     s = get_loop_settings(project)
     assert (s.model, s.preannotate, s.shapes, s.refiner) == (None, True, "auto", "sam2.1-tiny")
-    assert s.score_limit == 2000  # the scorer samples a big pool by default
+    assert s.scan_factor == 100  # the scorer looks at 100× the round size by default
     assert loop_status(project).settings == s
-    assert update_loop_settings(project, score_limit=0).score_limit is None  # 0 = no cap
-    assert update_loop_settings(project, score_limit=500).score_limit == 500
+    assert update_loop_settings(project, scan_factor=0).scan_factor is None  # 0 = no cap
+    assert update_loop_settings(project, scan_factor=50).scan_factor == 50
+    # a loop.json from the absolute-cap days loads, the old key is dropped
+    import json
+
+    path = project.root / "loop.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "score_limit": 2000}))
+    assert get_loop_settings(project).scan_factor == 50
 
     updated = update_loop_settings(project, model="rfdetr-seg-small", shapes="polygon")
     assert updated.model == "rfdetr-seg-small" and updated.shapes == "polygon"

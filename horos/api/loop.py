@@ -115,10 +115,11 @@ LOOP_JOB_KINDS = ("loop-select", "loop-preannotate", "embeddings")
 MAX_FIT_IMAGES = 300
 #: photos per batched scorer call while scoring (progress is reported per chunk)
 SCORE_CHUNK = 16
-#: unlabeled photos the scorer looks at per round when the pool is larger — a
-#: seeded random sample; scoring 10 000 photos one by one took ~14 min, and
-#: PAL ranks a few thousand candidates as well as it ranks them all
-DEFAULT_SCORE_LIMIT = 2000
+#: the scorer looks at this many times the round size (a seeded random
+#: sample of the pool) — 20 photos × 100 = 2000 candidates; scoring 10 000
+#: photos one by one took ~14 min, and PAL ranks a few thousand candidates
+#: as well as it ranks them all
+DEFAULT_SCAN_FACTOR = 100
 ZERO_SHOT_SCORER = "owlv2-base"
 #: pre-label confidence floor per scorer kind: a fine-tuned run is calibrated
 #: on the project's classes, zero-shot OWLv2 scores run low (autolabel's
@@ -153,9 +154,9 @@ class LoopSettings(BaseModel):
     shapes: Shapes = "auto"
     #: the segmenter used for shapes="polygon"
     refiner: str = "sam2.1-tiny"
-    #: unlabeled photos scored per round (random sample when the pool is
-    #: bigger); None = score the whole pool, however long it takes
-    score_limit: int | None = Field(default=DEFAULT_SCORE_LIMIT, ge=1)
+    #: how many times the round size the scorer looks at (random sample when
+    #: the pool is bigger); None = score the whole pool, however long it takes
+    scan_factor: int | None = Field(default=DEFAULT_SCAN_FACTOR, ge=1)
     #: stop-when-reached value of the headline metric (mAP flavours are in
     #: [0, 1]); None = keep going until the pool is empty or gains flatten
     target: float | None = Field(default=None, gt=0.0)
@@ -181,6 +182,8 @@ def get_loop_settings(project: Project) -> LoopSettings:
         data = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(data, dict) and data.get("target") is not None and data["target"] <= 0:
             data["target"] = None  # written by earlier versions: a goal of 0 is no goal
+        if isinstance(data, dict):
+            data.pop("score_limit", None)  # an absolute cap, replaced by scan_factor
         return LoopSettings.model_validate(data)
     except (ValueError, TypeError) as exc:
         raise ProjectError(f"Corrupt loop settings at {path}: {exc}") from exc
@@ -201,9 +204,9 @@ def update_loop_settings(project: Project, **changes) -> LoopSettings:
         raise ProjectError(f"Unknown loop setting(s): {sorted(unknown)}")
     if "target" in changes and changes["target"] is not None and float(changes["target"]) <= 0:
         changes["target"] = None  # a goal of 0 would be met by any model: it means "no goal"
-    if "score_limit" in changes and changes["score_limit"] is not None \
-            and int(changes["score_limit"]) <= 0:
-        changes["score_limit"] = None  # 0 = no cap: score every unlabeled photo
+    if "scan_factor" in changes and changes["scan_factor"] is not None \
+            and int(changes["scan_factor"]) <= 0:
+        changes["scan_factor"] = None  # 0 = no cap: score every unlabeled photo
     try:
         updated = current.model_copy(update=changes)
         updated = LoopSettings.model_validate(updated.model_dump())
@@ -637,7 +640,7 @@ def select_round_events(
     preannotate: bool | None = None,
     shapes: Shapes | None = None,
     refiner: PromptableSegmenter | None = None,
-    score_limit: int | None = None,
+    scan_factor: int | None = None,
 ) -> Iterator[Event]:
     """Open the next round and choose its images, as an R4 event stream.
     `preannotate` / `shapes` default to the loop settings (E10-T19).
@@ -718,15 +721,17 @@ def select_round_events(
             labeled_dets: list[pal.Detection] = []
             # the scorer looks at a seeded sample of a big pool: PAL ranks a few
             # thousand candidates as well as all of them, in a fraction of the time
-            # per-call override: None = the settings, 0 = no cap
-            limit = (settings.score_limit if score_limit is None
-                     else (score_limit if score_limit > 0 else None))
+            # per-call override: None = the settings, 0 = no cap; the cap is a
+            # multiple of the round size so it scales with what is being picked
+            factor = (settings.scan_factor if scan_factor is None
+                      else (scan_factor if scan_factor > 0 else None))
+            limit = None if factor is None else max(wanted * factor, wanted)
             scored = pool
             if limit is not None and len(pool) > limit:
                 scored = sorted(random.Random(seed).sample(pool, limit), key=lambda r: r.id)
                 notes.append(
-                    f"scored {limit} of {len(pool)} unlabeled photos (random sample, seed "
-                    f"{seed}); raise the Scan setting to look at more"
+                    f"scored {limit} of {len(pool)} unlabeled photos ({factor}× the round, "
+                    f"random sample, seed {seed}); raise the Scan setting to look at more"
                 )
             total_steps = len(fit_ids) + len(scored)
             step = 0

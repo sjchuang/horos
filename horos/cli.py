@@ -542,9 +542,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="loop select: suggestion geometry for this round (default: the loop settings)",
     )
     p.add_argument(
-        "--score-limit", type=int, default=None,
-        help="loop select: unlabeled photos the scorer looks at (random sample; 0 = all; "
-             "default: the loop settings, 2000)",
+        "--scan", type=int, default=None,
+        help="loop select: score this many times the round size (random sample of the pool; "
+             "0 = all; default: the loop settings, 100)",
     )
     p.add_argument(
         "--model", help="loop train: model key (default: RF-DETR Nano, or RF-DETR-Seg Nano "
@@ -1105,7 +1105,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     project, count=args.count, percent=args.percent,
                     strategy=args.strategy, device=args.device,
                     preannotate=False if args.no_suggestions else None, shapes=args.shapes,
-                    score_limit=args.score_limit,
+                    scan_factor=args.scan,
                 ):
                     print(dump_event(event), file=sys.stderr)  # noqa: T201
                     final = event
