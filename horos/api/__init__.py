@@ -166,6 +166,12 @@ from horos.api.system import (
     list_models,
     platform_capabilities,
 )
+from horos.api.threshold import (
+    ClassThreshold,
+    ThresholdAdvice,
+    ThresholdPoint,
+    suggest_threshold,
+)
 from horos.api.train import (
     RunRecord,
     TrainRunConfig,
@@ -281,6 +287,10 @@ __all__ = [
     "WorstCases",
     "analyze_errors",
     "worst_cases",
+    "ClassThreshold",
+    "ThresholdAdvice",
+    "ThresholdPoint",
+    "suggest_threshold",
     "OverlayBox",
     "render_error_overlay",
     "render_overlay",

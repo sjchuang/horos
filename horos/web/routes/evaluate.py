@@ -107,6 +107,16 @@ def analyze_errors(run_id: str, split: str):
     return jsonify(analysis.model_dump())
 
 
+@bp.get("/train/runs/<run_id>/eval/<split>/threshold")
+def suggest_threshold(run_id: str, split: str):
+    advice = api.suggest_threshold(
+        _project(), run_id, split,
+        iou=request.args.get("iou", 0.5, type=float),
+        beta=request.args.get("beta", 1.0, type=float),
+    )
+    return jsonify(advice.model_dump())
+
+
 @bp.get("/train/runs/<run_id>/eval/<split>/worst")
 def worst_cases(run_id: str, split: str):
     report = api.worst_cases(

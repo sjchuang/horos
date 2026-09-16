@@ -354,8 +354,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser(
         "analyze",
-        help="Error analysis of an evaluated run: confusion matrix, per-class "
-        "misses and false positives, worst images (needs a prior 'evaluate')",
+        help="Error analysis of an evaluated run: suggested confidence threshold, "
+        "confusion matrix, per-class misses and false positives, worst images "
+        "(needs a prior 'evaluate')",
     )
     p.add_argument(
         "--project",
@@ -374,6 +375,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--iou", type=float, default=0.5,
         help="IoU needed for a prediction to match a ground-truth box (default 0.5)",
+    )
+    p.add_argument(
+        "--beta", type=float, default=1.0,
+        help="F-score weight for the suggested threshold: 1 balances precision and "
+        "recall, 2 weights recall, 0.5 weights precision (default 1)",
     )
     p.add_argument(
         "--worst", type=int, default=20, metavar="N",
@@ -881,10 +887,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "analyze":
             project = _project_arg(args)
             run_id = _resolve_run(project, args.run_id)
+            advice = api.suggest_threshold(
+                project, run_id, args.split, iou=args.iou, beta=args.beta
+            )
             payload = {
                 "analysis": api.analyze_errors(
                     project, run_id, args.split, threshold=args.threshold, iou=args.iou
                 ).model_dump(mode="json"),
+                # where to operate, next to how the chosen threshold behaves
+                "threshold": advice.model_dump(mode="json"),
             }
             if args.worst > 0:
                 worst = api.worst_cases(

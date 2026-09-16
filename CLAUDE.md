@@ -471,10 +471,18 @@ Search-based HPO (Optuna and friends) is left as a pluggable extension. Rational
 | E6-T7 | Upload-and-test UI | Interface scenario |
 | E6-T8 | Error analysis UI | Interface scenario |
 | E6-T9 | Web API endpoints | `tests/web/test_eval_routes.py` |
+| E6-T10 | Suggested operating confidence threshold: one matching pass over the split's saved detections yields the precision / recall / F-beta sweep, and the recommendation is the middle of the plateau that scores within 1 % of the peak (not the bare peak, which moves with the data); per class as well, marked when the class has under 10 boxes; `beta` picks the trade (1 balanced, 2 fewer misses, 0.5 fewer false alarms); tuning on test is called out | `tests/api/test_threshold_advice.py`, `tests/web/test_eval_routes.py`, interface scenario (`tests/ui_scenarios/E6-T8.md` §B2) |
+
+#### User stories (added)
+
+- **E6-S8** (WebUI) A user sees which confidence threshold to operate at, why, and how much it beats the 0.50 default by — and applies it with one button
+- **E6-S9** (Python API) An engineer asks for the threshold that favours recall over precision and gets it with the sweep it came from
 
 #### How it is accepted
 
 E6-T3 validates metric values against a fixture with known answers. The rest goes through API tests plus interface scenarios.
+
+E6-T10's sweep is derived from a single matching pass rather than one pass per threshold; its test asserts that every grid point agrees with `analyze_detections` at the same threshold, which is what makes the shortcut safe.
 
 ---
 

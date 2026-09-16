@@ -257,6 +257,33 @@ def test_worst_cases_endpoint_lists_errors_and_honours_top(trained_client):
     assert bad.status_code == 400
 
 
+def test_threshold_endpoint_serves_the_sweep_and_honours_beta(trained_client):
+    client, run_id, _ = trained_client
+    before = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/threshold")
+    assert before.status_code == 400
+    assert "run an evaluation first" in before.get_json()["error"]["message"]
+
+    _evaluate(client, run_id)
+    response = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/threshold")
+    assert response.status_code == 200
+    advice = response.get_json()
+    assert advice["run_id"] == run_id and advice["split"] == "valid"
+    assert advice["iou"] == 0.5 and advice["beta"] == 1.0
+    assert len(advice["points"]) == 91
+    # the fake backend only ever predicts an unknown class: nothing is ever
+    # correct, so there is no threshold to suggest and the default stands
+    assert advice["confident"] is False
+    assert advice["recommended"] == 0.5
+
+    weighted = client.get(
+        f"/api/v1/train/runs/{run_id}/eval/valid/threshold?beta=2&iou=0.75"
+    ).get_json()
+    assert weighted["beta"] == 2.0 and weighted["iou"] == 0.75
+
+    bad = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/threshold?beta=0")
+    assert bad.status_code == 400
+
+
 def test_overlay_endpoint_streams_a_png_of_the_split_image(trained_client):
     client, run_id, _ = trained_client
     _evaluate(client, run_id)
