@@ -932,7 +932,7 @@ const MODEL_FORMAT_NOTES = {
   "tflite-int8": "TFLite plus int8 weights (~¼ size, slower export) · float32 stays primary",
 };
 const MODEL_FORMAT_TIPS = {
-  pytorch: "rfdetr loads weights.pt directly for inference or further fine-tuning; model_card.json carries the license, classes and metrics.",
+  pytorch: "rfdetr loads weights.pt directly for inference or further fine-tuning; model_card.json carries the license, classes, metrics and the confidence to run at.",
   onnx: "Portable graph for onnxruntime and TensorRT builders. After export, sample images are run through the original weights and the ONNX graph and the largest difference is recorded in model_card.json.",
   tensorrt: "A TensorRT engine is compiled for this machine's GPU architecture and TensorRT version and will not load elsewhere — export again on each deployment device. Needs NVIDIA's tensorrt package.",
   tflite: "float32 and float16 .tflite models converted from the ONNX graph with onnx2tf; the input stays NCHW so the model card's I/O contract is unchanged. Parity is checked against the weights.",
@@ -1054,8 +1054,16 @@ $("model-export-btn").onclick = async () => {
         : p8.status === "failed" ? " · ⚠ int8 parity failed — float32 stays"
         : " · int8 written";
     }
+    // the confidence to run the artifact at travels in the card (E8-T4); show
+    // it here so it is not a number you have to open the zip to find
+    const thr = (result.model_card || {}).threshold || {};
+    const thrText = thr.confidence != null
+      ? ` · <span title="${(thr.reason || "").replace(/"/g, "&quot;")}">run at confidence `
+        + `<b>${Number(thr.confidence).toFixed(2)}</b></span>`
+      : thr.note ? ` · <span title="${thr.note.replace(/"/g, "&quot;")}">no suggested confidence</span>`
+      : "";
     status.innerHTML = `ready — <a href="/api/v1/train/runs/${runId}/exports/${result.bundle}"
-      style="color:var(--accent)">download ${result.bundle}</a>${parityText}`;
+      style="color:var(--accent)">download ${result.bundle}</a>${parityText}${thrText}`;
     if (warnings.length) setStatus(warnings.join(" "), "");
     await loadExports(runId);
   } catch (e) {

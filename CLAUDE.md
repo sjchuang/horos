@@ -534,6 +534,7 @@ API tests. **E7-T2, the dataset fingerprint, is the key to this Epic** — witho
 - **E8-S3** (WebUI) A user exporting sees an explicit notice: a TensorRT engine is bound to the current GPU architecture and TensorRT version and cannot be moved to another machine
 - **E8-S4** (Python API) A user exports TFLite
 - **E8-S5** (Python API) The export artifact is accompanied by `model_card.json` containing the model license, training dataset fingerprint, metrics, and input/output specification
+- **E8-S8** (Python API) The export artifact carries the confidence threshold to run it at, so the deployer does not have to guess or go back to the evaluate page
 - **E8-S6** (Python API) A user runs inference directly with the export artifact and verifies the results match the original weights
 - **E8-S7** (WebUI) A user starts a local inference service and tests it by posting images over HTTP
 
@@ -544,7 +545,7 @@ API tests. **E7-T2, the dataset fingerprint, is the key to this Epic** — witho
 | E8-T1 | ONNX export | `tests/api/test_export_onnx.py` |
 | E8-T2 | TensorRT export | Availability decided by the E4-T13 capability list; macOS explicitly refused; `tests/api/test_export_tensorrt.py` |
 | E8-T3 | TFLite export | `tests/api/test_export_tflite.py` |
-| E8-T4 | `model_card.json` generation | Includes the license field; `tests/api/test_model_card.py` |
+| E8-T4 | `model_card.json` generation: license (R3), classes, I/O spec, dataset fingerprint, metrics, parity, and the confidence to run the artifact at — taken from the evaluation's F-score sweep (E6-T10) on test, else valid, with the per-class figures and what it was derived from; a run with no evaluation ships the reason, never an invented number | Includes the license field; `tests/api/test_export_model.py`, `tests/api/test_model_card_threshold.py` |
 | E8-T5 | Post-export parity verification | Output difference from the original weights within tolerance on the same input; `tests/api/test_export_parity.py` |
 | E8-T6 | Portability warnings | `tests/api/test_export_warnings.py` |
 | E8-T7 | Local inference service | `tests/web/test_serve.py` |

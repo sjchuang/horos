@@ -101,6 +101,11 @@ class ModelCard(BaseModel):
     metrics: dict[str, float] = Field(default_factory=dict)
     hyperparameters: dict[str, Any] = Field(default_factory=dict)
     parity: dict[str, Any] = Field(default_factory=dict)
+    #: the confidence to run this artifact at, from the evaluation's F-score
+    #: sweep (E6-T10), with what it was derived from and the per-class figures.
+    #: Empty `confidence` when the run has no evaluation to derive it from —
+    #: `note` then says how to get one
+    threshold: dict[str, Any] = Field(default_factory=dict)
     portability: str = ""
     #: extra precision / quantisation files in the bundle, e.g. TFLite
     #: {"float16": {"artifact", "method"}, "int8": {"artifact", "method",
@@ -148,6 +153,73 @@ def export_training_report(
 
 
 # ------------------------------------------------------------------ models
+
+
+#: splits to look for a threshold in, best first — an operating point belongs
+#: on held-out data, and test is the honest one
+_THRESHOLD_SPLITS = ("test", "valid")
+
+
+def _suggested_threshold(project: Project, run_id: str) -> dict[str, Any]:
+    """The confidence to deploy at, for the model card (E8-T4).
+
+    It comes from the same sweep the evaluate page shows (E6-T10), so the
+    number shipped next to the model is the number the user was looking at.
+    Derived from an evaluation this run already has: nothing is inferred or
+    re-run here, and a run that was never evaluated ships the reason instead
+    of a made-up value."""
+    from horos.api.evaluate import get_eval_report
+    from horos.api.threshold import suggest_threshold
+
+    for split in _THRESHOLD_SPLITS:
+        try:
+            advice = suggest_threshold(project, run_id, split)
+        except (HorosError, OSError):
+            continue  # this split was never evaluated
+        if not advice.confident:
+            why = advice.reason[0].lower() + advice.reason[1:]
+            return {"confidence": None, "note": f"Evaluated on '{split}', but {why}"}
+        try:
+            report = get_eval_report(project, run_id, split)
+        except HorosError:  # pragma: no cover — the sweep just read that split
+            report = None
+        return {
+            "confidence": advice.recommended,
+            "reason": advice.reason,
+            "metric": f"F{advice.beta:g}",
+            "precision": round(advice.best.precision, 4),
+            "recall": round(advice.best.recall, 4),
+            "f_score": round(advice.best.f_score, 4),
+            #: every threshold in this range scores within 1 % of the peak
+            "plateau": list(advice.plateau),
+            "derived_from": {
+                "split": split,
+                "iou": advice.iou,
+                # which labels that evaluation scored (E6-T13)
+                "labels": report.labels if report else None,
+                "evaluated_at": report.created_at if report else None,
+                "images": report.num_images if report else None,
+                "instances": report.num_instances if report else None,
+            },
+            "per_class": [
+                {
+                    "name": c.name,
+                    "confidence": c.recommended,
+                    "precision": round(c.precision, 4),
+                    "recall": round(c.recall, 4),
+                    "instances": c.instances,
+                    # too little ground truth for this one to mean much
+                    "enough_data": c.enough_data,
+                }
+                for c in advice.per_class
+            ],
+            "notes": advice.notes,
+        }
+    return {
+        "confidence": None,
+        "note": "No evaluation to derive one from — run 'horos evaluate' on this "
+                "run's test or valid split and export again.",
+    }
 
 
 def _dataset_fingerprint(run_dir: Path) -> dict[str, Any]:
@@ -387,6 +459,7 @@ def model_export_events(
             metrics=report.final_metrics,
             hyperparameters=hparams,
             parity=parity,
+            threshold=_suggested_threshold(project, run_id),
             portability=TENSORRT_PORTABILITY_WARNING if format == "tensorrt" else
             "Portable: this artifact runs on any machine with the matching runtime.",
             variants=variants,
