@@ -121,3 +121,53 @@ def test_to_dataset_assembles_everything(project, tmp_path):
     ds = project.to_dataset()
     assert len(ds.images) == 1 and len(ds.annotations) == 1
     assert ds.categories[0].name == "forklift"
+
+
+# ------------------------------------------- image index cache (performance)
+#
+# list_images() re-parsed images.json on every call, and one web request makes
+# dozens of them (~25 ms each on a 20 000-photo project). The parse is cached
+# per Project instance and keyed on the file's (mtime_ns, size). These tests
+# pin the three properties that make that safe.
+
+
+def test_repeated_reads_reuse_one_parse_until_the_file_changes(project, tmp_path):
+    project.add_image(make_image(tmp_path / "a.png"), width=8, height=8)
+    first = project._load_image_index()
+    assert project._load_image_index() is first  # cache hit: same object
+    project.add_image(make_image(tmp_path / "b.png"), width=8, height=8)
+    assert project._load_image_index() is not first  # the file moved on
+    assert len(project.list_images()) == 2
+
+
+def test_a_write_by_another_instance_is_picked_up(project, tmp_path):
+    record = project.add_image(make_image(tmp_path / "a.png"), width=8, height=8)
+    assert project.list_images()[0].excluded is False  # fills the cache
+    other = Project.open(project.root)  # stands in for a second process
+    other.set_excluded([record.id], True)
+    assert project.list_images()[0].excluded is True
+
+
+def test_mutators_never_edit_the_cached_records(project, tmp_path):
+    record = project.add_image(make_image(tmp_path / "a.png"), width=8, height=8)
+    cached = project._load_image_index()
+    project.set_excluded([record.id], True)
+    # the mutator worked on its own copy, so the object that was cached when it
+    # ran is untouched — a half-finished edit can never leak into a reader
+    assert cached.images[0].excluded is False
+    assert project.list_images()[0].excluded is True
+
+
+def test_list_images_hands_out_a_list_the_caller_may_keep(project, tmp_path):
+    project.add_image(make_image(tmp_path / "a.png"), width=8, height=8)
+    images = project.list_images()
+    images.clear()  # a caller's own list, not the project's
+    assert len(project.list_images()) == 1
+
+
+def test_get_image_finds_records_and_reports_unknown_ids(project, tmp_path):
+    record = project.add_image(make_image(tmp_path / "a.png"), width=8, height=8)
+    assert project.get_image(record.id).file_name == record.file_name
+    assert project.get_image(record.id).file_name == record.file_name  # cached path
+    with pytest.raises(ProjectError, match="No image with id"):
+        project.get_image(4242)

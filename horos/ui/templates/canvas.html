@@ -654,6 +654,8 @@ function toast(msg, cls = "warn", ms = 2400) {
 const Page = {
   categories: [], queue: [], page: 1, perPage: 50, selected: new Set(),
   currentIdx: -1, version: 0,
+  // the queue is a single placeholder while a direct link's real queue loads
+  provisionalQueue: false,
   editorImage: null, editorShapes: [], selectedShapeIdx: -1, flashShapeIdx: -1,
   hoverShapeIdx: -1, hoverVertexIdx: -1, hoverVertexShapeIdx: -1,
   activeTool: "sam", isDrawing: false, currentPoints: [], mousePos: [0, 0],
@@ -668,22 +670,33 @@ const Page = {
 
   // ------------------------------------------------------------------ boot
   async init() {
-    const project = await api("/project");
-    this.categories = project.categories;
-    $("project-name").textContent = project.name;
-    $("project-name").title = project.root;   // full path on hover
+    // #<image_id>[:<annotation_id>] opens one photo straight away (the
+    // Evaluate page's worst images and the Dataset page's validation issues
+    // link here). Read it first: it decides which queue to ask for, so the
+    // page fetches one queue instead of loading the default one and
+    // replacing it.
+    const [deepImage, deepAnnotation] = location.hash.slice(1).split(":")
+      .map((v) => Number(decodeURIComponent(v)));
+    const deep = deepImage || null;
+
     if (EMBED) {
       document.body.classList.add("embed");
       document.querySelector(".site-header").style.display = "none";
     }
+    // three independent reads, fetched together rather than one after another
+    const [project, loop, stats] = await Promise.all([
+      api("/project"),
+      ROUND ? api("/loop/settings").catch(() => null) : api("/loop").catch(() => null),
+      api("/dataset/stats").catch(() => null),
+    ]);
+    this.categories = project.categories;
+    $("project-name").textContent = project.name;
+    $("project-name").title = project.root;   // full path on hover
     if (ROUND) {
-      try {
-        const settings = await api("/loop/settings");
-        if (settings.shapes === "box" || settings.shapes === "polygon") {
-          const radio = document.querySelector(`input[name="sam-output"][value="${settings.shapes === "box" ? "bbox" : "polygon"}"]`);
-          if (radio) radio.checked = true;
-        }
-      } catch (e) {}
+      if (loop && (loop.shapes === "box" || loop.shapes === "polygon")) {
+        const radio = document.querySelector(`input[name="sam-output"][value="${loop.shapes === "box" ? "bbox" : "polygon"}"]`);
+        if (radio) radio.checked = true;
+      }
       // the round decides what is in the queue; the project-wide filters do not apply
       for (const id of ["queue-mode", "split-filter", "class-filter", "btn-autolabel", "btn-delete-selected", "btn-select-page"]) {
         $(id).style.display = "none";
@@ -692,22 +705,19 @@ const Page = {
     } else {
       // an open round in its Label step IS the to-do list: the queue offers
       // it first, so the plain annotate page lands on the round's photos
-      try {
-        const status = await api("/loop");
-        const cur = status.current;
-        if (cur && cur.state === "labeling") {
-          this.openRound = cur.number;
-          const opt = document.createElement("option");
-          opt.value = "round"; opt.textContent = `Round ${cur.number} · to label`;
-          $("queue-mode").prepend(opt);
-          $("queue-mode").value = "round";
-        }
-      } catch (e) {}
+      const cur = loop && loop.current;
+      if (cur && cur.state === "labeling") {
+        this.openRound = cur.number;
+        const opt = document.createElement("option");
+        opt.value = "round"; opt.textContent = `Round ${cur.number} · to label`;
+        $("queue-mode").prepend(opt);
+        $("queue-mode").value = "round";
+      }
+      // a linked photo is normally already labeled, so the "To do" queue does
+      // not hold it: ask for the queue that does, before fetching either
+      if (deep) { $("queue-mode").value = "file_name"; }
     }
-    try {
-      const stats = await api("/dataset/stats");
-      stats.per_class.forEach((c) => { this.classCounts[c.name] = c.instances; });
-    } catch (e) {}
+    if (stats) stats.per_class.forEach((c) => { this.classCounts[c.name] = c.instances; });
     $("queue-mode").onchange = () => this.loadImages(1);
     $("split-filter").onchange = () => this.loadImages(1);
     $("class-filter").onchange = () => this.loadImages(1);
@@ -823,19 +833,44 @@ const Page = {
         e.preventDefault(); e.returnValue = "";
       }
     });
+    if (deep) { await this.openDirectLink(deep, deepAnnotation || null); return; }
     await this.loadImages(1);
-    if (ROUND && !location.hash && this.queue.length) {
+    if (ROUND && this.queue.length) {
       // straight into the first image that still needs work
       const first = this.queue.findIndex((item) => !item.annotated);
       this.openEditor(first >= 0 ? first : 0);
     }
-    // #<image_id> deep-links straight into the editor on that image;
-    // #<image_id>:<annotation_id> also selects that shape and blinks it twice
-    // (the Dataset page's validation issues and the Evaluate page's worst
-    // images link here)
-    const [hashImage, hashAnnotation] = location.hash.slice(1).split(":")
-      .map((v) => Number(decodeURIComponent(v)));
-    if (hashImage) await this.revealImage(hashImage, hashAnnotation || null);
+  },
+
+  // A link names one photo, so show that photo rather than the page it sits
+  // on. The queue (every record in the project — the slowest call this page
+  // makes) loads behind the editor instead of in front of it, and the grid is
+  // never painted: "Back to Grid" renders it later. The editor needs only the
+  // id, and /annotations carries the record with it.
+  async openDirectLink(imageId, focusAnnotationId) {
+    const queueLoad = this.loadImages(1, { skipGrid: true }).catch(() => {});
+    this.queue = [{
+      image: { id: imageId, file_name: "", split: null },
+      num_annotations: 0, annotated: false,
+    }];
+    this.provisionalQueue = true;
+    const editorOpen = this.openEditor(0, focusAnnotationId).catch(() => {});
+    await queueLoad;
+    this.provisionalQueue = false;
+    const idx = this.queue.findIndex((item) => item.image.id === imageId);
+    if (idx < 0) {
+      // the real queue does not hold it: let revealImage widen or report it
+      await editorOpen;
+      this.currentIdx = -1;
+      $("editor-view").style.display = "none";
+      $("grid-view").style.display = "block";
+      this.renderGrid();
+      await this.revealImage(imageId, focusAnnotationId);
+      return;
+    }
+    this.currentIdx = idx;           // the editor keeps the photo it opened
+    this._updateNavButtons();
+    this._setEditorHeader();
   },
 
   // Open one photo by id, whatever the queue is currently showing. A photo
@@ -845,11 +880,13 @@ const Page = {
   async revealImage(imageId, focusAnnotationId = null) {
     const find = () => this.queue.findIndex((item) => item.image.id === imageId);
     let idx = find();
-    if (idx < 0 && !ROUND) {
+    // on a direct link init() already asked for the "By name" queue, so this
+    // second load only happens for a link followed from inside the page
+    if (idx < 0 && !ROUND && $("queue-mode").value !== "file_name") {
       $("queue-mode").value = "file_name";
       $("split-filter").value = "";
       $("class-filter").value = "";
-      await this.loadImages(1);
+      await this.loadImages(1, { skipGrid: true });
       idx = find();
       if (idx >= 0) toast("Showing all photos by name to reach this one", "", 3000);
     }
@@ -863,7 +900,10 @@ const Page = {
     return false;
   },
 
-  async loadImages(page) {
+  // `skipGrid` loads the queue without painting the thumbnail grid — the
+  // caller is about to open the editor instead, and a page of <img> requests
+  // for photos nobody will see is the slowest part of a direct link
+  async loadImages(page, { skipGrid = false } = {}) {
     const roundMode = !ROUND && $("queue-mode").value === "round";
     // the project-wide filters do not apply to a round's picks
     for (const id of ["split-filter", "class-filter"]) $(id).disabled = roundMode;
@@ -879,7 +919,7 @@ const Page = {
         this.queue.sort((a, b) => Number(a.annotated) - Number(b.annotated));
       }
       this.page = page;
-      this.renderGrid();
+      if (!skipGrid) this.renderGrid();
       const done = this.queue.filter((item) => item.annotated).length;
       $("progress-line").innerHTML =
         `round ${round}${ANNOTATOR ? " · " + ANNOTATOR : ""} · <b>${done}</b> / ${this.queue.length} labeled`;
@@ -895,11 +935,13 @@ const Page = {
     const alive = new Set(this.queue.map((item) => item.image.id));
     this.selected = new Set([...this.selected].filter((id) => alive.has(id)));
     this.page = page;
-    this.renderGrid();
-    const p = await api("/progress");
-    $("progress-line").innerHTML =
-      `<b>${p.annotated_images}</b> / ${p.total_images} images annotated · ` +
-      `${p.total_annotations} annotations`;
+    if (!skipGrid) this.renderGrid();
+    // the counters are a caption, not something to hold the page for
+    api("/progress").then((p) => {
+      $("progress-line").innerHTML =
+        `<b>${p.annotated_images}</b> / ${p.total_images} images annotated · ` +
+        `${p.total_annotations} annotations`;
+    }).catch(() => {});
   },
 
   // the class filter lists the project's classes as they are now — classes
@@ -1044,13 +1086,15 @@ const Page = {
     this.setTool(this.activeTool || "select");
     this._updateNavButtons();
     const item = this.queue[idx];
-    $("editor-filename").textContent =
-      `${item.image.file_name} · ${item.image.split || "no set yet"} · ${idx + 1}/${this.queue.length}`;
+    this._setEditorHeader();
     this._setSaveState("", "");
     const [view] = await Promise.all([
       api(`/images/${item.image.id}/annotations`), this._claim(item.image.id),
     ]);
     if (seq !== this._openSeq) return;  // the user moved on while this loaded
+    // the record the server has now — on a direct link it is the first time
+    // this page learns the photo's name and set at all
+    if (view.image) { item.image = view.image; this._setEditorHeader(item); }
     // another session (or a background job) may have added classes since this
     // page loaded — refresh before an unknown id would render as a number
     const known = new Set(this.categories.map((c) => c.id));
@@ -1127,6 +1171,17 @@ const Page = {
     window.parent.postMessage({ type: "horos-round", round: ROUND, labeled: done,
                                 total: this.queue.length, done: finished }, "*");
   },
+  // "name · set · position" — position only once the queue behind the editor
+  // is the real one (a direct link opens the photo before the queue arrives)
+  _setEditorHeader(item = this.queue[this.currentIdx]) {
+    if (!item) return;
+    const name = item.image.file_name;
+    const where = this.provisionalQueue
+      ? "" : ` · ${this.currentIdx + 1}/${this.queue.length}`;
+    $("editor-filename").textContent = name
+      ? `${name} · ${item.image.split || "no set yet"}${where}` : "loading…";
+  },
+
   _updateNavButtons() {
     $("btn-prev").disabled = this.currentIdx <= 0;
     $("btn-next").disabled = this.currentIdx >= this.queue.length - 1;

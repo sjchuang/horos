@@ -80,10 +80,24 @@ def _write_json_atomic(path: Path, text: str) -> None:
     atomic_write_text(path, text)
 
 
+def _file_stamp(path: Path) -> tuple[int, int] | None:
+    """(mtime_ns, size) — the identity a cached parse is keyed on. None when
+    the file is missing, which simply means "do not cache"."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
 class Project:
     def __init__(self, root: Path, manifest: ProjectManifest):
         self.root = Path(root)
         self.manifest = manifest
+        #: ((mtime_ns, size), index, {id: record}) of the last parsed
+        #: images.json — see _load_image_index
+        self._index_cache: tuple[tuple[int, int], ImageIndex, dict[int, ImageRecord]] | None
+        self._index_cache = None
 
     # ------------------------------------------------------------------ paths
     @property
@@ -186,11 +200,36 @@ class Project:
         self.save_manifest()
 
     # ------------------------------------------------------------------ images
-    def _load_image_index(self) -> ImageIndex:
+    def _load_image_index(self, *, fresh: bool = False) -> ImageIndex:
+        """The parsed images.json.
+
+        Parsing it costs ~25 ms on a 20 000-photo project and a single web
+        request asks for it dozens of times (every list_images(), every
+        get_image(), every loop round summary), so the result is cached on
+        this Project instance and revalidated against the file's
+        (mtime_ns, size). Any writer — this process, a training worker, a
+        second horos — changes one of those, and the next read parses again.
+
+        The cached index is SHARED, so nothing may edit it. Every mutator
+        passes `fresh=True` to get a private copy to edit and save; the
+        invariant is that only _load_image_index(fresh=True) results are ever
+        mutated.
+        """
         path = self.root / IMAGE_INDEX_NAME
+        if not fresh:
+            stamp = _file_stamp(path)
+            cached = self._index_cache
+            if stamp is not None and cached is not None and cached[0] == stamp:
+                return cached[1]
         index = ImageIndex.model_validate_json(path.read_text(encoding="utf-8"))
         if index.version < IMAGE_INDEX_VERSION:
             index = self._migrate_image_index(index)
+        if not fresh:
+            # stamped after the parse: a migration rewrote the file just now
+            stamp = _file_stamp(path)
+            self._index_cache = (
+                (stamp, index, {r.id: r for r in index.images}) if stamp else None
+            )
         return index
 
     def _migrate_image_index(self, index: ImageIndex) -> ImageIndex:
@@ -209,12 +248,23 @@ class Project:
 
     def _save_image_index(self, index: ImageIndex) -> None:
         _write_json_atomic(self.root / IMAGE_INDEX_NAME, index.model_dump_json(indent=2))
+        # the file moved on; whatever is cached describes the old one
+        self._index_cache = None
 
     def list_images(self) -> list[ImageRecord]:
-        return self._load_image_index().images
+        """Every image record. The list is a copy, the records in it are not:
+        they belong to the index cache and must not be edited in place (see
+        _load_image_index) — go through set_excluded / update_image_splits."""
+        return list(self._load_image_index().images)
 
     def get_image(self, image_id: int) -> ImageRecord:
-        record = next((i for i in self.list_images() if i.id == image_id), None)
+        index = self._load_image_index()
+        cached = self._index_cache
+        by_id = (
+            cached[2] if cached is not None and cached[1] is index
+            else {r.id: r for r in index.images}
+        )
+        record = by_id.get(image_id)
         if record is None:
             raise ProjectError(f"No image with id {image_id} in project {self.root}")
         return record
@@ -237,7 +287,7 @@ class Project:
         (fast, but the project breaks if the source moves). `_index` lets bulk
         importers batch the index write.
         """
-        index = _index if _index is not None else self._load_image_index()
+        index = _index if _index is not None else self._load_image_index(fresh=True)
         file_name = self._free_file_name(source.name, index)
         record = ImageRecord(
             id=index.next_image_id,
@@ -269,7 +319,7 @@ class Project:
         """Overwrite an existing record's file and metadata, keeping its id and
         file_name (the import 'overwrite' conflict policy). The caller is
         responsible for replacing the image's annotations."""
-        index = _index if _index is not None else self._load_image_index()
+        index = _index if _index is not None else self._load_image_index(fresh=True)
         record = next((r for r in index.images if r.id == image_id), None)
         if record is None:
             raise ProjectError(f"No image with id {image_id} to replace")
@@ -294,7 +344,7 @@ class Project:
         referenced images (copy=False imports) keep their source file; only
         the reference is dropped. Unknown ids fail before anything is touched.
         """
-        index = self._load_image_index()
+        index = self._load_image_index(fresh=True)
         by_id = {record.id: record for record in index.images}
         missing = [i for i in image_ids if i not in by_id]
         if missing:
@@ -317,7 +367,7 @@ class Project:
         """Mark images as skipped (unfit for training) or bring them back.
         Unknown ids fail before anything is written. Returns how many records
         changed state."""
-        index = self._load_image_index()
+        index = self._load_image_index(fresh=True)
         by_id = {record.id: record for record in index.images}
         missing = [i for i in image_ids if i not in by_id]
         if missing:
@@ -335,7 +385,7 @@ class Project:
         return changed
 
     def update_image_splits(self, split_by_id: dict[int, str | None]) -> None:
-        index = self._load_image_index()
+        index = self._load_image_index(fresh=True)
         for record in index.images:
             if record.id in split_by_id:
                 record.split = split_by_id[record.id]  # type: ignore[assignment]
@@ -379,7 +429,7 @@ class Project:
         train set is never left empty."""
         from horos.core.splitting import bucket, split_for
 
-        index = _index if _index is not None else self._load_image_index()
+        index = _index if _index is not None else self._load_image_index(fresh=True)
         wanted = set(image_ids) if image_ids is not None else None
         labeled = [
             r for r in index.images
@@ -487,7 +537,7 @@ class Project:
         )
         if assign_split and any(a.status == "confirmed" for a in annotations):
             # the photo is labeled now: it joins train / valid / test, once
-            index = self._load_image_index()
+            index = self._load_image_index(fresh=True)
             record = next((r for r in index.images if r.id == image_id), None)
             if record is not None and record.split is None:
                 self.assign_splits([image_id], _index=index)

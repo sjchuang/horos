@@ -49,6 +49,10 @@ class AnnotationSetView(BaseModel):
     image_id: int
     version: int
     annotations: list[Annotation]
+    #: the image's record. The editor can therefore open one photo — name,
+    #: set, pixels — from this single response, without waiting for the whole
+    #: queue, which is what a link straight to one photo needs.
+    image: ImageRecord | None = None
 
 
 class QueueItem(BaseModel):
@@ -85,10 +89,12 @@ class _Claims(BaseModel):
 
 
 def _record(project: Project, image_id: int) -> ImageRecord:
-    record = next((r for r in project.list_images() if r.id == image_id), None)
-    if record is None:
-        raise ProjectError(f"No image with id {image_id}")
-    return record
+    # Project.get_image indexes the (cached) image index by id; scanning the
+    # list here cost a pass over every record on each annotation save
+    try:
+        return project.get_image(image_id)
+    except ProjectError:
+        raise ProjectError(f"No image with id {image_id}") from None
 
 
 # ------------------------------------------------------------------ editing
@@ -143,10 +149,11 @@ def _normalize(project: Project, raw: list[Annotation | dict], image_id: int) ->
     not_cli_because="Annotating is interactive; scripts use the Python API.",
 )
 def get_annotations(project: Project, image_id: int) -> AnnotationSetView:
-    _record(project, image_id)
+    record = _record(project, image_id)
     stored = project.load_annotations(image_id)
     return AnnotationSetView(
-        image_id=image_id, version=stored.version, annotations=stored.annotations
+        image_id=image_id, version=stored.version, annotations=stored.annotations,
+        image=record,
     )
 
 
@@ -172,8 +179,10 @@ def save_annotations(
     updated = project.save_annotations(
         image_id, normalized, expected_version=expected_version
     )
+    # re-read: the first confirmed annotation puts the photo in a set
     return AnnotationSetView(
-        image_id=image_id, version=updated.version, annotations=updated.annotations
+        image_id=image_id, version=updated.version, annotations=updated.annotations,
+        image=_record(project, image_id),
     )
 
 

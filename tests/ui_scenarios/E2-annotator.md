@@ -41,10 +41,12 @@ horos ui ./demo_project
 4. 點任一縮圖進入編輯器，影像自動縮放至符合畫面（小圖也放大適配）；「← Back to Grid」返回且網格刷新
 5. 深層連結 `/annotate#<image_id>`（Evaluate 頁最差影像的鉛筆與「Fix labels」、Dataset 頁的
    驗證問題與群組樣本都是這種連結；`#<image_id>:<annotation_id>` 會多選中並閃爍該形狀）：
-   直接進到那張照片的編輯器。**該照片不在目前佇列時**（最常見的情況是它已經標好了，
-   而佇列停在預設的「To do」），頁面自動把佇列切成「By name」、清掉 split 與類別篩選再開，
-   並提示「Showing all photos by name to reach this one」；照片已刪除時提示
-   「Image N is no longer in this project」
+   **直接開編輯器**，不經過縮圖網格。大專案（兩萬張以上）尤其明顯：編輯器在幾十毫秒內就出現，
+   佇列在背後載入，載完後頂欄的「第幾/共幾張」與上一張／下一張才補上；
+   全程不會看到網格閃一下，也不會下載一頁用不到的縮圖
+6. 深層連結的照片幾乎一定已經標好，不在預設的「To do」佇列裡：頁面會直接改用「By name」佇列。
+   若是在頁面內部跳轉（佇列已載入）才會看到提示「Showing all photos by name to reach this one」；
+   照片已刪除時提示「Image N is no longer in this project」並回到網格
 
 ### B. 編輯器 — 矩形（E2-T2）
 1. 按 `2`（或點 ▭），拖曳畫框：畫完**停留在矩形工具**（不會跳回 Select），可以直接畫下一個；

@@ -333,7 +333,9 @@ def import_dataset(
         )
 
     warnings = pre_warnings
-    index = project._load_image_index()
+    # this index is edited image by image and saved at the end, so it must be
+    # a private copy, never the project's shared cache (see _load_image_index)
+    index = project._load_image_index(fresh=True)
     image_map: dict[int, int] = {}
     overwritten_ids: set[int] = set()
     duplicates_skipped = conflicts_skipped = renamed = 0
