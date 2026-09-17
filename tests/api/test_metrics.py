@@ -39,13 +39,16 @@ def _det(image_id, category_id, bbox, score=0.95):
 
 @pytest.fixture
 def gt_path(tmp_path):
+    # kept as a fixture so every test still names one; the metrics take the
+    # ground truth itself now (it may be assembled from the project's current
+    # labels and never written as a COCO file)
     path = tmp_path / "_annotations.coco.json"
     path.write_text(json.dumps(GT), "utf-8")
     return path
 
 
 def _report(gt_path, detections):
-    return _compute_metrics(gt_path, GT, detections, "run-x", "test")
+    return _compute_metrics(None, "run-x", "test", GT, detections)
 
 
 def test_perfect_predictions_score_full_marks(gt_path):

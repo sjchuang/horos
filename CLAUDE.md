@@ -475,12 +475,14 @@ Search-based HPO (Optuna and friends) is left as a pluggable extension. Rational
 | E6-T10 | Suggested operating confidence threshold: one matching pass over the split's saved detections yields the precision / recall / F-beta sweep, and the recommendation is the middle of the plateau that scores within 1 % of the peak (not the bare peak, which moves with the data); per class as well, marked when the class has under 10 boxes; `beta` picks the trade (1 balanced, 2 fewer misses, 0.5 fewer false alarms); tuning on test is called out | `tests/api/test_threshold_advice.py`, `tests/web/test_eval_routes.py`, interface scenario (`tests/ui_scenarios/E6-T8.md` §B2) |
 | E6-T11 | From an error straight to the labels: the worst-image thumbnails and the overlay viewer link to `/annotate#<image_id>` in a new tab (a run's split snapshot keeps the project's own image ids, so the id needs no mapping); the annotate page's deep link widens its queue to `file_name` with the filters cleared when the photo is outside the current view, which every labeled photo is under the default "To do" queue — this also repairs the Dataset page's validation-issue and cluster-sample links | Interface scenario (`tests/ui_scenarios/E6-T8.md` §F, `tests/ui_scenarios/E2-annotator.md` A.5) |
 | E6-T12 | The jump from an error to its labels is direct and the annotate page loads faster: `Project` caches the parsed `images.json` keyed on the file's (mtime_ns, size) and mutators take a private copy, so one request parses it once instead of dozens of times; the annotate boot fetches `/project`, `/loop` and `/dataset/stats` together and stops blocking on `/progress`; a `#<image_id>` link picks the queue that holds the photo up front, opens the editor from `AnnotationSetView.image` while the queue loads behind it, and never paints a grid nobody sees | `tests/unit/test_project.py`, interface scenario (`tests/ui_scenarios/E2-annotator.md` A.5-6) |
+| E6-T13 | Evaluation scores the project's labels as they are now by default (`labels="current"`; `"snapshot"` reproduces an older number). Held-out sets were never trained on, so a corrected box counts on the next evaluation instead of on the next training; photos of the run's own train snapshot are held back in case a reshuffle moved one in, and the report says what the set turned out to be. The ground truth an evaluation used is persisted as `<split>.gt.json`, so error analysis, worst cases, overlays and the threshold sweep re-match the boxes the metrics came from | `tests/api/test_eval_labels.py`, `tests/web/test_eval_routes.py`, interface scenario (`tests/ui_scenarios/E6-T8.md` §G) |
 
 #### User stories (added)
 
 - **E6-S8** (WebUI) A user sees which confidence threshold to operate at, why, and how much it beats the 0.50 default by — and applies it with one button
 - **E6-S9** (Python API) An engineer asks for the threshold that favours recall over precision and gets it with the sweep it came from
 - **E6-S10** (WebUI) A user who decides a worst image is an annotation problem opens that photo in the annotator from where they are, without searching for it by name
+- **E6-S11** (WebUI) A user fixes a wrong label in the test set, re-runs the evaluation, and sees the corrected number without retraining
 
 #### How it is accepted
 
@@ -654,6 +656,7 @@ Decisions already made; no need to ask again:
 - Auto-labeling uses **OWLv2 open-vocabulary zero-shot** (Apache 2.0)
 - First-version priority: annotate → train → evaluate → deploy
 - Hyperparameter adaptation is **rule-based**; search-based is left as a later extension
+- **Evaluation scores the project's current labels** (decided 2026-09-17): held-out sets are never trained on, so a label correction must count on the next evaluation, not the next training. The run's frozen snapshot stays available as an explicit option
 - **Active learning loop (E10)**: canvas engine kept, DINOv2 small for cold-start similarity, PAL (arXiv 2605.10349) as the default uncertainty metric once labels exist, OWLv2 as the round-0 pre-annotator, fixed per-round count by default, multi-annotator assignment required, labeled-only splits assigned per photo by stable hash (70/10/20) that grow with the labels
 
 ### Definition of done for a task

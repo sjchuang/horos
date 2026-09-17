@@ -262,6 +262,12 @@
         <option value="test">test</option>
         <option value="valid">valid</option>
       </select>
+      <div class="seg" id="labels-seg" title="Which labels to score against">
+        <button data-labels="current" class="on"
+                title="The project's labels as they are now — a correction you just made counts immediately">Current labels</button>
+        <button data-labels="snapshot"
+                title="The export this run trained with, frozen — to reproduce an older number">Run snapshot</button>
+      </div>
       <button class="primary" id="eval-btn">Run evaluation</button>
       <div class="bar hidden" id="eval-bar-wrap"><div id="eval-bar"></div></div>
       <span id="eval-status" style="color:var(--dim);font-size:13px"></span>
@@ -283,6 +289,7 @@
         <tbody id="per-class"></tbody>
       </table>
       <p id="report-meta" style="color:var(--dim);font-size:12px"></p>
+      <ul id="report-notes" class="adv-notes"></ul>
     </div>
   </section>
   </div>
@@ -444,6 +451,16 @@ document.addEventListener("keydown", (e) => {
 });
 
 // --------------------------------------------------------------- evaluation
+// which ground truth an evaluation scores against; current labels by default,
+// so a correction made on the annotate page counts on the next run
+let evalLabels = "current";
+$("labels-seg").onclick = (event) => {
+  const button = event.target.closest("button[data-labels]");
+  if (!button) return;
+  evalLabels = button.dataset.labels;
+  [...$("labels-seg").children].forEach((b) => b.classList.toggle("on", b === button));
+};
+
 $("eval-btn").onclick = async () => {
   const run = $("run-select").value;
   if (!run) return;
@@ -456,7 +473,7 @@ $("eval-btn").onclick = async () => {
     const { job_id } = await api(`/train/runs/${run}/evaluate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ split }),
+      body: JSON.stringify({ split, labels: evalLabels }),
     });
     await pollJob(job_id, (ev) => {
       if (ev.type === "progress" && ev.total) {
@@ -514,9 +531,14 @@ async function showReport(run, split) {
       <td>${pct(c.ap50)}</td><td>${pct(c.ap)}</td>
       <td><div class="apbar"><div style="width:${100 * c.ap50}%"></div></div></td></tr>`)
     .join("");
+  const source = report.labels === "current"
+    ? "the project's labels as they are now" : "this run's own snapshot";
   $("report-meta").textContent =
     `${report.num_images} images · ${report.num_instances} ground-truth boxes · ` +
-    `evaluated ${new Date(report.created_at).toLocaleString()}`;
+    `scored against ${source} · evaluated ${new Date(report.created_at).toLocaleString()}`;
+  $("report-notes").innerHTML = (report.notes || [])
+    .slice(1)  // the first note only repeats the line above
+    .map((n) => `<li>${n}</li>`).join("");
   $("report").classList.remove("hidden");
 }
 

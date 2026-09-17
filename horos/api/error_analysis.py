@@ -31,7 +31,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from horos.api.evaluate import _split_gt, load_detections
+from horos.api.evaluate import eval_ground_truth, load_detections
 from horos.api.manifest import capability
 from horos.core.project import Project
 from horos.errors import ProjectError
@@ -383,7 +383,9 @@ def _validate_fractions(threshold: float, iou: float) -> None:
 
 
 def _inputs(project: Project, run_id: str, split: str) -> tuple[dict, list[dict]]:
-    _, gt = _split_gt(project, run_id, split)
+    # the ground truth the last evaluation scored, not whatever the project
+    # holds now: these detections were matched against those boxes
+    gt, _, _ = eval_ground_truth(project, run_id, split)
     return gt, load_detections(project, run_id, split)
 
 

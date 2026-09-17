@@ -3,9 +3,27 @@
 Design decision (confirmed): the model source is always a run id — inference
 and evaluation load that run's best checkpoint and model settings, and results
 are written back into the run directory so experiment comparison (E7) can read
-them with full lineage. Evaluation reads the run's OWN dataset export
-(`runs/<id>/dataset/<split>`), not the project's current data: the snapshot
-the model trained against is the only comparable ground truth.
+them with full lineage.
+
+Which ground truth (revised 2026-09-17, on the user's decision)
+--------------------------------------------------------------
+Evaluation scores the model against the project's labels **as they are now**
+(`labels="current"`). Correcting a wrong box in the test set is the whole
+point of error analysis, and the correction has to show up on the next
+evaluation — a relabel is not a reason to retrain.
+
+That is safe precisely because valid and test are held out: a photo joins a
+set the first time it is labeled and never changes set (E1-T8), so nothing in
+them was ever trained on. The one way that could break is a reshuffle, so the
+photos of the run's own train snapshot are excluded from a current-labels
+evaluation and the report says how many that was.
+
+`labels="snapshot"` keeps the old behaviour — the exact export the model
+trained against, frozen — for reproducing an old number.
+
+Either way the ground truth an evaluation actually used is persisted next to
+its detections (`<split>.gt.json`), so error analysis, worst cases and the
+threshold sweep re-match against the very same boxes the metrics came from.
 
 Metrics come from pycocotools (the reference implementation, confirmed),
 imported lazily like every heavy dependency (R1b) — an annotation-only install
@@ -19,9 +37,10 @@ import io
 import json
 import logging
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -46,17 +65,25 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "ClassEval",
+    "DEFAULT_LABELS",
     "EvalReport",
+    "LabelSource",
     "infer_image",
     "evaluation_events",
     "evaluate_run",
     "start_evaluation",
     "get_eval_report",
+    "eval_ground_truth",
     "load_detections",
 ]
 
 #: evaluation needs low-confidence detections; COCO AP integrates over them
 _EVAL_THRESHOLD = 0.001
+
+#: "current" = the project's labels now (the default), "snapshot" = the export
+#: the run trained against
+LabelSource = Literal["current", "snapshot"]
+DEFAULT_LABELS: LabelSource = "current"
 
 
 class ClassEval(BaseModel):
@@ -73,6 +100,13 @@ class EvalReport(BaseModel):
     run_id: str
     split: str
     created_at: str
+    #: which labels were scored: the project's as they are now, or the export
+    #: the run trained against. Reports written before this existed are
+    #: snapshot ones (see the module docstring)
+    labels: LabelSource = "snapshot"
+    #: what the ground truth turned out to be — how many photos came from
+    #: outside the run's own snapshot, how many were held back
+    notes: list[str] = Field(default_factory=list)
     num_images: int
     num_instances: int
     map_5095: float
@@ -130,6 +164,115 @@ def _reset_backend_cache() -> None:  # tests only
         _BACKENDS.clear()
 
 
+def _snapshot_image_ids(project: Project, run_id: str, split: str) -> set[int]:
+    """The project image ids a run's snapshot holds for one split. Empty when
+    the run has no such split."""
+    path = _run_dir(project, run_id) / "dataset" / split / "_annotations.coco.json"
+    if not path.is_file():
+        return set()
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    return {int(i["id"]) for i in payload.get("images", [])}
+
+
+def _current_gt(project: Project, run_id: str, split: str) -> tuple[dict, list[str]]:
+    """COCO ground truth from the project's labels as they are now.
+
+    The photos are the project's current members of `split` — only labeled
+    photos are set members and a photo never changes set (E1-T8), so this is
+    the snapshot's set plus whatever has been labeled since. Skipped photos
+    (E10-T16) are out, and so is anything the run actually trained on: a
+    reshuffle is the one way a photo could have moved into this set after the
+    model learned it, and scoring on that would be self-congratulation.
+    """
+    trained_on = _snapshot_image_ids(project, run_id, "train")
+    categories = [
+        {"id": c.id, "name": c.name, "supercategory": "none"}
+        for c in project.categories
+    ]
+    images: list[dict] = []
+    annotations: list[dict] = []
+    known = {c.id for c in project.categories}
+    leaked = unknown_class = 0
+    for record in project.list_images():
+        if record.split != split or record.excluded:
+            continue
+        if record.id in trained_on:
+            leaked += 1
+            continue
+        confirmed = [
+            a for a in project.load_annotations(record.id).annotations
+            if a.status == "confirmed"
+        ]
+        if not confirmed:  # a set member whose labels were all removed
+            continue
+        images.append({
+            "id": record.id,
+            "file_name": record.file_name,
+            "width": record.width,
+            "height": record.height,
+        })
+        for ann in confirmed:
+            if ann.category_id not in known:
+                unknown_class += 1
+                continue
+            annotations.append({
+                "id": len(annotations) + 1,  # unique across the file, as COCO needs
+                "image_id": record.id,
+                "category_id": ann.category_id,
+                "bbox": list(ann.bbox),
+                "area": ann.area,
+                "segmentation": ann.segmentation,
+                "iscrowd": ann.iscrowd,
+            })
+    snapshot_ids = _snapshot_image_ids(project, run_id, split)
+    fresh = sum(1 for i in images if i["id"] not in snapshot_ids)
+    gone = len(snapshot_ids) - sum(1 for i in images if i["id"] in snapshot_ids)
+    notes = ["Scored against the project's labels as they are now."]
+    if fresh:
+        notes.append(f"{fresh} photo(s) labeled into this set since the run was trained.")
+    if gone:
+        notes.append(
+            f"{gone} photo(s) of the run's own {split} snapshot are not scored "
+            f"(deleted, skipped, or their labels were removed)."
+        )
+    if leaked:
+        notes.append(
+            f"{leaked} photo(s) held back: the run trained on them, so a split "
+            f"reshuffle must not turn them into a held-out score."
+        )
+    if unknown_class:
+        notes.append(f"{unknown_class} annotation(s) skipped: their class no longer exists.")
+    return (
+        {"images": images, "annotations": annotations, "categories": categories},
+        notes,
+    )
+
+
+def _resolve_gt(
+    project: Project, run_id: str, split: str, labels: LabelSource
+) -> tuple[dict, list[str], Callable[[str], Path]]:
+    """(ground truth, notes, image-path resolver) for an evaluation about to
+    run. Refuses an empty set before the user waits for an inference pass."""
+    if labels == "snapshot":
+        gt_path, gt = _split_gt(project, run_id, split)
+        return gt, ["Scored against the export this run trained with."], (
+            lambda name: gt_path.parent / name
+        )
+    gt, notes = _current_gt(project, run_id, split)
+    if not gt["images"]:
+        _split_gt(project, run_id, split)  # a missing split says so first
+        raise ProjectError(
+            f"The project's '{split}' set has no labeled photo this run did not "
+            f"train on, so there is nothing to score. Label some, or evaluate "
+            f"against the run's own snapshot (labels='snapshot')."
+        )
+    by_name = {r.file_name: project.image_path(r) for r in project.list_images()}
+    return gt, notes, lambda name: by_name[name]
+
+
 def _split_gt(project: Project, run_id: str, split: str) -> tuple[Path, dict]:
     gt_path = _run_dir(project, run_id) / "dataset" / split / "_annotations.coco.json"
     if not gt_path.is_file():
@@ -182,19 +325,24 @@ def evaluation_events(
     run_id: str,
     *,
     split: str = "test",
+    labels: LabelSource = DEFAULT_LABELS,
     device: str | None = None,
     cancel: threading.Event | None = None,
 ) -> Any:
-    """R4 event stream: inference over the run's split snapshot, then COCO
-    metrics. RunCompleted carries the report; it is also persisted under
+    """R4 event stream: inference over the split's photos, then COCO metrics.
+    RunCompleted carries the report; it is also persisted under
     `runs/<id>/eval/<split>.json`.
 
+    `labels` chooses the ground truth: the project's as they are now (the
+    default) or the run's frozen snapshot — see the module docstring.
+
     The raw low-threshold detections are persisted next to it as
-    `<split>.detections.json` (confirmed design, E6-T4): error analysis and
-    worst-case mining re-match them against the ground truth at whatever
-    operating threshold the user asks for, without re-running inference."""
+    `<split>.detections.json` (confirmed design, E6-T4), together with the
+    ground truth they were scored against (`<split>.gt.json`): error analysis
+    and worst-case mining re-match them at whatever operating threshold the
+    user asks for, without re-running inference."""
     backend, record = _load_run_backend(project, run_id, device)
-    gt_path, gt = _split_gt(project, run_id, split)
+    gt, notes, image_path_of = _resolve_gt(project, run_id, split, labels)
 
     def stream():
         images = gt["images"]
@@ -215,7 +363,7 @@ def evaluation_events(
                 if cancel is not None and cancel.is_set():
                     yield RunCompleted(run_id=run_id, result={"cancelled": True})
                     return
-                image_path = gt_path.parent / info["file_name"]
+                image_path = image_path_of(info["file_name"])
                 prediction = backend.infer_one(
                     image_path, threshold=_EVAL_THRESHOLD
                 )
@@ -242,7 +390,10 @@ def evaluation_events(
             # persisted before the metrics: a missing pycocotools must not
             # cost the user the inference pass they just waited for
             _write_detections(project, run_id, split, detections)
-            report = _compute_metrics(gt_path, gt, detections, run_id, split)
+            _write_eval_gt(project, run_id, split, gt, labels)
+            report = _compute_metrics(
+                project, run_id, split, gt, detections, labels=labels, notes=notes
+            )
         except Exception as exc:  # noqa: BLE001 — R4: the stream reports itself
             logger.exception("evaluation of run %s failed", run_id)
             yield RunFailed(
@@ -275,10 +426,13 @@ def evaluate_run(
     run_id: str,
     *,
     split: str = "test",
+    labels: LabelSource = DEFAULT_LABELS,
     device: str | None = None,
 ) -> EvalReport:
     """Synchronous convenience: consume the event stream, return the report."""
-    for event in evaluation_events(project, run_id, split=split, device=device):
+    for event in evaluation_events(
+        project, run_id, split=split, labels=labels, device=device
+    ):
         if event.type == "failed":
             raise ProjectError(f"Evaluation failed: {event.message}")
         if event.type == "completed":
@@ -300,17 +454,19 @@ def start_evaluation(
     run_id: str,
     *,
     split: str = "test",
+    labels: LabelSource = DEFAULT_LABELS,
     device: str | None = None,
 ) -> str:
-    """Background evaluation via the shared job machinery; poll /jobs/<id>."""
+    """Background evaluation via the shared job machinery; poll /jobs/<id>.
+    `labels` defaults to the project's current labels (module docstring)."""
     # validate before the job starts so the caller gets errors synchronously
     _load_run_backend(project, run_id, device)
-    _split_gt(project, run_id, split)
+    _resolve_gt(project, run_id, split, labels)
     return jobs.start_job(
         project,
         "evaluate",
         lambda cancel: evaluation_events(
-            project, run_id, split=split, device=device, cancel=cancel
+            project, run_id, split=split, labels=labels, device=device, cancel=cancel
         ),
     )
 
@@ -344,6 +500,58 @@ def _eval_dir(project: Project, run_id: str) -> Path:
 
 def _detections_path(project: Project, run_id: str, split: str) -> Path:
     return _run_dir(project, run_id) / "eval" / f"{split}.detections.json"
+
+
+def _gt_path(project: Project, run_id: str, split: str) -> Path:
+    return _run_dir(project, run_id) / "eval" / f"{split}.gt.json"
+
+
+def _write_eval_gt(
+    project: Project, run_id: str, split: str, gt: dict, labels: LabelSource
+) -> Path:
+    """The exact ground truth an evaluation scored against. Error analysis,
+    worst cases, the overlays and the threshold sweep all re-match the same
+    detections, so they have to read the same boxes the metrics came from —
+    the project's labels move on, this file does not."""
+    path = _eval_dir(project, run_id) / f"{split}.gt.json"
+    path.write_text(
+        json.dumps({
+            "run_id": run_id,
+            "split": split,
+            "labels": labels,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "coco": gt,
+        }),
+        "utf-8",
+    )
+    return path
+
+
+def eval_ground_truth(
+    project: Project, run_id: str, split: str
+) -> tuple[dict, LabelSource, Callable[[str], Path]]:
+    """(COCO ground truth, where it came from, image-path resolver) of the last
+    evaluation of this split — what every downstream analysis must use.
+
+    Evaluations made before the ground truth was persisted fall back to the
+    run's snapshot, which is what they scored against."""
+    path = _gt_path(project, run_id, split)
+    if path.is_file():
+        payload = json.loads(path.read_text("utf-8"))
+        labels: LabelSource = payload.get("labels", "snapshot")
+        gt = payload["coco"]
+        if labels == "current":
+            by_name = {
+                r.file_name: project.image_path(r) for r in project.list_images()
+            }
+            snapshot_dir = _run_dir(project, run_id) / "dataset" / split
+            # a photo deleted since the evaluation falls back to the copy the
+            # snapshot kept, so an old overlay still renders
+            return gt, labels, lambda name: by_name.get(name, snapshot_dir / name)
+        snapshot_dir = _run_dir(project, run_id) / "dataset" / split
+        return gt, labels, lambda name: snapshot_dir / name
+    gt_path, gt = _split_gt(project, run_id, split)
+    return gt, "snapshot", lambda name: gt_path.parent / name
 
 
 def _write_detections(
@@ -381,11 +589,14 @@ def load_detections(project: Project, run_id: str, split: str) -> list[dict]:
 
 
 def _compute_metrics(
-    gt_path: Path,
-    gt: dict,
-    detections: list[dict],
+    project: Project,
     run_id: str,
     split: str,
+    gt: dict,
+    detections: list[dict],
+    *,
+    labels: LabelSource = "snapshot",
+    notes: list[str] | None = None,
 ) -> EvalReport:
     """pycocotools COCOeval over one split (E6-T3). The library prints its own
     progress to stdout; that would corrupt the CLI's JSONL stream, so all of
@@ -410,6 +621,8 @@ def _compute_metrics(
         run_id=run_id,
         split=split,
         created_at=datetime.now(timezone.utc).isoformat(),
+        labels=labels,
+        notes=list(notes or []),
         num_images=len(gt.get("images", [])),
         num_instances=len(gt.get("annotations", [])),
     )
@@ -425,7 +638,12 @@ def _compute_metrics(
         )
 
     with contextlib.redirect_stdout(io.StringIO()):
-        coco_gt = COCO(str(gt_path))
+        # COCO() only reads a file when given one; a current-labels ground
+        # truth is assembled in memory, so it is handed over directly rather
+        # than written to a second file just to be read back
+        coco_gt = COCO()
+        coco_gt.dataset = gt
+        coco_gt.createIndex()
         coco_dt = coco_gt.loadRes(detections)
         coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
         coco_eval.evaluate()

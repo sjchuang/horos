@@ -257,6 +257,22 @@ def test_worst_cases_endpoint_lists_errors_and_honours_top(trained_client):
     assert bad.status_code == 400
 
 
+def test_evaluation_scores_current_labels_unless_told_otherwise(trained_client):
+    client, run_id, _ = trained_client
+    _evaluate(client, run_id)
+    report = client.get(f"/api/v1/train/runs/{run_id}/eval/valid").get_json()
+    assert report["labels"] == "current"
+    assert "as they are now" in report["notes"][0]
+
+    response = client.post(
+        f"/api/v1/train/runs/{run_id}/evaluate", json={"split": "valid", "labels": "snapshot"}
+    )
+    assert response.status_code == 202
+    assert _wait_job(client, response.get_json()["job_id"])["state"] == "completed"
+    frozen = client.get(f"/api/v1/train/runs/{run_id}/eval/valid").get_json()
+    assert frozen["labels"] == "snapshot"
+
+
 def test_threshold_endpoint_serves_the_sweep_and_honours_beta(trained_client):
     client, run_id, _ = trained_client
     before = client.get(f"/api/v1/train/runs/{run_id}/eval/valid/threshold")

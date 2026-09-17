@@ -37,7 +37,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from horos.api.error_analysis import _class_names, _validate_fractions, match_image
-from horos.api.evaluate import _split_gt, load_detections
+from horos.api.evaluate import eval_ground_truth, load_detections
 from horos.api.manifest import capability
 from horos.core.project import Project
 from horos.errors import ProjectError
@@ -342,7 +342,7 @@ def suggest_threshold(
     """Where to set the confidence threshold for this run, from the detections
     its last evaluation of `split` persisted. `beta` above 1 weights recall,
     below 1 weights precision."""
-    _, gt = _split_gt(project, run_id, split)
+    gt, _, _ = eval_ground_truth(project, run_id, split)
     detections: list[dict[str, Any]] = load_detections(project, run_id, split)
     return sweep_detections(
         gt, detections, iou=iou, beta=beta, run_id=run_id, split=split

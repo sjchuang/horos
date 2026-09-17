@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Literal
 from pydantic import BaseModel, Field
 
 from horos.api.error_analysis import ImageErrors, image_errors
-from horos.api.evaluate import _split_gt
+from horos.api.evaluate import eval_ground_truth
 from horos.api.manifest import capability
 from horos.core.project import Project
 from horos.errors import ProjectError
@@ -288,6 +288,8 @@ def render_error_overlay(
     out: Path | str | None = None,
 ) -> PILImage:
     errors = image_errors(project, run_id, split, image_id, threshold=threshold, iou=iou)
-    gt_path, _ = _split_gt(project, run_id, split)
-    image_path = gt_path.parent / errors.file_name
+    # the photo as the evaluation saw it: the project's copy for current
+    # labels, the run's snapshot copy otherwise
+    _, _, image_path_of = eval_ground_truth(project, run_id, split)
+    image_path = image_path_of(errors.file_name)
     return render_overlay(image_path, error_overlay_boxes(errors), out=out)

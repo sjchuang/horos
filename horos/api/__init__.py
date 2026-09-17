@@ -59,8 +59,10 @@ from horos.api.error_analysis import (
     worst_cases,
 )
 from horos.api.evaluate import (
+    DEFAULT_LABELS,
     ClassEval,
     EvalReport,
+    LabelSource,
     get_eval_report,
     infer_image,
     start_evaluation,
@@ -299,6 +301,8 @@ __all__ = [
     "DerivedValue",
     "DoctorReport",
     "EvalReport",
+    "DEFAULT_LABELS",
+    "LabelSource",
     "Finding",
     "HyperparameterPlan",
     "ImportSummary",

@@ -351,6 +351,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Training run id (default: the newest completed run of this project)",
     )
     p.add_argument("--split", choices=["train", "valid", "test"], default="test")
+    p.add_argument(
+        "--labels", choices=["current", "snapshot"], default="current",
+        help="Ground truth to score against: the project's labels as they are "
+        "now (default), or the export this run trained with — use 'snapshot' "
+        "to reproduce an older number",
+    )
 
     p = sub.add_parser(
         "analyze",
@@ -877,7 +883,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             project = _project_arg(args)
             failed = False
             for event in evaluation_events(
-                project, _resolve_run(project, args.run_id), split=args.split
+                project, _resolve_run(project, args.run_id),
+                split=args.split, labels=args.labels,
             ):
                 sys.stdout.write(dump_event(event) + "\n")  # JSONL stream (R4)
                 sys.stdout.flush()

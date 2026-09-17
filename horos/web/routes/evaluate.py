@@ -84,7 +84,9 @@ def get_media_frame(run_id: str, media_id: str, frame_name: str):
 def start_evaluation(run_id: str):
     body = request.get_json(silent=True) or {}
     job_id = api.start_evaluation(
-        _project(), run_id, split=body.get("split", "test")
+        _project(), run_id,
+        split=body.get("split", "test"),
+        labels=body.get("labels", api.DEFAULT_LABELS),
     )
     return jsonify({"job_id": job_id}), 202
 
