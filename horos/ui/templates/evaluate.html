@@ -128,9 +128,19 @@
                          background: var(--c); }
   .legend .dashed::before { background: transparent; border: 2px dashed var(--c);
                             width: 8px; height: 8px; }
-  .err-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-              gap: 18px; align-items: start; }
-  @media (max-width: 1400px) { .err-grid { grid-template-columns: 1fr; } }
+  /* Per class and the confusion matrix used to sit side by side, which left
+     both too narrow to read: the matrix scrolled and the table was cut off.
+     One at a time, full width, switched by a tab. */
+  .tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--line);
+          margin: 4px 0 12px; }
+  .tabs button { background: none; border: none; border-radius: 0; color: var(--dim);
+                 padding: 8px 14px; font-size: 13px; border-bottom: 2px solid transparent;
+                 margin-bottom: -1px; }
+  .tabs button:hover:not(.on) { color: var(--text); border-color: var(--line); }
+  .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+  .tabs .hint { margin-left: auto; color: var(--dim); font-size: 12px; }
+  .tab-panel { display: none; }
+  .tab-panel.on { display: block; }
   .matrix-wrap { overflow-x: auto; }
   table.matrix { width: auto; font-size: 12px; }
   table.matrix th, table.matrix td { padding: 4px 8px; text-align: center;
@@ -352,26 +362,25 @@
         <div class="card"><div class="num" id="e-conf" style="color:#cc5de8">—</div>
           <div class="label">wrong class</div></div>
       </div>
-      <div class="err-grid">
-        <div>
-          <h3 style="font-size:13px;color:var(--dim);margin:0 0 8px">
-            Confusion matrix <span style="font-weight:400">— rows: ground truth,
-            columns: predicted</span></h3>
-          <div class="matrix-wrap"><table class="matrix" id="confusion"></table></div>
-        </div>
-        <div>
-          <h3 style="font-size:13px;color:var(--dim);margin:0 0 8px">Per class</h3>
-          <table>
-            <thead><tr><th>class</th><th>recall</th><th>precision</th>
-              <th title="ground truth left undetected">missed</th>
-              <th title="predictions matching nothing">false</th>
-              <th title="ground truth detected as another class">confused</th></tr></thead>
-            <tbody id="err-classes"></tbody>
-          </table>
-          <h3 style="font-size:13px;color:var(--dim);margin:14px 0 6px">
-            Most confused pairs</h3>
-          <ul class="pairs" id="confused-pairs" style="list-style:none;margin:0;padding:0"></ul>
-        </div>
+      <div class="tabs" id="err-tabs">
+        <button data-tab="classes" class="on">Per class</button>
+        <button data-tab="matrix">Confusion matrix</button>
+        <span class="hint" id="tab-hint"></span>
+      </div>
+      <div class="tab-panel on" id="tab-classes">
+        <table>
+          <thead><tr><th>class</th><th>recall</th><th>precision</th>
+            <th title="ground truth left undetected">missed</th>
+            <th title="predictions matching nothing">false</th>
+            <th title="ground truth detected as another class">confused</th></tr></thead>
+          <tbody id="err-classes"></tbody>
+        </table>
+      </div>
+      <div class="tab-panel" id="tab-matrix">
+        <div class="matrix-wrap"><table class="matrix" id="confusion"></table></div>
+        <h3 style="font-size:13px;color:var(--dim);margin:16px 0 6px">
+          Most confused pairs</h3>
+        <ul class="pairs" id="confused-pairs" style="list-style:none;margin:0;padding:0"></ul>
       </div>
       <h3 style="font-size:13px;color:var(--dim);margin:18px 0 8px">
         Worst images <span id="worst-count" style="font-weight:400"></span></h3>
@@ -636,7 +645,39 @@ function renderErrors(a) {
         <span>${p.gt_name}</span><span class="arrow">→ predicted as</span>
         <span style="color:${ERR_COLORS.confused}">${p.pred_name}</span></li>`).join("")
     : `<li style="color:var(--dim)">none — every matched box has the right class</li>`;
+  lastAnalysis = a;
+  syncErrTab();
 }
+
+// Per class / Confusion matrix, one at a time; the choice sticks per browser
+let lastAnalysis = null;
+let errTab = (() => {
+  try { return localStorage.getItem("horos_err_tab") || "classes"; } catch (e) { return "classes"; }
+})();
+
+// the strip carries the headline of the view on show: the matrix's axes where
+// the matrix lives, and on the table the one number the matrix would have told
+// you at a glance
+function syncErrTab() {
+  [...$("err-tabs").querySelectorAll("button")].forEach((b) =>
+    b.classList.toggle("on", b.dataset.tab === errTab));
+  $("tab-classes").classList.toggle("on", errTab === "classes");
+  $("tab-matrix").classList.toggle("on", errTab === "matrix");
+  $("tab-hint").textContent = errTab === "matrix"
+    ? "rows: ground truth · columns: predicted"
+    : lastAnalysis
+      ? `${lastAnalysis.confused} box(es) found but labeled as another class`
+      : "";
+}
+
+$("err-tabs").onclick = (event) => {
+  const button = event.target.closest("button[data-tab]");
+  if (!button) return;
+  errTab = button.dataset.tab;
+  try { localStorage.setItem("horos_err_tab", errTab); } catch (e) {}
+  syncErrTab();
+};
+syncErrTab();
 
 function renderWorst(run, split, report) {
   worstItems = report.images;
