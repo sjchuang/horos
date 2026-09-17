@@ -183,6 +183,7 @@ tests/                     # all test scripts live here
 - Web framework: Flask (do not introduce FastAPI or Django)
 - Configuration objects always use `pydantic`, never bare dicts
 - Tests use `pytest`; formatting/linting uses `ruff`
+- **The `hidden` attribute hides.** `static/controls.css` resets `[hidden]` with `!important` because every control class sets `display`, and an author rule beats the browser's own `[hidden]` rule — without the reset a hidden `.btn` renders as an empty pill
 - Library code must not call `print()` — always use `logging`
 - TensorRT engines are not portable: the export flow must be run on the target device, and both the API and the UI must say so explicitly
 

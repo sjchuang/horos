@@ -45,3 +45,12 @@ input[type=checkbox]:focus-visible { outline: 2px solid rgba(77, 171, 247, .4);
 .file-btn:hover { border-color: var(--accent); }
 .file-btn input[type=file] { display: none; }
 .file-btn svg { width: 14px; height: 14px; }
+
+/* ------------------------------------------------------------ hidden reset */
+/* The browser hides [hidden] with `display: none`, but that is a user-agent
+   rule: ANY author rule that sets display beats it. Every control here and on
+   the pages (.btn, .badge, .seg, .stepper, .file-btn …) sets one, so a button
+   written as `<button class="btn" hidden>` stayed on screen as an empty pill.
+   Pages load this file first, so the reset has to be !important to outrank
+   their own later rules. */
+[hidden] { display: none !important; }
