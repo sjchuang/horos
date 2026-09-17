@@ -167,6 +167,16 @@ def test_engine_and_tflite_sources_resolve_and_are_checked_first(tmp_path, monke
     from horos.core.platform_info import PlatformInfo
 
     for fmt, artifact in (("tensorrt", "model.trt"), ("tflite", "model.tflite")):
+        # Name the platform instead of inheriting the host's: check_runtime
+        # refuses a TensorRT engine on macOS by capability (asserted on its
+        # own below), which would pre-empt the missing-runtime hint this half
+        # is about. Re-applied per iteration because monkeypatch.undo() at the
+        # end of the loop body clears it.
+        monkeypatch.setattr(
+            system_mod, "detect_platform",
+            lambda: PlatformInfo(os_family="linux", arch="x86_64",
+                                 is_jetson=False, python_version="3.12.0"),
+        )
         bundle = _write_bundle(tmp_path / fmt, fmt=fmt, artifact=artifact)
         source = resolve_source(path=bundle)
         assert source.kind == fmt and source.classes == ["a", "b"]

@@ -344,7 +344,20 @@ def test_install_needs_no_gpu_flag_on_an_amd_machine(capsys, monkeypatch):
     the decision to the planner.
     """
     from horos.api import install as install_mod
+    from horos.core.platform_info import PlatformInfo
 
+    # Stand in for the platform too: plan_install() drops the AMD GPU on
+    # macOS and Jetson (correctly — ROCm has no build there), so without
+    # this the ROCm path is unreachable on a Mac and this test would only
+    # pass on the Linux/Windows CI runners.
+    monkeypatch.setattr(
+        install_mod,
+        "detect_platform",
+        lambda: PlatformInfo(
+            os_family="linux", arch="x86_64", is_jetson=False,
+            python_version="3.10.6",
+        ),
+    )
     monkeypatch.setattr(install_mod, "detect_amd_gpu", lambda: "AMD Radeon RX 9070 XT")
     monkeypatch.setattr(install_mod, "detect_rocm_arch", lambda: "gfx1201")
     monkeypatch.setattr(install_mod, "detect_cuda_version", lambda: None)

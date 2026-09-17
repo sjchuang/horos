@@ -80,6 +80,13 @@ def _fake_cpu_torch_on(monkeypatch, *, nvidia=None, amd=None, arch=None):
     from horos.api import install as install_mod
     from horos.api import system as sys_mod
 
+    # The platform has to be stood in for as well, not just the probes:
+    # doctor_report() calls detect_platform() itself, and plan_install()
+    # drops the AMD GPU outright on macOS and Jetson (correctly — ROCm has
+    # no build there). Without this the ROCm arms are unreachable on a Mac
+    # and these tests only pass on the Linux/Windows CI runners.
+    plat = _plat(os_family="windows", arch="AMD64")
+    monkeypatch.setattr(sys_mod, "detect_platform", lambda: plat)
     monkeypatch.setattr(sys_mod, "_installed_version", lambda name: "1.0")
     monkeypatch.setattr(sys_mod, "torch_is_cpu_build", lambda: True)
     monkeypatch.setattr(sys_mod, "detect_cuda_version", lambda: nvidia)
@@ -94,7 +101,7 @@ def _fake_cpu_torch_on(monkeypatch, *, nvidia=None, amd=None, arch=None):
         env_mod,
         "check_environment",
         lambda emit_warnings=True: env_mod.EnvReport(
-            platform=_plat(os_family="windows", arch="AMD64"),
+            platform=plat,
             torch_version="2.14.0+cpu",
             cuda_available=False,
             mps_available=False,
