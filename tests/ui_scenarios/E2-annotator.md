@@ -39,6 +39,12 @@ horos ui ./demo_project
    三個篩選可疊加（類別篩選＝含該類別標註或預標的照片；在 Classes 改名／刪除後選單同步）
 3. 每頁數量切 20：分頁按鈕出現；縮圖角標 ✓ 已標、🔒 他人標註中
 4. 點任一縮圖進入編輯器，影像自動縮放至符合畫面（小圖也放大適配）；「← Back to Grid」返回且網格刷新
+5. 深層連結 `/annotate#<image_id>`（Evaluate 頁最差影像的鉛筆與「Fix labels」、Dataset 頁的
+   驗證問題與群組樣本都是這種連結；`#<image_id>:<annotation_id>` 會多選中並閃爍該形狀）：
+   直接進到那張照片的編輯器。**該照片不在目前佇列時**（最常見的情況是它已經標好了，
+   而佇列停在預設的「To do」），頁面自動把佇列切成「By name」、清掉 split 與類別篩選再開，
+   並提示「Showing all photos by name to reach this one」；照片已刪除時提示
+   「Image N is no longer in this project」
 
 ### B. 編輯器 — 矩形（E2-T2）
 1. 按 `2`（或點 ▭），拖曳畫框：畫完**停留在矩形工具**（不會跳回 Select），可以直接畫下一個；

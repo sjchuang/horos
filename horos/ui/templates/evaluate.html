@@ -168,6 +168,19 @@
                font-size: 12px; color: var(--dim); }
   .adv-class b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
   .adv-class.thin { opacity: .55; border-style: dashed; }
+  /* "fix the labels" shortcut from an error back to the annotator */
+  .thumb-edit { position: absolute; top: 6px; right: 6px; z-index: 2;
+                display: flex; align-items: center; justify-content: center;
+                width: 26px; height: 26px; border-radius: 6px; color: var(--text);
+                background: rgba(16, 20, 24, .78); border: 1px solid var(--line);
+                opacity: 0; transition: opacity .12s; }
+  .thumb:hover .thumb-edit, .thumb-edit:focus-visible { opacity: 1; }
+  .thumb-edit:hover { border-color: var(--accent); color: var(--accent); }
+  .thumb-edit svg { width: 14px; height: 14px; }
+  .fix-link { display: inline-flex; align-items: center; gap: 7px; color: var(--text);
+              border: 1px solid var(--line); border-radius: 6px; padding: 6px 14px; }
+  .fix-link:hover { border-color: var(--accent); color: var(--accent); }
+  .fix-link svg { width: 15px; height: 15px; }
   .hidden { display: none; }
 </style>
 </head>
@@ -377,8 +390,14 @@
   <div id="viewer-bottom">
     <button class="nav-btn" id="viewer-prev" title="Previous (←)">←</button>
     <span id="det-count" style="color:var(--dim);font-size:13px;min-width:130px"></span>
-    <button class="nav-btn" id="viewer-next" title="Next (→)"
-            style="margin-left:auto">→</button>
+    <a class="fix-link" id="viewer-fix" target="_blank" rel="noopener"
+       style="margin-left:auto"
+       title="Open this photo in the annotator, in a new tab">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      Fix labels</a>
+    <button class="nav-btn" id="viewer-next" title="Next (→)">→</button>
   </div>
 </div>
 <script>
@@ -505,6 +524,13 @@ const ERR_COLORS = { tp: "#4dabf7", fp: "#ff6b6b", fn: "#ffa94d", confused: "#cc
 function errorParams() {
   return `threshold=${$("err-thr").value}&iou=${$("err-iou").value}`;
 }
+// A split snapshot keeps the project's own image ids and file names, so an
+// error on the evaluate page links straight back to that photo in the
+// annotator. The annotate page widens its queue to find it (it is labeled, so
+// the default "To do" view does not hold it).
+function annotateURL(imageId) {
+  return `/annotate#${imageId}`;
+}
 function overlayURL(run, split, imageId) {
   return `/api/v1/train/runs/${run}/eval/${split}/images/${imageId}/overlay.png?${errorParams()}`;
 }
@@ -594,6 +620,11 @@ function renderWorst(run, split, report) {
   $("worst-grid").innerHTML = worstItems.map((img, idx) => `
     <div class="thumb worst-thumb" data-idx="${idx}"
          title="${img.file_name}: ${img.fn} missed, ${img.fp} false, ${img.confused} wrong class">
+      <a class="thumb-edit" href="${annotateURL(img.image_id)}" target="_blank" rel="noopener"
+         title="Fix this photo's labels in the annotator">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></a>
       <img loading="lazy" src="${overlayURL(run, split, img.image_id)}" alt="">
       <div class="meta">
         <span class="badges">${badge(img.fn, "fn", "missed")}${badge(img.fp, "fp", "false positives")}${badge(img.confused, "confused", "wrong class")}</span>
@@ -602,6 +633,10 @@ function renderWorst(run, split, report) {
     </div>`).join("");
   $("worst-grid").querySelectorAll(".thumb").forEach((el) => {
     el.onclick = () => openOverlayViewer(Number(el.dataset.idx));
+  });
+  // the pencil opens the annotator instead of the overlay viewer
+  $("worst-grid").querySelectorAll(".thumb-edit").forEach((el) => {
+    el.onclick = (event) => event.stopPropagation();
   });
 }
 
@@ -619,6 +654,7 @@ function drawViewer() {
   $("viewer-frame").textContent = `${viewerPos + 1}/${worstItems.length}`;
   $("det-count").textContent =
     `${item.fn} missed · ${item.fp} false · ${item.confused} wrong class · ${item.tp} correct`;
+  $("viewer-fix").href = annotateURL(item.image_id);
   const img = new Image();
   const pos = viewerPos;
   img.onload = () => {

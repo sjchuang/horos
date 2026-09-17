@@ -831,14 +831,36 @@ const Page = {
     }
     // #<image_id> deep-links straight into the editor on that image;
     // #<image_id>:<annotation_id> also selects that shape and blinks it twice
-    // (the Dataset page's validation issues link here)
+    // (the Dataset page's validation issues and the Evaluate page's worst
+    // images link here)
     const [hashImage, hashAnnotation] = location.hash.slice(1).split(":")
       .map((v) => Number(decodeURIComponent(v)));
-    if (hashImage) {
-      const idx = this.queue.findIndex((item) => item.image.id === hashImage);
-      if (idx >= 0) this.openEditor(idx, hashAnnotation || null);
-      else toast(`Image ${hashImage} is not in the current queue (check the split filter)`, "err", 4200);
+    if (hashImage) await this.revealImage(hashImage, hashAnnotation || null);
+  },
+
+  // Open one photo by id, whatever the queue is currently showing. A photo
+  // linked from elsewhere is usually outside the default "To do" view —
+  // every worst image of an evaluation is labeled, for one — so widen the
+  // queue to every photo by name rather than report it missing.
+  async revealImage(imageId, focusAnnotationId = null) {
+    const find = () => this.queue.findIndex((item) => item.image.id === imageId);
+    let idx = find();
+    if (idx < 0 && !ROUND) {
+      $("queue-mode").value = "file_name";
+      $("split-filter").value = "";
+      $("class-filter").value = "";
+      await this.loadImages(1);
+      idx = find();
+      if (idx >= 0) toast("Showing all photos by name to reach this one", "", 3000);
     }
+    if (idx >= 0) { this.openEditor(idx, focusAnnotationId); return true; }
+    toast(
+      ROUND
+        ? `Image ${imageId} is not among this round's photos`
+        : `Image ${imageId} is no longer in this project`,
+      "err", 4200,
+    );
+    return false;
   },
 
   async loadImages(page) {

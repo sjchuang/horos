@@ -472,11 +472,13 @@ Search-based HPO (Optuna and friends) is left as a pluggable extension. Rational
 | E6-T8 | Error analysis UI | Interface scenario |
 | E6-T9 | Web API endpoints | `tests/web/test_eval_routes.py` |
 | E6-T10 | Suggested operating confidence threshold: one matching pass over the split's saved detections yields the precision / recall / F-beta sweep, and the recommendation is the middle of the plateau that scores within 1 % of the peak (not the bare peak, which moves with the data); per class as well, marked when the class has under 10 boxes; `beta` picks the trade (1 balanced, 2 fewer misses, 0.5 fewer false alarms); tuning on test is called out | `tests/api/test_threshold_advice.py`, `tests/web/test_eval_routes.py`, interface scenario (`tests/ui_scenarios/E6-T8.md` §B2) |
+| E6-T11 | From an error straight to the labels: the worst-image thumbnails and the overlay viewer link to `/annotate#<image_id>` in a new tab (a run's split snapshot keeps the project's own image ids, so the id needs no mapping); the annotate page's deep link widens its queue to `file_name` with the filters cleared when the photo is outside the current view, which every labeled photo is under the default "To do" queue — this also repairs the Dataset page's validation-issue and cluster-sample links | Interface scenario (`tests/ui_scenarios/E6-T8.md` §F, `tests/ui_scenarios/E2-annotator.md` A.5) |
 
 #### User stories (added)
 
 - **E6-S8** (WebUI) A user sees which confidence threshold to operate at, why, and how much it beats the 0.50 default by — and applies it with one button
 - **E6-S9** (Python API) An engineer asks for the threshold that favours recall over precision and gets it with the sweep it came from
+- **E6-S10** (WebUI) A user who decides a worst image is an annotation problem opens that photo in the annotator from where they are, without searching for it by name
 
 #### How it is accepted
 
