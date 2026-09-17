@@ -302,6 +302,7 @@ API tests, primarily. The core condition is **E1-T5: lossless round-tripping** â
 | E2-T7 | Image queue and navigation | `tests/api/test_image_queue.py` |
 | E2-T8 | Optimistic locking for concurrent writes | Cross-platform implementation (no `fcntl`); two sessions writing the same image, the second gets a conflict; `tests/api/test_annotate_concurrency.py` |
 | E2-T9 | Web API endpoints | `tests/web/test_annotate_routes.py` |
+| E2-T10 | The editor sidebar keeps the shapes list usable: the Tools heading folds the active tool's options away (remembered per browser, and it names what it hid), the tools card takes at most half the sidebar and scrolls inside it, and the shapes list keeps a floor of 190px | Interface scenario (`tests/ui_scenarios/E2-annotator.md`) |
 
 #### How it is accepted
 

@@ -145,8 +145,24 @@
   .chip.on { border-color: var(--accent); color: var(--accent); }
   .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
   .zoom-hint { color: var(--dim); font-size: 11px; margin-top: 10px; }
-  .shapes-card { flex: 1; display: flex; flex-direction: column; min-height: 120px; }
+  /* The tools card grows with the active tool's options and the class list;
+     left alone it pushes the shapes list down to nothing. It keeps at most
+     half the sidebar and scrolls inside, so the shapes list always has room. */
+  .sidebar > .tools-card { flex: 0 1 auto; min-height: 0; max-height: 52%;
+                           overflow-y: auto; }
+  .shapes-card { flex: 1 1 auto; display: flex; flex-direction: column;
+                 min-height: 190px; }
   #shapes-list { flex: 1; overflow-y: auto; margin-bottom: 10px; }
+  /* a section heading that folds what follows it */
+  .fold { display: flex; align-items: center; gap: 6px; width: 100%;
+          background: none; border: none; padding: 0; margin: 0 0 10px;
+          cursor: pointer; color: var(--dim); font-size: 11px;
+          text-transform: uppercase; letter-spacing: .08em; }
+  .fold:hover { color: var(--text); }
+  .fold .caret { transition: transform .15s; font-size: 9px; line-height: 1; }
+  .fold[aria-expanded="false"] .caret { transform: rotate(-90deg); }
+  .fold .note { margin-left: auto; text-transform: none; letter-spacing: 0;
+                font-size: 10px; color: var(--dim); }
   .shape-item { display: flex; align-items: center; justify-content: space-between;
                 padding: 4px 7px; margin-bottom: 2px; border-radius: 5px;
                 cursor: pointer; font-size: 12px; }
@@ -312,8 +328,11 @@
   <div class="editor-body">
     <div class="canvas-wrap"><canvas id="anno-canvas"></canvas></div>
     <div class="sidebar">
-      <div class="card">
-        <h4>Tools</h4>
+      <div class="card tools-card">
+        <button class="fold" id="fold-tools" aria-expanded="true"
+                aria-controls="tool-body" title="Fold the tool's options away">
+          <span class="caret">▼</span>Tools<span class="note" id="fold-tools-note"></span>
+        </button>
         <div class="tools">
           <button class="tool-btn ai active" data-tool="sam"
             title="Draw — click the object; right-click (or Shift+click) what is not it, or drag a rough box. Enter or Space accepts. (1)">✦</button>
@@ -322,6 +341,7 @@
           <button class="tool-btn ai" data-tool="ai-text"
             title="Prompt — type object names, OWLv2 pseudo-labels them on this image. (3)">T</button>
         </div>
+        <div id="tool-body">
         <div id="sam-panel" style="display:none;margin-top:10px">
           <div style="font-size:11px;color:var(--dim);line-height:1.5">
             Click the object, right-click what is not. <b>Enter</b> or <b>Space</b>
@@ -384,6 +404,7 @@
           </div>
           <button class="btn primary" id="assist-run" style="width:100%;margin-top:8px">Apply</button>
           <div id="assist-status" style="font-size:11px;color:var(--warn);margin-top:4px"></div>
+        </div>
         </div>
         <h4 style="margin-top:14px">Class</h4>
         <input type="text" id="class-input" placeholder="e.g. car, person" style="width:100%">
@@ -656,6 +677,10 @@ const Page = {
   currentIdx: -1, version: 0,
   // the queue is a single placeholder while a direct link's real queue loads
   provisionalQueue: false,
+  // the tool options fold; remembered across visits
+  toolsOpen: (() => {
+    try { return localStorage.getItem("horos_tools_open") !== "0"; } catch (e) { return true; }
+  })(),
   editorImage: null, editorShapes: [], selectedShapeIdx: -1, flashShapeIdx: -1,
   hoverShapeIdx: -1, hoverVertexIdx: -1, hoverVertexShapeIdx: -1,
   activeTool: "sam", isDrawing: false, currentPoints: [], mousePos: [0, 0],
@@ -729,6 +754,8 @@ const Page = {
     $("class-modal-close").onclick = () => { $("class-modal").style.display = "none"; };
     $("btn-add-class").onclick = () => this.addClassFromManager();
     $("btn-merge").onclick = () => this.mergeClasses();
+    $("fold-tools").onclick = () => this.toggleToolFold(!this.toolsOpen);
+    this._syncToolFold();
     $("btn-back").onclick = () => this.closeEditor();
     $("btn-prev").onclick = () => this.prevImage();
     $("btn-next").onclick = () => this.nextImage();
@@ -1182,6 +1209,24 @@ const Page = {
       ? `${name} · ${item.image.split || "no set yet"}${where}` : "loading…";
   },
 
+  // The tool's options are the tallest thing in the sidebar; folded away, the
+  // shapes list gets the room. The choice is remembered per browser, and the
+  // heading names the tool that is folded so nobody loses it.
+  toggleToolFold(open) {
+    this.toolsOpen = open;
+    try { localStorage.setItem("horos_tools_open", open ? "1" : "0"); } catch (e) {}
+    this._syncToolFold();
+  },
+
+  _syncToolFold() {
+    const open = this.toolsOpen;
+    const names = { sam: "Draw", select: "Edit", "ai-text": "Prompt" };
+    $("fold-tools").setAttribute("aria-expanded", open ? "true" : "false");
+    $("tool-body").style.display = open ? "block" : "none";
+    $("fold-tools-note").textContent =
+      open || this.activeTool === "select" ? "" : `${names[this.activeTool]} options hidden`;
+  },
+
   _updateNavButtons() {
     $("btn-prev").disabled = this.currentIdx <= 0;
     $("btn-next").disabled = this.currentIdx >= this.queue.length - 1;
@@ -1541,6 +1586,7 @@ const Page = {
       b.classList.toggle("active", b.dataset.tool === tool));
     $("assist-panel").style.display = tool === "ai-text" ? "block" : "none";
     $("sam-panel").style.display = tool === "sam" ? "block" : "none";
+    this._syncToolFold();
     // focus only on an explicit tool pick — openEditor re-applies the tool on
     // every image switch, and focusing there makes the browser type the A/D
     // navigation keystroke into the prompt input
