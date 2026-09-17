@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+import horos
 from horos.core.project import Project
 from horos.errors import ProjectError
 
@@ -711,3 +712,228 @@ def render_report(report: TrainingReport, format: str, path: Path) -> Path:
             f"Unsupported report format '{format}' ({'|'.join(REPORT_FORMATS)})"
         )
     return RENDERERS[format](report, path)
+
+
+# ------------------------------------------------- evaluation chart (E6-T14)
+
+#: sequential blue, light -> dark: the matrix shades magnitude, so it is ONE
+#: hue by lightness, never a rainbow. Cells carry their count as text, so the
+#: shade is a scan aid and never the only way to read a number.
+_SEQ = ["#cde2fb", "#b7d3f6", "#9ec5f4", "#86b6ef", "#6da7ec", "#5598e7",
+        "#3987e5", "#2a78d6", "#256abf", "#1c5cab", "#184f95", "#104281", "#0d366b"]
+#: the diagonal is "correct" — outlined, not recolored, so hue stays magnitude
+_DIAG = "#0ca30c"
+_RULE = "#d9d9d9"
+#: past this many classes the table keeps the biggest and says so
+_MAX_TABLE_ROWS = 26
+
+
+def _seq_color(fraction: float) -> str:
+    """A step of the sequential ramp for a 0..1 share."""
+    if fraction <= 0:
+        return "#ffffff"
+    index = min(len(_SEQ) - 1, int(round(fraction * (len(_SEQ) - 1))))
+    return _SEQ[index]
+
+
+def _on_seq(fraction: float) -> str:
+    """Ink that stays legible on that step."""
+    return "#ffffff" if fraction >= 0.55 else _TEXT
+
+
+def _draw_confusion(ax, analysis) -> None:
+    """The matrix as a grid of shaded cells: rows are ground truth, columns
+    predictions, the last of each is background (a miss / a false positive).
+
+    Shaded by each cell's share of ITS ROW, so a rare class's error pattern is
+    as readable as a common one's; the count is printed in every cell, so the
+    exact number never depends on reading a colour."""
+    names = list(analysis.classes)
+    n = len(names)
+    totals = [max(1, sum(row)) for row in analysis.matrix]
+    ax.set_xlim(0, n)
+    ax.set_ylim(0, n)
+    ax.invert_yaxis()
+    ax.set_aspect("equal")
+    ax.axis("off")
+    # the rotated column labels live above the grid; matplotlib does not
+    # reserve room for text drawn outside the limits, so the caller leaves it
+    ax.margins(0)
+    size = max(5.0, min(9.0, 150.0 / n))
+
+    for r, row in enumerate(analysis.matrix):
+        for c, value in enumerate(row):
+            share = value / totals[r]
+            is_bg_cell = r == n - 1 and c == n - 1
+            if is_bg_cell:
+                continue  # background→background is not a thing
+            ax.add_patch(_rect(c, r, _seq_color(share) if value else "#ffffff"))
+            if r == c and r < n - 1:  # correct: outlined, never recoloured
+                ax.add_patch(_rect(c, r, "none", edge=_DIAG, lw=1.6))
+            if value:
+                ax.text(c + 0.5, r + 0.5, str(value), ha="center", va="center",
+                        fontsize=size, color=_on_seq(share))
+    label = max(5.0, min(9.0, 140.0 / n))
+    for i, name in enumerate(names):
+        shown = name if len(name) <= 16 else name[:15] + "…"
+        colour = _TEXT if i < n - 1 else _DIM
+        ax.text(-0.3, i + 0.5, shown, ha="right", va="center", fontsize=label,
+                color=colour)
+        # upright, not slanted: 19 slanted labels run into each other, and a
+        # vertical column of them costs a fixed, predictable strip of height.
+        # Cut harder than the row labels: here length is height, and the strip
+        # has to stay clear of the captions above it
+        ax.text(i + 0.5, -0.3, name if len(name) <= 11 else name[:10] + "…",
+                ha="center", va="bottom", fontsize=label, rotation=90, color=colour)
+    ax.plot([0, n], [n - 1, n - 1], color=_RULE, lw=1)   # background row off
+    ax.plot([n - 1, n - 1], [0, n], color=_RULE, lw=1)   # background column off
+
+
+def _rect(col: int, row: int, face: str, *, edge: str = "none", lw: float = 0):
+    from matplotlib.patches import Rectangle
+
+    return Rectangle((col + 0.04, row + 0.04), 0.92, 0.92, facecolor=face,
+                     edgecolor=edge, linewidth=lw)
+
+
+def _draw_class_table(ax, analysis, ap_by_name: dict[str, float]) -> str:
+    """Per-class performance, biggest class first. Recall and precision carry a
+    light bar behind the number so the table can be scanned as well as read;
+    the number is always there, so the bar adds nothing the text lacks.
+
+    Returns a footnote when the table could not show every class."""
+    rows = sorted(analysis.per_class, key=lambda c: (-c.instances, c.name))
+    dropped = 0
+    if len(rows) > _MAX_TABLE_ROWS:
+        dropped = len(rows) - _MAX_TABLE_ROWS
+        rows = rows[:_MAX_TABLE_ROWS]
+    has_ap = bool(ap_by_name)
+    columns = ["class", "boxes"] + (["AP@50"] if has_ap else []) + [
+        "recall", "precision", "missed", "false", "wrong class",
+    ]
+    # x positions in axis space: the name column is wide, the rest are even
+    xs = [0.0, 0.30] + ([0.40] if has_ap else [])
+    start = xs[-1] + 0.10
+    xs += [round(start + 0.115 * i, 3) for i in range(5)]
+
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+    height = 1.0 / (len(rows) + 1.6)
+    size = max(6.0, min(9.5, 13.0 - 0.16 * len(rows)))
+    top = 1.0
+
+    for x, column in zip(xs, columns, strict=True):
+        ax.text(x, top, column, fontsize=size - 0.5, color=_DIM,
+                ha="left" if x == 0 else "right", va="top",
+                transform=ax.transAxes)
+    ax.plot([0, 1], [top - height * 0.55] * 2, color=_RULE, lw=0.8,
+            transform=ax.transAxes)
+
+    for i, cls in enumerate(rows):
+        y = top - height * (i + 1.35)
+        cells = [cls.name, str(cls.instances)]
+        if has_ap:
+            cells.append(f"{100 * ap_by_name.get(cls.name, 0.0):.0f}%")
+        cells += [f"{100 * cls.recall:.0f}%", f"{100 * cls.precision:.0f}%",
+                  str(cls.fn), str(cls.fp), str(cls.confused_as)]
+        # the bars sit behind the two rate columns
+        bar_at = 3 if has_ap else 2
+        for offset, value in enumerate((cls.recall, cls.precision)):
+            x = xs[bar_at + offset]
+            ax.add_patch(_bar(ax, x - 0.105, y - height * 0.3, 0.105 * value, height * 0.62))
+        for x, text in zip(xs, cells, strict=True):
+            colour = _TEXT
+            if text == cells[0] and len(text) > 20:
+                text = text[:19] + "…"
+            ax.text(x, y, text, fontsize=size, color=colour,
+                    ha="left" if x == 0 else "right", va="center",
+                    transform=ax.transAxes)
+    return f"+ {dropped} more class(es) not shown" if dropped else ""
+
+
+def _bar(ax, x: float, y: float, width: float, height: float):
+    from matplotlib.patches import Rectangle
+
+    return Rectangle((x, y), max(width, 0.0), height, facecolor=_SEQ[1],
+                     edgecolor="none", transform=ax.transAxes, zorder=0)
+
+
+def evaluation_figure(
+    *,
+    analysis,
+    eval_report=None,
+    advice=None,
+    model: str = "",
+):
+    """One 16:9 sheet: the confusion matrix beside the per-class table (E6-T14).
+
+    Both halves come from the SAME error analysis the evaluate page shows, at
+    the threshold and IoU it was asked for, so the exported sheet and the page
+    cannot disagree."""
+    Figure, GridSpec = _import_matplotlib()
+    fig = Figure(figsize=_FIGSIZE, dpi=_DPI)
+    fig.patch.set_facecolor("white")
+    # the matrix's column labels stand vertically above the grid, so the plot
+    # row starts well below the header band rather than sharing its space
+    gs = GridSpec(2, 2, figure=fig, height_ratios=[0.13, 1], width_ratios=[1, 1.1],
+                  left=0.105, right=0.975, top=0.955, bottom=0.06,
+                  hspace=0.62, wspace=0.09)
+
+    head = fig.add_subplot(gs[0, :])
+    head.axis("off")
+    title = f"Evaluation — {analysis.split} split"
+    head.text(0, 0.62, title, fontsize=21, fontweight="bold", color=_TEXT)
+    facts = [f"run {analysis.run_id}"]
+    if model:
+        facts.append(model)
+    facts.append(f"confidence ≥ {analysis.threshold:.2f}")
+    facts.append(f"IoU ≥ {analysis.iou:.2f}")
+    facts.append(f"{analysis.num_images} images")
+    if eval_report is not None:
+        facts.append(f"mAP@50 {100 * eval_report.map_50:.1f}%")
+        facts.append(
+            "current labels" if eval_report.labels == "current" else "run snapshot"
+        )
+    head.text(0, 0.12, "  ·  ".join(facts), fontsize=10.5, color=_DIM)
+    totals = (f"{analysis.tp} correct   {analysis.fn} missed   "
+              f"{analysis.fp} false   {analysis.confused} wrong class")
+    head.text(1, 0.62, totals, fontsize=11.5, color=_TEXT, ha="right")
+    if advice is not None and advice.confident:
+        head.text(1, 0.12, f"suggested confidence {advice.recommended:.2f}",
+                  fontsize=10.5, color=_DIM, ha="right")
+
+    matrix_ax = fig.add_subplot(gs[1, 0])
+    _draw_confusion(matrix_ax, analysis)
+    table_ax = fig.add_subplot(gs[1, 1])
+    ap_by_name = (
+        {c.name: c.ap50 for c in eval_report.per_class} if eval_report is not None else {}
+    )
+    footnote = _draw_class_table(table_ax, analysis, ap_by_name)
+
+    # section captions as figure text: an axes title would land on top of the
+    # matrix's vertical column labels
+    # below the header band, above the matrix's vertical column labels
+    caption_y = 0.845
+    fig.text(0.105, caption_y,
+             "Confusion matrix — rows: ground truth, columns: predicted", fontsize=10,
+             color=_TEXT)
+    fig.text(0.105, caption_y - 0.025,
+             "shaded by each cell's share of its row · green outline = correct",
+             fontsize=9, color=_DIM)
+    fig.text(0.545, caption_y, "Per class", fontsize=10, color=_TEXT)
+    fig.text(0.545, caption_y - 0.025,
+             "biggest class first · bars show recall and precision",
+             fontsize=9, color=_DIM)
+
+    tail = []
+    if footnote:
+        tail.append(footnote)
+    if analysis.confused_pairs:
+        worst = analysis.confused_pairs[0]
+        tail.append(f"most confused: {worst.gt_name} → {worst.pred_name} ({worst.count})")
+    fig.text(0.045, 0.028, "   ·   ".join(tail), fontsize=9, color=_DIM)
+    fig.text(0.975, 0.028,
+             f"horos {horos.__version__} · {datetime.now(timezone.utc):%Y-%m-%d %H:%M UTC}",
+             fontsize=9, color=_DIM, ha="right")
+    return fig

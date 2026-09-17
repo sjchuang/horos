@@ -31,6 +31,18 @@ def export_report(run_id: str):
     return jsonify({"name": path.name, "path": str(path), **_urls(run_id, path.name)})
 
 
+@bp.post("/train/runs/<run_id>/export/evaluation")
+def export_evaluation(run_id: str):
+    body = request.get_json(silent=True) or {}
+    path = api.export_evaluation_chart(
+        _project(), run_id, body.get("split", "test"),
+        threshold=float(body.get("threshold", 0.5)),
+        iou=float(body.get("iou", 0.5)),
+        format=body.get("format", "png"),
+    )
+    return jsonify({"name": path.name, "path": str(path), **_urls(run_id, path.name)})
+
+
 @bp.post("/train/runs/<run_id>/export/model")
 def export_model(run_id: str):
     body = request.get_json(silent=True) or {}

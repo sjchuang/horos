@@ -37,6 +37,26 @@ def _wait_job(client, job_id, timeout=30.0):
     raise AssertionError("job still running")
 
 
+def test_evaluation_chart_export_and_download(client, run):
+    pytest.importorskip("pycocotools", reason="training stack not installed")
+    from horos.api.evaluate import evaluate_run
+
+    project, record = run
+    evaluate_run(project, record.run_id, split="valid")
+    body = client.post(
+        f"/api/v1/train/runs/{record.run_id}/export/evaluation",
+        json={"split": "valid", "threshold": 0.4, "iou": 0.5, "format": "png"},
+    ).get_json()
+    assert body["name"] == "evaluation_valid.png"
+    response = client.get(body["download_url"])
+    assert response.status_code == 200 and response.data[:8] == b"\x89PNG\r\n\x1a\n"
+
+    bad = client.post(
+        f"/api/v1/train/runs/{record.run_id}/export/evaluation", json={"format": "xlsx"}
+    )
+    assert bad.status_code == 400
+
+
 def test_report_export_and_download(client, run):
     _, record = run
     body = client.post(

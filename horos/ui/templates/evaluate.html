@@ -139,6 +139,11 @@
   .tabs button:hover:not(.on) { color: var(--text); border-color: var(--line); }
   .tabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
   .tabs .hint { margin-left: auto; color: var(--dim); font-size: 12px; }
+  /* the tab strip also carries the export control; it is an action, not a tab */
+  .tabs .action { border: 1px solid var(--line); border-radius: 6px; color: var(--text);
+                  padding: 5px 12px; font-size: 12px; margin: 0 0 6px 10px; }
+  .tabs button.action:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .tabs select.action { padding: 4px 8px; background: var(--bg); }
   .tab-panel { display: none; }
   .tab-panel.on { display: block; }
   .matrix-wrap { overflow-x: auto; }
@@ -366,6 +371,13 @@
         <button data-tab="classes" class="on">Per class</button>
         <button data-tab="matrix">Confusion matrix</button>
         <span class="hint" id="tab-hint"></span>
+        <button class="action" id="chart-btn"
+                title="One image with the confusion matrix and the per-class table, at the threshold and IoU set below">
+          Export chart</button>
+        <select class="action" id="chart-format" title="Image format">
+          <option value="png">PNG</option>
+          <option value="pdf">PDF</option>
+        </select>
       </div>
       <div class="tab-panel on" id="tab-classes">
         <table>
@@ -669,6 +681,39 @@ function syncErrTab() {
       ? `${lastAnalysis.confused} box(es) found but labeled as another class`
       : "";
 }
+
+// one sheet with both views, rendered server-side from the same analysis
+$("chart-btn").onclick = async () => {
+  const run = $("run-select").value;
+  if (!run) return;
+  const button = $("chart-btn");
+  const before = button.textContent;
+  button.disabled = true;
+  button.textContent = "rendering…";
+  try {
+    const out = await api(`/train/runs/${run}/export/evaluation`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        split: $("split-select").value,
+        threshold: Number($("err-thr").value),
+        iou: Number($("err-iou").value),
+        format: $("chart-format").value,
+      }),
+    });
+    const link = document.createElement("a");
+    link.href = out.download_url;
+    link.download = out.name;
+    link.click();
+    button.textContent = "downloaded";
+    setTimeout(() => { button.textContent = before; }, 2500);
+  } catch (e) {
+    button.textContent = before;
+    $("errors-status").textContent = e.message;
+  } finally {
+    button.disabled = false;
+  }
+};
 
 $("err-tabs").onclick = (event) => {
   const button = event.target.closest("button[data-tab]");

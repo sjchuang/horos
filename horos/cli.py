@@ -286,7 +286,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p = sub.add_parser(
-        "report", help="Render a run's training report (16:9 PNG dashboard, PDF, or Excel)"
+        "report",
+        help="Render a run's training report (16:9 PNG dashboard, PDF, or Excel), or "
+        "with --evaluation the evaluation sheet: confusion matrix + per-class table",
     )
     p.add_argument(
         "--project",
@@ -299,6 +301,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--format", choices=["png", "pdf", "xlsx"], default="png")
     p.add_argument("--out", help="Output file (default: <run>/exports/training_report.<format>)")
+    p.add_argument(
+        "--evaluation", action="store_true",
+        help="Render the evaluation sheet instead: the confusion matrix beside the "
+        "per-class performance table (needs a prior 'evaluate'; png or pdf)",
+    )
+    p.add_argument("--split", choices=["train", "valid", "test"], default="test",
+                   help="Split for --evaluation (default test)")
+    p.add_argument("--threshold", type=float, default=0.5,
+                   help="Operating confidence for --evaluation (default 0.5)")
+    p.add_argument("--iou", type=float, default=0.5,
+                   help="Matching IoU for --evaluation (default 0.5)")
 
     p = sub.add_parser(
         "export-model",
@@ -844,9 +857,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             project = _project_arg(args)
             # a report is readable for any run, finished or not
             run_id = _resolve_run(project, args.run_id, need_checkpoint=False)
-            path = api.export_training_report(
-                project, run_id, format=args.format, out_path=args.out,
-            )
+            if args.evaluation:
+                path = api.export_evaluation_chart(
+                    project, run_id, args.split, threshold=args.threshold,
+                    iou=args.iou, format=args.format, out_path=args.out,
+                )
+            else:
+                path = api.export_training_report(
+                    project, run_id, format=args.format, out_path=args.out,
+                )
             _emit({"path": str(path), "format": args.format})
         elif args.command == "export-model":
             from horos.api.export import model_export_events

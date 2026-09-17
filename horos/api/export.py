@@ -44,6 +44,7 @@ __all__ = [
     "ModelCard",
     "TrainingReport",
     "export_training_report",
+    "export_evaluation_chart",
     "start_model_export",
     "model_export_events",
     "list_exports",
@@ -150,6 +151,76 @@ def export_training_report(
         else exports_dir(project, run_id) / f"training_report.{format}"
     )
     return render_report(report, format, target)
+
+
+#: the evaluation sheet renders straight from matplotlib, so PNG and PDF only
+EVAL_CHART_FORMATS: tuple[str, ...] = ("png", "pdf")
+
+
+@capability(
+    "export.evaluation_chart",
+    summary="Render a run's evaluation as one sheet: the confusion matrix beside "
+    "the per-class performance table",
+    web_route="/api/v1/train/runs/<run_id>/export/evaluation",
+    web_methods=("POST",),
+    cli="report",
+)
+def export_evaluation_chart(
+    project: Project,
+    run_id: str,
+    split: str = "test",
+    *,
+    threshold: float = 0.5,
+    iou: float = 0.5,
+    format: str = "png",
+    out_path: Path | str | None = None,
+) -> Path:
+    """Write the evaluation sheet to <run>/exports/ (or `out_path`).
+
+    Everything on it comes from the same error analysis the evaluate page
+    draws at that threshold and IoU, so the exported sheet and the page cannot
+    disagree. Needs a prior evaluation of `split` — the analysis re-matches its
+    persisted detections."""
+    from horos.api.error_analysis import analyze_errors
+    from horos.api.evaluate import get_eval_report
+    from horos.api.report import evaluation_figure
+    from horos.api.threshold import suggest_threshold
+    from horos.api.train import read_record
+
+    if format not in EVAL_CHART_FORMATS:
+        raise ProjectError(
+            f"Unsupported evaluation chart format '{format}' "
+            f"({'|'.join(EVAL_CHART_FORMATS)})"
+        )
+    analysis = analyze_errors(project, run_id, split, threshold=threshold, iou=iou)
+    try:
+        report = get_eval_report(project, run_id, split)
+    except HorosError:  # analysed from detections an older evaluation left
+        report = None
+    try:
+        advice = suggest_threshold(project, run_id, split, iou=iou)
+    except HorosError:  # pragma: no cover — the analysis above just read them
+        advice = None
+    try:
+        model = read_record(_run_dir_of(project, run_id)).model
+    except (HorosError, OSError):
+        model = ""
+    figure = evaluation_figure(
+        analysis=analysis, eval_report=report, advice=advice, model=model
+    )
+    target = (
+        Path(out_path) if out_path is not None
+        else exports_dir(project, run_id) / f"evaluation_{split}.{format}"
+    )
+    target.parent.mkdir(parents=True, exist_ok=True)
+    figure.savefig(target, dpi=120, facecolor="white")
+    return target
+
+
+def _run_dir_of(project: Project, run_id: str) -> Path:
+    from horos.api.train import _run_dir
+
+    return _run_dir(project, run_id)
 
 
 # ------------------------------------------------------------------ models
