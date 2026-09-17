@@ -4,6 +4,7 @@ metadata, prompt validation, explicit train/export refusals, lazy loading.
 Real-inference tests run only where transformers is installed."""
 
 import importlib.util
+import subprocess
 import sys
 
 import pytest
@@ -29,10 +30,32 @@ def test_registry_metadata():
     assert not info.requires_acknowledgement
 
 
-def test_construction_is_lazy(backend):
-    # building the backend must not pull in the heavy deps (R1b)
-    assert "transformers" not in sys.modules
-    assert "torch" not in sys.modules
+def test_construction_is_lazy():
+    """Building the backend must not pull in the heavy deps (R1b).
+
+    Checked in a clean subprocess, like the R1b invariant in
+    tests/test_invariants.py: `sys.modules` is process-global, and pytest
+    imports every test module before running anything, so a module-level
+    `pytest.importorskip("torch")` elsewhere in the suite (test_infer_many.py,
+    legitimately) puts torch there long before this test runs. An in-process
+    assertion therefore passes alone and fails in the full suite while saying
+    nothing about this backend.
+    """
+    script = """
+import sys
+from horos.backends.owlv2 import OWLv2Backend
+from horos.core.registry import get_model_info
+backend = OWLv2Backend(get_model_info("owlv2-base"))
+backend.configure_prompts(["forklift"])
+leaked = sorted({'torch', 'transformers'} & set(sys.modules))
+assert not leaked, f"constructing the backend imported: {leaked}"
+print("lazy")
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
+    )
+    assert result.returncode == 0, result.stderr
+    assert "lazy" in result.stdout
 
 
 def test_prompts_are_required(backend, tmp_path):
