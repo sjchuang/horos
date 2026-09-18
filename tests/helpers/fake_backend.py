@@ -266,6 +266,53 @@ class SpawnProbeBackend(FakeBackend):
         yield RunCompleted(result={"checkpoint": str(checkpoint)})
 
 
+#: the character that killed a real training run: rfdetr draws its metrics
+#: table with it and cp950 cannot encode it
+TABLE_CORNER = "┏"
+
+
+def _printing_child(text: str) -> None:
+    """Runs in a spawn-context child — must be module-level picklable."""
+    print(text, flush=True)  # noqa: T201
+
+
+class NoisyBackend(FakeBackend):
+    """Prints non-ASCII to stdout and stderr the way a real backend does (R7).
+
+    The worker's stdout is a file, so without the UTF-8 environment the print
+    raises UnicodeEncodeError and the run fails. A spawn-context child prints
+    too: a reconfigure in the worker would not reach it, only the environment
+    does.
+    """
+
+    family = "fake-noisy"
+
+    def train(self, spec: TrainSpec) -> Iterator[Event]:
+        import multiprocessing
+        import sys
+
+        yield RunStarted(total=spec.epochs, config={"epochs": spec.epochs})
+        table = f"{TABLE_CORNER}━┓ Val ━ mAP 0.42 💡"
+        print(table, flush=True)  # noqa: T201
+        print(f"{table} (stderr)", file=sys.stderr, flush=True)  # noqa: T201
+        ctx = multiprocessing.get_context("spawn")  # the Windows/macOS default
+        child = ctx.Process(target=_printing_child, args=(f"{table} (child)",))
+        child.start()
+        child.join(30)
+        if child.exitcode != 0:
+            from horos.backends.base import RunFailed
+
+            yield RunFailed(
+                error_code="backend_error",
+                message=f"spawned child died with exit code {child.exitcode}",
+            )
+            return
+        spec.output_dir.mkdir(parents=True, exist_ok=True)
+        checkpoint = spec.output_dir / "best.fake"
+        checkpoint.write_bytes(b"fake-weights")
+        yield RunCompleted(result={"checkpoint": str(checkpoint)})
+
+
 class FakeEmbedder(ImageEmbedder):
     """A deterministic image embedder for the active-learning loop tests
     (E10): the vector is built from the image's mean colour and size, so

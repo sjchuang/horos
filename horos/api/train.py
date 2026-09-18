@@ -41,6 +41,7 @@ from horos.core.fingerprint import DatasetFingerprint, fingerprint_dataset
 from horos.core.fsutil import atomic_write_text, read_text_retry, rmtree_retry
 from horos.core.project import Project
 from horos.core.registry import get_model_info
+from horos.core.streams import child_env
 from horos.errors import LicenseError, ProjectError, UnknownModelError
 
 logger = logging.getLogger(__name__)
@@ -408,6 +409,11 @@ def _spawn_worker(run_dir: Path, record: RunRecord) -> RunRecord:
             [sys.executable, "-m", "horos.api.train_worker", str(run_dir)],
             stdout=log,
             stderr=subprocess.STDOUT,
+            # the log is a file, so the child's stdout is the locale code page
+            # unless we say otherwise — and a backend that prints a box-drawing
+            # character would die on it (R7); the environment, not a
+            # reconfigure, so spawned DataLoader workers inherit it too
+            env=child_env(),
         )
     _PROCESSES[record.run_id] = process
     record.pid = process.pid

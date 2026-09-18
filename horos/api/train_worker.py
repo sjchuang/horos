@@ -40,6 +40,11 @@ def _load_backend(config):
 
 
 def main(argv: list[str] | None = None) -> int:
+    from horos.core.streams import use_utf8_streams
+
+    # the parent already sets PYTHONIOENCODING for us (R7); this covers the
+    # worker being run by hand, where stdout would otherwise be the code page
+    use_utf8_streams()
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) != 1:
         print("usage: python -m horos.api.train_worker <run_dir>", file=sys.stderr)  # noqa: T201

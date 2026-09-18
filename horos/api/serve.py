@@ -22,7 +22,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import socket
 import subprocess
 import sys
@@ -38,6 +37,7 @@ from pydantic import BaseModel, Field
 from horos.api.manifest import capability
 from horos.core.project import Project
 from horos.core.registry import get_model_info
+from horos.core.streams import child_env
 from horos.errors import ProjectError, UnknownModelError
 
 if TYPE_CHECKING:
@@ -482,7 +482,7 @@ def start_server(
     log_handle = log_path.open("ab")
     process = subprocess.Popen(  # noqa: S603 — our own CLI, arguments built above
         cmd, stdout=log_handle, stderr=subprocess.STDOUT,
-        cwd=str(project.root), env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        cwd=str(project.root), env=child_env(),
     )
     log_handle.close()
     url = f"http://{'127.0.0.1' if host in ('0.0.0.0', '') else host}:{int(port)}"

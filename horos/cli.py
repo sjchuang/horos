@@ -15,6 +15,7 @@ from pathlib import Path
 
 import horos
 import horos.api as api
+from horos.core.streams import use_utf8_streams
 from horos.errors import HorosError, ProjectError
 
 MANIFEST_NAME = "horos.json"
@@ -652,6 +653,10 @@ def _ml_preflight(command: str) -> int | None:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
+    # `horos dataset stats > out.json` and every other redirected command
+    # would otherwise encode with the locale code page, and class names or a
+    # progress table are not always in it (R7)
+    use_utf8_streams()
     args = build_parser().parse_args(argv)
     gated = args.command in _ML_GATED_COMMANDS or args.command == "ui"
     if args.command == "loop" and args.action in ("select", "train"):
