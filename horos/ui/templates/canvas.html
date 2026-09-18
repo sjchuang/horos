@@ -1569,7 +1569,10 @@ const Page = {
           } else if (this.selectedShapeIdx !== -1) this.deleteShape(this.selectedShapeIdx);
           break;
         case "Escape":
-          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box || this.sam.queued.length)) {
+          // parts belong in this list: without them the second Esc after "+"
+          // fell through to deselect and the kept parts stayed on the canvas
+          if (this.activeTool === "sam" && (this.sam.points.length || this.sam.box
+              || this.sam.parts.length || this.sam.queued.length)) {
             this._samClear();
           } else if (this.isDrawing) { this.isDrawing = false; this.currentPoints = []; }
           else this.selectShape(-1);
