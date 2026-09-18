@@ -5,6 +5,7 @@ no embedding model → random, and the round says so. Every pick has a reason.""
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 import pytest
 from helpers.data import make_image
@@ -144,7 +145,8 @@ def test_big_pools_are_scored_on_a_seeded_sample(tmp_path):
     detector = FakeDetector()
     # the cap is a multiple of the round size: 4 photos × 2 = 8 scored
     record = _select(project, count=4, detector=detector, scan_factor=2)
-    scored_unlabeled = [p for p in detector.seen if not p.endswith(("/1.png", "/2.png", "/3.png"))]
+    labeled_files = {"1.png", "2.png", "3.png"}  # compare by name: Windows paths
+    scored_unlabeled = [p for p in detector.seen if Path(p).name not in labeled_files]
     assert len(scored_unlabeled) == 8
     assert any("scored 8 of 27 unlabeled photos (2× the round" in n for n in record.selection.notes)
     assert len(record.image_ids) == 4
