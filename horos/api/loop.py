@@ -2065,11 +2065,12 @@ def evaluate_round_splits(
 ) -> LoopRound:
     """COCO mAP of the round's trained model on every split its snapshot has
     (train, valid, test), stored as eval/<split>/map_50 and map_5095 on the
-    round. Train mAP shows how well the model fits what it saw, valid how it
+    round. Train mAP shows how well the model fits what it saw — scored on the
+    run's own snapshot, since that is the set it saw — valid how it
     generalises to the fixed validation set, test — when the project has a
     labeled test split — how it does on data the loop never touched. A split
     that is missing or fails is recorded as a note, never as a zero."""
-    from horos.api.evaluate import evaluate_run
+    from horos.api.evaluate import LabelSource, evaluate_run
 
     record = load_round(project, number)
     if not record.train_run_id:
@@ -2077,8 +2078,15 @@ def evaluate_round_splits(
     metrics = dict(record.metrics)
     notes: list[str] = []
     for split in ("train", "valid", "test"):
+        # the training line answers "how well does it fit what it saw", so it
+        # is scored on the run's own snapshot; the current-labels default holds
+        # back every photo the run trained on, which empties the train set by
+        # construction. valid and test keep that holdback (E6-T13).
+        labels: LabelSource = "snapshot" if split == "train" else "current"
         try:
-            report = evaluate_run(project, record.train_run_id, split=split, device=device)
+            report = evaluate_run(
+                project, record.train_run_id, split=split, labels=labels, device=device
+            )
         except HorosError as exc:
             if "no '" in str(exc) and "split" in str(exc):
                 continue  # the snapshot simply has no such split (usually test)
@@ -2091,6 +2099,8 @@ def evaluate_round_splits(
         training = {**latest.training, "evaluating": False}
         if notes:
             training["evaluation_notes"] = notes
+        else:
+            training.pop("evaluation_notes", None)  # a re-run that worked clears the old reason
         merged = {**latest.metrics, **metrics}
         return save_round(
             project, latest.model_copy(update={"metrics": merged, "training": training})

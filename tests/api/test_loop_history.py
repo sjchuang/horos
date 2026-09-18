@@ -113,8 +113,8 @@ def test_completed_round_evaluates_every_split_for_the_learning_curve(tmp_path, 
 
     calls = []
 
-    def fake_evaluate_run(project, run_id, *, split="test", device=None):
-        calls.append(split)
+    def fake_evaluate_run(project, run_id, *, split="test", labels="current", device=None):
+        calls.append((split, labels))
         if split == "test":
             raise ProjectError(f"Run {run_id} has no 'test' split in its dataset snapshot.")
         return SimpleNamespace(map_50={"train": 0.9, "valid": 0.6}[split], map_5095=0.4)
@@ -128,7 +128,9 @@ def test_completed_round_evaluates_every_split_for_the_learning_curve(tmp_path, 
     ensure_worker_can_import_helpers()
     project = _project(tmp_path)
     record = _cycle(project, count=2, epochs=1)
-    assert sorted(calls) == ["test", "train", "valid"]
+    # the training line is scored on the run's own snapshot — the set the model
+    # actually saw; the held-out lines keep the current-labels default (E6-T13)
+    assert sorted(calls) == [("test", "current"), ("train", "snapshot"), ("valid", "current")]
     row = loop_history(project)[0]
     assert row.curve == {"train": 0.9, "valid": 0.6}
     assert row.evaluating is False and row.labeled_total == 26
@@ -136,3 +138,34 @@ def test_completed_round_evaluates_every_split_for_the_learning_curve(tmp_path, 
     assert row.train_images == record.training["holdout"]["train_images"] < row.labeled_total
     assert record.metrics["eval/train/map_5095"] == 0.4
     assert "evaluation_notes" not in record.training  # a missing test split is not a failure
+
+
+def test_training_score_survives_a_train_set_the_run_saw_entirely(tmp_path, monkeypatch):
+    """Regression: scoring the train split against the project's current labels
+    holds back every photo the run trained on (E6-T13's reshuffle guard), which
+    empties the set by construction and left the learning curve with no training
+    line. The train split is scored on the run's snapshot instead."""
+    from types import SimpleNamespace
+
+    from horos.api import loop as loop_mod
+    from horos.errors import ProjectError
+
+    def fake_evaluate_run(project, run_id, *, split="test", labels="current", device=None):
+        if split == "train" and labels == "current":
+            raise ProjectError(
+                "The project's 'train' set has no labeled photo this run did not "
+                "train on, so there is nothing to score."
+            )
+        return SimpleNamespace(map_50={"train": 0.9, "valid": 0.6, "test": 0.5}[split],
+                               map_5095=0.4)
+
+    import horos.api.evaluate as eval_mod
+
+    monkeypatch.setattr(eval_mod, "evaluate_run", fake_evaluate_run)
+    monkeypatch.setattr(loop_mod, "_evaluate_in_background",
+                        lambda project, number: loop_mod.evaluate_round_splits(project, number))
+    ensure_worker_can_import_helpers()
+    project = _project(tmp_path)
+    record = _cycle(project, count=2, epochs=1)
+    assert "evaluation_notes" not in record.training
+    assert loop_history(project)[0].curve == {"train": 0.9, "valid": 0.6, "test": 0.5}
