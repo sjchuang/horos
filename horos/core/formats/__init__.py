@@ -11,7 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal
 
-DatasetFormat = Literal["coco", "yolo", "voc", "darknet", "via", "labelme"]
+#: "images" is the no-annotation fallback: a pile of photos is a legitimate
+#: import (they join the project unlabeled), but never a guess over a real format
+DatasetFormat = Literal["coco", "yolo", "voc", "darknet", "via", "labelme", "images"]
 
 #: formats horos can write (export / convert targets)
 WRITABLE_FORMATS: tuple[str, ...] = ("coco", "yolo", "labelme")
@@ -86,4 +88,9 @@ def detect_format(root: Path) -> DatasetFormat | None:
     json_files = [p for p in root.glob("*.json")]
     if len(json_files) == 1:
         return "coco"
+    from . import images as images_format
+
+    # last resort only: photos with nothing describing them
+    if images_format.looks_like_images(root):
+        return "images"
     return None

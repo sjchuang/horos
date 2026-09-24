@@ -17,6 +17,7 @@ from horos.core import formats
 from horos.core.dataset import Category, Dataset, default_color
 from horos.core.formats import coco as coco_format
 from horos.core.formats import darknet as darknet_format
+from horos.core.formats import images as images_format
 from horos.core.formats import labelme as labelme_format
 from horos.core.formats import via as via_format
 from horos.core.formats import voc as voc_format
@@ -33,6 +34,7 @@ from horos.errors import (
     ClassNamesRequiredError,
     DatasetFormatError,
     ImportConflictError,
+    LabelConflictError,
     ProjectError,
 )
 
@@ -40,6 +42,8 @@ if TYPE_CHECKING:
     from horos.backends.base import Event
 
 CONFLICT_POLICIES = ("ask", "overwrite", "skip", "rename")
+#: what to do when the import brings labels for a photo that already has some
+ANNOTATION_POLICIES = ("ask", "replace", "merge", "skip")
 
 #: R4 progress sink for import: receives ProgressUpdated (and WarningRaised)
 #: events; import_dataset itself emits no started/completed — the caller that
@@ -116,6 +120,17 @@ class ImportSummary(BaseModel):
     overwritten: int = 0
     conflicts_skipped: int = 0
     renamed: int = 0
+    #: photos already in the project whose labels came from this import — the
+    #: file was not re-imported (same name and content, or not in the source
+    #: at all), only its annotations
+    images_matched: int = 0
+    #: names of matched photos that already carried labels (the on_annotations
+    #: decision applies to exactly these)
+    annotation_conflict_files: list[str] = Field(default_factory=list)
+    annotations_replaced: int = 0
+    annotations_merged: int = 0
+    #: matched photos whose existing labels were left alone (on_annotations="skip")
+    annotations_kept: int = 0
 
 
 def _read_any(
@@ -141,6 +156,8 @@ def _read_any(
         dataset, image_paths = via_format.read_via(source, class_names=class_names)
     elif detected == "labelme":
         dataset, image_paths = labelme_format.read_labelme(source)
+    elif detected == "images":
+        dataset, image_paths = images_format.read_images(source)
     else:
         raise DatasetFormatError(f"Unsupported dataset format '{detected}'")
     return detected, dataset, image_paths
@@ -182,7 +199,8 @@ def _sha256(path: Path) -> str | None:
 
 @capability(
     "dataset.import",
-    summary="Import a COCO / YOLO / VOC / Darknet / VIA / LabelMe dataset (format auto-detected)",
+    summary="Import a COCO / YOLO / VOC / Darknet / VIA / LabelMe dataset, or plain photos "
+            "(format auto-detected)",
     web_route="/api/v1/dataset/import",
     web_methods=("POST",),
     cli="import",
@@ -195,11 +213,16 @@ def import_dataset(
     copy_images: bool = True,
     boundary: Path | None = None,
     on_conflict: str = "ask",
+    on_annotations: str = "ask",
     class_names: list[str] | None = None,
     require_class_names: bool = False,
     progress: ProgressCallback | None = None,
 ) -> ImportSummary:
     """Import a dataset directory (or annotation file) into the project.
+
+    A directory of photos with no annotation file is a legitimate import
+    (format "images"): the photos join the project unlabeled and in no set,
+    ready for the annotator or the loop's pool.
 
     Categories are merged by name with any the project already has. Images are
     copied into the project by default; copy_images=False stores absolute-path
@@ -214,6 +237,15 @@ def import_dataset(
     "overwrite" replaces the image and its annotations, "skip" keeps the
     existing one, "rename" imports under an auto-suffixed name.
 
+    Labels for a photo the project already has are applied to that photo
+    instead of being dropped with the duplicate — what uploading a label file
+    for photos uploaded earlier looks like. A photo matches when the source
+    ships the same file (same name and content), or names it without shipping
+    it (a bare annotation file) and the recorded size agrees. When the matched
+    photo already carries labels, `on_annotations` decides: "ask" (default)
+    raises LabelConflictError listing the names and writes nothing, "replace"
+    swaps the labels, "merge" keeps both sets, "skip" leaves the photo alone.
+
     `class_names` supplies Darknet class names when no _darknet.labels exists
     (placeholder index names plus a warning otherwise); `require_class_names`
     makes that case raise ClassNamesRequiredError instead — the WebUI upload
@@ -226,6 +258,8 @@ def import_dataset(
     """
     if on_conflict not in CONFLICT_POLICIES:
         raise ProjectError(f"on_conflict must be one of {CONFLICT_POLICIES}")
+    if on_annotations not in ANNOTATION_POLICIES:
+        raise ProjectError(f"on_annotations must be one of {ANNOTATION_POLICIES}")
     source = Path(source)
     if not source.exists():
         raise DatasetFormatError(f"Dataset source does not exist: {source}")
@@ -311,15 +345,38 @@ def import_dataset(
     existing_by_name = {r.file_name: r for r in project.list_images()}
     actions: dict[int, str] = {}  # image.id -> duplicate | overwrite | skip | rename
     conflict_files: list[str] = []
+    #: incoming image id -> existing record id, for photos the project already
+    #: has that this import brings labels for (the photo itself is not copied)
+    matched: dict[int, int] = {}
+    size_mismatch: list[str] = []
+    labels_by_image: dict[int, list] = {}
+    for ann in dataset.annotations:
+        labels_by_image.setdefault(ann.image_id, []).append(ann)
     report.phase("checking for duplicates", total=len(dataset.images))
     for position, image in enumerate(dataset.images, start=1):
         report.tick(position)
         src = image_paths.get(image.id)
         existing = existing_by_name.get(image.file_name)
-        if src is None or existing is None or not src.exists():
+        if existing is None:
             continue
-        if _sha256(src) == _sha256(project.image_path(existing)):
-            actions[image.id] = "duplicate"
+        brings_labels = bool(labels_by_image.get(image.id))
+        if src is None or not src.exists():
+            # a bare label file naming a photo uploaded earlier: no bytes to
+            # compare, so the recorded size is the guard against a namesake
+            if not brings_labels:
+                continue
+            if (image.width, image.height) != (existing.width, existing.height):
+                size_mismatch.append(
+                    f"'{image.file_name}' ({image.width}x{image.height})"
+                    f" vs the project's photo ({existing.width}x{existing.height})"
+                )
+                continue
+            matched[image.id] = existing.id
+        elif _sha256(src) == _sha256(project.image_path(existing)):
+            if brings_labels:
+                matched[image.id] = existing.id
+            else:
+                actions[image.id] = "duplicate"
         else:
             conflict_files.append(image.file_name)
             actions[image.id] = on_conflict
@@ -331,8 +388,33 @@ def import_dataset(
             f"retry with on_conflict='overwrite', 'skip', or 'rename'.",
             conflicts=conflict_files,
         )
+    # the same labels arriving again are a duplicate, not a conflict: the
+    # identical zip uploaded twice must never prompt
+    label_conflicts: list[str] = []
+    for old_id, existing_id in list(matched.items()):
+        current = project.load_annotations(existing_id).annotations
+        if not current:
+            continue
+        if _same_labels(current, labels_by_image[old_id], category_map):
+            del matched[old_id]
+            actions[old_id] = "duplicate"
+            continue
+        label_conflicts.append(dataset.image_by_id(old_id).file_name)
+    if label_conflicts and on_annotations == "ask":
+        raise LabelConflictError(
+            f"{len(label_conflicts)} photo(s) already have labels: "
+            f"{', '.join(label_conflicts[:10])}"
+            f"{' …' if len(label_conflicts) > 10 else ''}. Nothing was imported — "
+            f"retry with on_annotations='replace', 'merge', or 'skip'.",
+            conflicts=label_conflicts,
+        )
 
     warnings = pre_warnings
+    for detail in size_mismatch:
+        warnings.append(
+            f"Labels skipped for {detail}: the sizes disagree, so this is a "
+            f"different photo with the same name"
+        )
     # this index is edited image by image and saved at the end, so it must be
     # a private copy, never the project's shared cache (see _load_image_index)
     index = project._load_image_index(fresh=True)
@@ -343,6 +425,8 @@ def import_dataset(
                  total=len(dataset.images))
     for position, image in enumerate(dataset.images, start=1):
         report.tick(position)
+        if image.id in matched:
+            continue  # the project has this photo; only its labels arrive
         src = image_paths.get(image.id)
         if src is None or not src.exists():
             warnings.append(
@@ -383,13 +467,27 @@ def import_dataset(
 
     imported_annotations = 0
     instances: dict[str, int] = {}
-    report.phase("saving annotations", total=len(image_map))
-    for position, (old_image_id, new_image_id) in enumerate(image_map.items(), start=1):
+    replaced = merged = kept = 0
+    #: every photo this import writes labels to: the new ones and the matched
+    targets = {**image_map, **matched}
+    report.phase("saving annotations", total=len(targets))
+    for position, (old_image_id, new_image_id) in enumerate(targets.items(), start=1):
         report.tick(position)
-        annotations = []
         current = project.load_annotations(new_image_id)
-        next_id = 1
-        for ann in dataset.annotations_for(old_image_id):
+        is_match = old_image_id in matched
+        if is_match and current.annotations:
+            if on_annotations == "skip":
+                kept += 1
+                continue
+            if on_annotations == "replace":
+                replaced += 1
+            else:
+                merged += 1
+        # merged labels continue the existing numbering; everything else starts at 1
+        base = list(current.annotations) if is_match and on_annotations == "merge" else []
+        annotations = list(base)
+        next_id = max((a.id for a in base), default=0) + 1
+        for ann in labels_by_image.get(old_image_id, []):
             new_cat = category_map[ann.category_id]
             annotations.append(
                 ann.model_copy(
@@ -415,9 +513,9 @@ def import_dataset(
     # photos whose source named no split join one now if they are labeled —
     # by the project's stable hash and ratios; unlabeled ones stay in no set
     # until they are labeled (core/splitting.py)
-    report.phase("assigning splits", total=len(image_map))
-    assigned = project.assign_splits(sorted(image_map.values()))
-    back = {new: old for old, new in image_map.items()}
+    report.phase("assigning splits", total=len(targets))
+    assigned = project.assign_splits(sorted(targets.values()))
+    back = {new: old for old, new in targets.items()}
     for new_id, split in assigned.items():
         dataset.image_by_id(back[new_id]).split = split  # type: ignore[assignment]
     # a source directory may have named a split for photos it never labeled;
@@ -451,8 +549,8 @@ def import_dataset(
             split_counts[key] = split_counts.get(key, 0) + 1
 
     logger.info(
-        "imported %s dataset from %s: %d images, %d annotations",
-        detected, source, len(image_map), imported_annotations,
+        "imported %s dataset from %s: %d images, %d annotations, %d photos matched",
+        detected, source, len(image_map), imported_annotations, len(matched),
     )
     return ImportSummary(
         format=detected,
@@ -467,7 +565,33 @@ def import_dataset(
         overwritten=len(overwritten_ids),
         conflicts_skipped=conflicts_skipped,
         renamed=renamed,
+        images_matched=len(matched),
+        annotation_conflict_files=label_conflicts,
+        annotations_replaced=replaced,
+        annotations_merged=merged,
+        annotations_kept=kept,
     )
+
+
+def _label_key(ann, category_id: int) -> tuple:
+    return (
+        category_id,
+        tuple(round(v, 3) for v in ann.bbox),
+        tuple(tuple(round(v, 3) for v in poly) for poly in ann.segmentation),
+        ann.iscrowd,
+        ann.source,
+        ann.status,
+    )
+
+
+def _same_labels(existing, incoming, category_map: dict[int, int]) -> bool:
+    """Do the incoming labels (in source category ids) equal the stored ones?
+    Ids are ignored — they are renumbered on every import."""
+    if len(existing) != len(incoming):
+        return False
+    have = sorted(_label_key(a, a.category_id) for a in existing)
+    want = sorted(_label_key(a, category_map[a.category_id]) for a in incoming)
+    return have == want
 
 
 def _safe_extract(
@@ -503,6 +627,7 @@ def import_zip(
     zip_path: Path | str,
     *,
     on_conflict: str = "ask",
+    on_annotations: str = "ask",
     class_names: list[str] | None = None,
     require_class_names: bool = False,
     progress: ProgressCallback | None = None,
@@ -520,6 +645,7 @@ def import_zip(
             copy_images=True,
             boundary=Path(tmp),
             on_conflict=on_conflict,
+            on_annotations=on_annotations,
             class_names=class_names,
             require_class_names=require_class_names,
             progress=progress,

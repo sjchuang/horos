@@ -255,3 +255,77 @@ def test_events_stream_is_framed_started_to_terminal(project, sample_zip):
     assert events[0].type == "started" and events[0].config["upload_id"] == staged.upload_id
     assert events[-1].type == "completed"
     assert all(e.type in ("progress", "warning") for e in events[1:-1])
+
+
+# ------------------------------------------------------------ loose photos (E1-T11)
+
+
+def test_stage_photos_imports_them_unlabeled(project, tmp_path):
+    from horos.api.uploads import stage_photos
+
+    a = make_image(tmp_path / "p1.jpg", 64, 48)
+    b = make_image(tmp_path / "p2.png", 32, 32)
+    with b.open("rb") as stream:
+        staged = stage_photos(project, [("p1.jpg", a), ("p2.png", stream)])
+    assert staged.file_name == "2 photos" and staged.size_bytes > 0
+    job_id = start_upload_import(project, staged.upload_id)
+    status = _wait(project, job_id)
+    assert status.state == "completed"
+    started = status.events[0]
+    assert started["type"] == "started" and started["config"]["file_name"] == "2 photos"
+    result = status.events[-1]["result"]
+    assert result["format"] == "images" and result["num_images"] == 2
+    assert [r.split for r in project.list_images()] == [None, None]
+    # the staged photos are gone after a successful import
+    assert discard_upload(project, staged.upload_id) is False
+
+
+def test_stage_photos_refuses_non_photos_duplicates_and_nothing(project, tmp_path):
+    from horos.api.uploads import stage_photos
+
+    note = tmp_path / "notes.txt"
+    note.write_text("x", encoding="utf-8")
+    photo = make_image(tmp_path / "p.jpg")
+    with pytest.raises(DatasetFormatError, match="Not photos: notes.txt"):
+        stage_photos(project, [("p.jpg", photo), ("notes.txt", note)])
+    with pytest.raises(DatasetFormatError, match="appears twice"):
+        stage_photos(project, [("p.jpg", photo), ("sub/p.jpg", photo)])
+    with pytest.raises(DatasetFormatError, match="No photos"):
+        stage_photos(project, [])
+    # a refused upload leaves nothing staged behind
+    assert not list((project.root / "uploads").glob("*/photos")) if (
+        project.root / "uploads"
+    ).is_dir() else True
+
+
+def test_label_conflict_keeps_the_upload_and_retries_with_a_policy(project, sample_zip):
+    from horos.core.dataset import Annotation
+
+    # the project has the sample photos with their labels; one photo is then
+    # relabeled by hand, so the same zip brings different labels for it
+    import_zip(project, sample_zip)
+    record = next(r for r in project.list_images() if r.file_name == "a.png")
+    current = project.load_annotations(record.id)
+    project.save_annotations(
+        record.id,
+        [Annotation(id=1, image_id=record.id, category_id=1, bbox=(9.0, 9.0, 3.0, 3.0))],
+        expected_version=current.version,
+    )
+    staged = stage_upload(project, sample_zip)
+    status = _wait(project, start_upload_import(project, staged.upload_id))
+    assert status.state == "failed"
+    failed = status.events[-1]
+    assert failed["error_code"] == "label_conflict"
+    assert failed["details"]["conflicts"] == ["a.png"]
+    assert failed["details"]["retryable"] is True
+    # the zip is still there for the retry
+    status = _wait(
+        project, start_upload_import(project, staged.upload_id, on_annotations="replace")
+    )
+    assert status.state == "completed"
+    result = status.events[-1]["result"]
+    assert result["annotations_replaced"] == 1 and result["images_matched"] == 1
+    assert result["duplicates_skipped"] == 2  # the other two photos: same labels again
+    assert len(project.load_annotations(record.id).annotations) == 2
+    with pytest.raises(ProjectError, match="on_annotations must be one of"):
+        start_upload_import(project, staged.upload_id, on_annotations="maybe")

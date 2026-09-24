@@ -453,3 +453,34 @@ def test_loop_status_and_select_from_the_cli(tmp_path, capsys, monkeypatch):
     assert code == 0 and body["state"] == "closed"
     code, body = _run(capsys, "loop", "close", "--project", str(proj))
     assert code != 0  # nothing open any more
+
+
+def test_import_photos_and_the_label_policy_flag(tmp_path, capsys):
+    # E1-T11: a photo directory imports unlabeled; --on-annotations reaches the API
+    import json
+
+    from helpers.data import make_image, write_sample_coco_dir
+
+    from horos.api import open_project
+    from horos.core.dataset import Annotation
+
+    proj = tmp_path / "proj"
+    main(["init", str(proj)])
+    capsys.readouterr()
+    photos = tmp_path / "photos"
+    make_image(photos / "a.png", 64, 48)
+    make_image(photos / "b.png", 64, 48)
+    code = main(["import", str(photos), "--project", str(proj)])
+    body = json.loads(capsys.readouterr().out)
+    assert code == 0 and body["format"] == "images" and body["num_images"] == 2
+    project = open_project(proj)
+    record = next(r for r in project.list_images() if r.file_name == "a.png")
+    project.save_annotations(
+        record.id,
+        [Annotation(id=1, image_id=record.id, category_id=1, bbox=(9.0, 9.0, 3.0, 3.0))],
+        expected_version=0,
+    )
+    coco_dir = write_sample_coco_dir(tmp_path / "coco")
+    code = main(["import", str(coco_dir), "--project", str(proj), "--on-annotations", "skip"])
+    body = json.loads(capsys.readouterr().out)
+    assert code == 0 and body["annotations_kept"] == 1 and body["images_matched"] == 2

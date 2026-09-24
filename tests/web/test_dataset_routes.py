@@ -334,3 +334,85 @@ def test_clear_dataset_route_requires_the_project_name(client):
     assert body["deleted_categories"] == 0 and body["skipped_claimed"] == []
     project = client.get("/api/v1/project").get_json()
     assert project["num_images"] == 0 and len(project["categories"]) == 2
+
+
+def test_upload_photos_route(tmp_path):
+    # E1-T11: several 'file' fields holding photos stage a loose-photo import
+    from helpers.data import make_image
+
+    from horos.api import create_project
+
+    project = create_project(tmp_path / "fresh")
+    app = create_app(project.root)
+    app.testing = True
+    client = app.test_client()
+    a = make_image(tmp_path / "a.jpg", 64, 48)
+    b = make_image(tmp_path / "b.png", 32, 32)
+    response = client.post(
+        "/api/v1/dataset/upload",
+        data={"file": [(a.open("rb"), "a.jpg"), (b.open("rb"), "b.png")]},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 202
+    body = response.get_json()
+    assert body["file_name"] == "2 photos"
+    job = _wait_job(client, body["job_id"])
+    assert job["state"] == "completed"
+    result = job["events"][-1]["result"]
+    assert result["format"] == "images" and result["num_images"] == 2
+    summary = client.get("/api/v1/project").get_json()
+    assert summary["num_images"] == 2
+    # a lone non-photo, non-zip file is refused synchronously
+    note = tmp_path / "notes.txt"
+    note.write_text("x", encoding="utf-8")
+    response = client.post(
+        "/api/v1/dataset/upload",
+        data={"file": (note.open("rb"), "notes.txt")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"]["code"] == "dataset_format_error"
+
+
+def test_upload_label_conflict_flow(tmp_path, client, project_root):
+    # the project has the sample photos with labels; a zip carrying other
+    # labels for one of them asks first, then retries with the decision
+    from helpers.data import sample_dataset
+    from helpers.data import write_sample_coco_dir as sample
+
+    from horos.api import open_project
+    from horos.core.dataset import Annotation
+
+    project = open_project(project_root)
+    project.set_categories(sample_dataset().categories)
+    record = next(r for r in project.list_images() if r.file_name == "b.png")
+    current = project.load_annotations(record.id)
+    project.save_annotations(
+        record.id,
+        [Annotation(id=1, image_id=record.id, category_id=2, bbox=(1.0, 1.0, 2.0, 2.0))],
+        expected_version=current.version,
+    )
+    response = client.post(
+        "/api/v1/dataset/upload",
+        data={"file": (_zip_of(sample(tmp_path / "same")), "dataset.zip")},
+        content_type="multipart/form-data",
+    )
+    assert response.status_code == 202
+    body = response.get_json()
+    job = _wait_job(client, body["job_id"])
+    assert job["state"] == "failed"
+    failed = job["events"][-1]
+    assert failed["error_code"] == "label_conflict"
+    assert failed["details"]["conflicts"] == ["b.png"]
+    assert failed["details"]["retryable"] is True
+    response = client.post(
+        f"/api/v1/dataset/upload/{body['upload_id']}/import",
+        json={"on_annotations": "merge"},
+    )
+    assert response.status_code == 202
+    job = _wait_job(client, response.get_json()["job_id"])
+    assert job["state"] == "completed"
+    result = job["events"][-1]["result"]
+    assert result["annotations_merged"] == 1 and result["images_matched"] == 1
+    assert result["duplicates_skipped"] == 2  # a.png and c.png: same labels again
+    assert len(project.load_annotations(record.id).annotations) == 2

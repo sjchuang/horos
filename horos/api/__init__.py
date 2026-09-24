@@ -190,6 +190,7 @@ from horos.api.train import (
 from horos.api.uploads import (
     StagedUpload,
     discard_upload,
+    stage_photos,
     stage_upload,
     start_upload_import,
 )
@@ -275,6 +276,7 @@ __all__ = [
     "list_exports",
     "StagedUpload",
     "stage_upload",
+    "stage_photos",
     "start_upload_import",
     "discard_upload",
     "AnnotationProgress",

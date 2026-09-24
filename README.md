@@ -46,6 +46,7 @@ Run the whole pipeline from the terminal:
 mkdir my-project && cd my-project
 horos init my-project        # an empty directory becomes the project itself
 horos import path/to/data    # COCO / YOLO / VOC / Darknet / VIA / LabelMe, dir or zip
+horos import path/to/photos  # photos alone: they join the project unlabeled
 horos loop select --count 20 # pick the next batch to label (diverse, or model-scored)
 horos loop train             # train the open round on everything labeled so far
 horos loop close             # review, then open the next round
@@ -93,7 +94,10 @@ Evaluate, Experiments and Lab.
 ### Dataset
 
 Import by dropping a zip (COCO / YOLO / VOC / Darknet / VIA / LabelMe — format
-is auto-detected), get a validation report with actionable errors, per-class
+is auto-detected) or plain photos, which join the project unlabeled; a label
+file uploaded later for photos already in the project attaches to them, and
+you are asked before any existing labels are replaced. Get a validation report
+with actionable errors, per-class
 statistics, and train / valid / test sets that only labeled photos belong to: a
 photo joins a set the first time it is labeled, by a stable hash in the shares
 you choose (70 / 10 / 20 by default), and never changes set — so the test set

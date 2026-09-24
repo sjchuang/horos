@@ -77,6 +77,7 @@ def import_dataset():
         format=body.get("format"),
         copy_images=bool(body.get("copy_images", True)),
         on_conflict=body.get("on_conflict", "ask"),
+        on_annotations=body.get("on_annotations", "ask"),
         class_names=body.get("class_names"),
     )
     return jsonify(summary.model_dump())
@@ -84,19 +85,25 @@ def import_dataset():
 
 @bp.post("/dataset/upload")
 def upload_dataset():
-    """Stage the zip and start its import job. The page polls /jobs/<job_id>;
-    the completed event's result is the ImportSummary, a failed event with
+    """Stage the upload and start its import job. One 'file' field holding a
+    zip stages a dataset; one or more 'file' fields holding photos stage
+    loose photos (E1-T11). The page polls /jobs/<job_id>; the completed
+    event's result is the ImportSummary, a failed event with
     details.retryable=true is answered by POST /dataset/upload/<id>/import."""
-    upload = request.files.get("file")
-    if upload is None or not upload.filename:
-        raise ProjectError("Attach the dataset zip as multipart field 'file'")
+    uploads = [f for f in request.files.getlist("file") if f.filename]
+    if not uploads:
+        raise ProjectError("Attach the dataset zip or the photos as multipart field 'file'")
     class_names = _class_names(request.form.get("class_names"))
     project = _project()
-    staged = api.stage_upload(project, upload.stream, file_name=upload.filename)
+    if len(uploads) == 1 and uploads[0].filename.lower().endswith(".zip"):
+        staged = api.stage_upload(project, uploads[0].stream, file_name=uploads[0].filename)
+    else:
+        staged = api.stage_photos(project, [(f.filename, f.stream) for f in uploads])
     job_id = api.start_upload_import(
         project,
         staged.upload_id,
         on_conflict=request.form.get("on_conflict", "ask"),
+        on_annotations=request.form.get("on_annotations", "ask"),
         class_names=class_names,
         # the UI shows an editable class-name dialog instead of placeholders
         require_class_names=True,
@@ -111,6 +118,7 @@ def import_upload(upload_id: str):
         _project(),
         upload_id,
         on_conflict=body.get("on_conflict", "ask"),
+        on_annotations=body.get("on_annotations", "ask"),
         class_names=body.get("class_names"),
         require_class_names=True,
     )

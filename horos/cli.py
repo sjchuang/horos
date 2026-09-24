@@ -114,14 +114,18 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser(
         "import",
         help="Import a COCO / YOLO / VOC / Darknet / VIA / LabelMe dataset "
-        "(directory or .zip) into a project",
+        "(directory or .zip) into a project, or plain photos with no labels",
     )
     p.add_argument("source")
     p.add_argument(
         "--project",
         help="Project directory (default: the project containing the current directory)",
     )
-    p.add_argument("--format", choices=["coco", "yolo", "voc", "darknet", "via", "labelme"])
+    p.add_argument(
+        "--format",
+        choices=["coco", "yolo", "voc", "darknet", "via", "labelme", "images"],
+        help="Skip detection and read the source as this format ('images': photos only)",
+    )
     p.add_argument(
         "--no-copy",
         action="store_true",
@@ -133,6 +137,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="ask",
         help="What to do when a file name already exists with different content "
         "(default: ask — fail with the conflict list, importing nothing)",
+    )
+    p.add_argument(
+        "--on-annotations",
+        choices=["ask", "replace", "merge", "skip"],
+        default="ask",
+        help="What to do when the import brings labels for a photo that already "
+        "has some (default: ask — fail with the list, importing nothing)",
     )
     p.add_argument(
         "--class-names",
@@ -719,6 +730,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     project,
                     args.source,
                     on_conflict=args.on_conflict,
+                    on_annotations=args.on_annotations,
                     class_names=names,
                     progress=report,
                 )
@@ -729,6 +741,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     format=args.format,
                     copy_images=not args.no_copy,
                     on_conflict=args.on_conflict,
+                    on_annotations=args.on_annotations,
                     class_names=names,
                     progress=report,
                 )

@@ -101,6 +101,21 @@ class ImportConflictError(HorosError):
         self.details = {"conflicts": conflicts}
 
 
+class LabelConflictError(HorosError):
+    """An import brings labels for photos the project already has labels on,
+    and the caller asked to be consulted (on_annotations="ask"). Uploading a
+    label file for photos uploaded earlier is the normal way to hit this, so
+    the answer belongs to the user, not to a default. Distinct from
+    AnnotationConflictError, the optimistic-lock conflict of the annotator."""
+
+    code = "label_conflict"
+
+    def __init__(self, message: str, *, conflicts: list[str]):
+        super().__init__(message)
+        self.conflicts = conflicts
+        self.details = {"conflicts": conflicts}
+
+
 class CategoryInUseError(ProjectError):
     """Deleting a class that annotations still reference was asked without
     force. The UI turns this into a confirm ("delete the class and its N

@@ -23,7 +23,7 @@ The problem it solves is not "which model is more accurate". It is **the path th
 |---|---|
 | Models | RF-DETR Nano / Small / Medium / Large (detection) and RF-DETR-Seg Nano … 2XLarge (instance segmentation), all Apache 2.0 |
 | Auto-labeling | OWLv2 open-vocabulary zero-shot (Apache 2.0) |
-| Data formats | COCO JSON, YOLO, LabelMe (read + write); Pascal VOC, Darknet, VIA (import only) |
+| Data formats | COCO JSON, YOLO, LabelMe (read + write); Pascal VOC, Darknet, VIA (import only); plain photos with no labels (import only) |
 | Export | ONNX, TensorRT, TFLite |
 | Interfaces | Python API, Web API (Flask), WebUI (Flask) |
 
@@ -270,6 +270,7 @@ Each Epic contains User stories (S) and Tasks (T). A Task's definition of done m
 | E1-T8 | Split management — only labeled photos belong to train / valid / test: a photo joins a set when it first carries a confirmed annotation, by a stable hash in the project's ratios (default 70/10/20), and never changes set; unlabeled photos are in no set and reach no training snapshot; "Assign splits" fills in the unassigned, "Reshuffle" re-draws labeled photos with a warning | `tests/api/test_split.py` |
 | E1-T9 | Web API endpoints | `tests/web/test_dataset_routes.py` |
 | E1-T10 | WebUI upload and summary page | Interface scenario (see §8) |
+| E1-T11 | Photos without labels are an import (format `images`, detected last so no real layout is ever mistaken for one): they join the project unlabeled and in no set, from a directory, a zip or photos dropped on the Dataset page. Labels arriving later for photos the project already has attach to them (same name and content, or a bare label file whose recorded size agrees) instead of vanishing with the duplicate; identical labels are a duplicate, differing ones ask (`on_annotations`: ask / replace / merge / skip) before anything is written | `tests/api/test_format_images.py`, `tests/api/test_import_labels.py`, `tests/web/test_dataset_routes.py`, interface scenario (`tests/ui_scenarios/upload-conflicts-and-formats.md` §D–E) |
 
 #### How it is accepted
 

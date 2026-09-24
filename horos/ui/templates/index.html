@@ -170,11 +170,11 @@
   <section class="panel">
     <h2>Upload</h2>
     <div id="dropzone">
-      <input type="file" id="file-input" accept=".zip">
-      <p><strong>Drop a .zip here</strong> or click to choose</p>
+      <input type="file" id="file-input" accept=".zip,.jpg,.jpeg,.png,.bmp,.webp" multiple>
+      <p><strong>Drop a .zip or photos here</strong> or click to choose</p>
       <p style="font-size:12px;margin:4px 0 0"
-         title="COCO: _annotations.coco.json · YOLO: data.yaml · VIA: via_region_data.json · LabelMe: one .json per image · Pascal VOC and Darknet by their files">
-        COCO · YOLO · VOC · Darknet · VIA · LabelMe — detected automatically</p>
+         title="COCO: _annotations.coco.json · YOLO: data.yaml · VIA: via_region_data.json · LabelMe: one .json per image · Pascal VOC and Darknet by their files · photos alone join the project unlabeled">
+        COCO · YOLO · VOC · Darknet · VIA · LabelMe — detected automatically · photos alone arrive unlabeled</p>
     </div>
     <div id="upload-progress-row" class="hidden">
       <div class="bar"><div id="upload-bar"></div></div>
@@ -192,6 +192,18 @@
       <button data-policy="skip">Skip them</button>
       <button data-policy="rename">Import renamed</button>
       <button data-policy="overwrite" class="primary">Overwrite</button>
+    </div>
+  </dialog>
+
+  <dialog id="labels-dialog">
+    <h3>These photos already have labels</h3>
+    <p>The upload brings labels for photos that are labeled already. Photos with no labels yet simply receive theirs.</p>
+    <ul id="labels-list"></ul>
+    <div class="actions">
+      <button data-policy="">Cancel</button>
+      <button data-policy="skip">Keep existing</button>
+      <button data-policy="merge">Keep both</button>
+      <button data-policy="replace" class="primary">Replace</button>
     </div>
   </dialog>
 
@@ -434,6 +446,14 @@ async function resolveConflicts(conflicts) {
   return btn ? btn.dataset.policy : null;
 }
 
+async function resolveLabels(conflicts) {
+  const btn = await askDialog($("labels-dialog"), () => {
+    $("labels-list").innerHTML = conflicts
+      .map((name) => `<li>${name}</li>`).join("");
+  });
+  return btn ? btn.dataset.policy : null;
+}
+
 async function editClassNames(defaults) {
   const btn = await askDialog($("class-names-dialog"), () => {
     $("class-names-list").innerHTML = defaults
@@ -467,12 +487,14 @@ function fmtBytes(n) {
   return (n / 1024 / 1024 / 1024).toFixed(2) + " GB";
 }
 
-// POST multipart with upload progress — fetch() cannot report bytes sent
-function uploadZip(file, extras) {
+// POST multipart with upload progress — fetch() cannot report bytes sent.
+// One zip or any number of photos, every one under the same field name.
+function uploadFiles(files, extras) {
   return new Promise((resolve, reject) => {
     const body = new FormData();
-    body.append("file", file);
+    files.forEach((file) => body.append("file", file));
     if (extras.on_conflict) body.append("on_conflict", extras.on_conflict);
+    if (extras.on_annotations) body.append("on_annotations", extras.on_annotations);
     if (extras.class_names) body.append("class_names", JSON.stringify(extras.class_names));
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/v1/dataset/upload");
@@ -540,10 +562,17 @@ function showSummary(summary) {
   if (summary.overwritten) resolved.push(`${summary.overwritten} overwritten`);
   if (summary.conflicts_skipped) resolved.push(`${summary.conflicts_skipped} conflict(s) skipped`);
   if (summary.renamed) resolved.push(`${summary.renamed} renamed`);
+  if (summary.images_matched) resolved.push(`labels applied to ${summary.images_matched} photo(s) already here`);
+  if (summary.annotations_replaced) resolved.push(`${summary.annotations_replaced} relabeled`);
+  if (summary.annotations_merged) resolved.push(`${summary.annotations_merged} with both label sets`);
+  if (summary.annotations_kept) resolved.push(`${summary.annotations_kept} kept as they were`);
   status.className = "ok";
-  status.textContent =
-    `Imported ${summary.num_images} images, ${summary.num_annotations} annotations, ` +
-    `${summary.num_categories} classes (${summary.format.toUpperCase()})` +
+  const headline = summary.format === "images"
+    ? `Imported ${summary.num_images} photo(s) with no labels — label them on the Annotate page, ` +
+      `or let the Loop pick a batch`
+    : `Imported ${summary.num_images} images, ${summary.num_annotations} annotations, ` +
+      `${summary.num_categories} classes (${summary.format.toUpperCase()})`;
+  status.textContent = headline +
     (resolved.length ? ` — ${resolved.join(", ")}` : "") +
     (summary.warnings.length ? ` — ${summary.warnings.length} warning(s)` : "");
 }
@@ -557,11 +586,15 @@ async function importStaged(uploadId, jobId, extras) {
     await refreshStats();
     await refreshProject();
   } catch (e) {
-    if (e.code === "import_conflict" || e.code === "class_names_required") {
+    if (e.code === "import_conflict" || e.code === "label_conflict"
+        || e.code === "class_names_required") {
       let next = null;
       if (e.code === "import_conflict") {
         const policy = await resolveConflicts(e.details.conflicts || []);
         if (policy) next = { ...extras, on_conflict: policy };
+      } else if (e.code === "label_conflict") {
+        const policy = await resolveLabels(e.details.conflicts || []);
+        if (policy) next = { ...extras, on_annotations: policy };
       } else {
         const names = await editClassNames(e.details.default_names || []);
         if (names) next = { ...extras, class_names: names };
@@ -583,17 +616,21 @@ async function importStaged(uploadId, jobId, extras) {
   }
 }
 
-async function upload(file, extras = {}) {
+async function upload(files, extras = {}) {
+  files = [...files];
+  if (!files.length) return;
   if (uploading) { $("status").textContent = "Still importing the previous upload…"; return; }
   uploading = true;
   zone.classList.add("busy");
   const status = $("status");
+  const label = files.length === 1 ? files[0].name : `${files.length} photos`;
+  const size = files.reduce((n, f) => n + f.size, 0);
   status.className = "";
-  status.textContent = `Uploading ${file.name} (${fmtBytes(file.size)})…`;
+  status.textContent = `Uploading ${label} (${fmtBytes(size)})…`;
   showProgress(0, "Uploading 0%");
   try {
-    const staged = await uploadZip(file, extras);
-    status.textContent = `Importing ${file.name}…`;
+    const staged = await uploadFiles(files, extras);
+    status.textContent = `Importing ${label}…`;
     await importStaged(staged.upload_id, staged.job_id, extras);
   } catch (e) {
     status.className = "error";
@@ -608,15 +645,14 @@ async function upload(file, extras = {}) {
 const zone = $("dropzone");
 zone.addEventListener("click", () => $("file-input").click());
 $("file-input").addEventListener("change", (e) => {
-  if (e.target.files[0]) upload(e.target.files[0]);
+  upload(e.target.files);
+  e.target.value = "";  // the same photos can be chosen again after a cancel
 });
 ["dragover", "dragenter"].forEach((t) =>
   zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.add("hover"); }));
 ["dragleave", "drop"].forEach((t) =>
   zone.addEventListener(t, (e) => { e.preventDefault(); zone.classList.remove("hover"); }));
-zone.addEventListener("drop", (e) => {
-  if (e.dataTransfer.files[0]) upload(e.dataTransfer.files[0]);
-});
+zone.addEventListener("drop", (e) => upload(e.dataTransfer.files));
 
 async function applySplits(reshuffle) {
   const pct = (id) => Number($(id).value) || 0;
