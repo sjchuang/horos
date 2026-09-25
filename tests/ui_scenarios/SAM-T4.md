@@ -54,10 +54,10 @@ horos ui <project>
     Space 不再是「下一個物體」,Next 按鈕已移除),留在 Draw 工具可直接點下一個
 15. 多物體批次:得到 mask 後不按鍵、直接拖一個新框(Object Class 需有值),目前的 mask 自動入列成該類別色的
     實線薄邊,狀態列「1 object queued — prompt the next one, Enter / Space accepts all」
-16. 再拖第三個框:「Accept」按鈕顯示「Accept 3 (Enter)」
+16. 再拖第三個框:「Accept」按鈕顯示「Accept 3」（Enter 提示在按鈕的 tooltip）
 17. Enter 或 Space:所有入列的物體加上目前的候選一次寫入,各自保留當時的類別;toast「Added 3 objects」;
     Ctrl+Z 一次還原整批
-18. Esc(或「Clear (Esc)」按鈕)第一下清掉目前物體的點與框(入列的保留);再按一次丟掉整個隊列(toast 提示數量)
+18. Esc(或「Clear」按鈕,tooltip 註明 Esc)第一下清掉目前物體的點與框(入列的保留);再按一次丟掉整個隊列(toast 提示數量)
 19. 切工具或切圖:隊列一併清空(未寫入的不會偷跟到下一張)
 
 ### E. 既有 box 當作 hint(SAM-T6)
@@ -90,7 +90,7 @@ horos ui <project>
 ### F. 一個物件分成好幾塊（2026-09-14）
 
 20. 物件被遮擋成幾段：點第一段得到 mask 後按 <b>+</b>（或「+ Part」）：mask 保留、prompt 清空，狀態列「1 part kept — click the object's next piece; Enter / Space finishes it」
-21. 點第二段、第三段，每段按 +；Accept 按鈕顯示「Accept · 3 parts (Enter)」
+21. 點第二段、第三段，每段按 +；Accept 按鈕顯示「Accept · 3 parts」
 22. Enter 或 Space：寫入「一個」標註，segmentation 有三個多邊形，bbox 涵蓋全部；Shapes 清單顯示「(polygon ×3)」
 23. Esc 第一下清目前 prompt、第二下丟掉已保留的 parts、第三下才丟隊列；Output 為 Box 時 + 無效（提示需要 Polygon）
 24. Edit 工具：多段物件整體可拖曳、可選取（點任一段）；控制點顯示在「最後點到的那一段」上——點另一段就換到那一段，

@@ -114,8 +114,12 @@ def test_every_page_uses_the_shared_controls(client):
         html = client.get(path).get_data(as_text=True)
         assert '/static/controls.css' in html and '/static/controls.js' in html, path
         assert "one checkbox look" not in html, f"{path} restyles checkboxes locally"
+        # 2026-09-25: one dark-glass look from static/theme.css, linked after
+        # the page's own <style> so it outranks the page's base rules
+        assert html.index("/static/theme.css") > html.index("</style>"), path
     assert client.get("/static/controls.css").status_code == 200
     assert client.get("/static/controls.js").status_code == 200
+    assert client.get("/static/theme.css").status_code == 200
     # every native number box sits inside a stepper (dynamic ones are built
     # by stepperHTML / horosControls.stepper, which emit the same markup)
     for path in ("/", "/lab", "/train", "/annotate"):
@@ -172,7 +176,7 @@ def test_annotator_has_the_sam_tool(client):
     # Clear shows its shortcut
     assert 'id="sam-next"' not in html and "queued: []" in html
     assert 'case "Enter": case "NumpadEnter": case "Space":' in html
-    assert "Clear (Esc)" in html
+    assert "drop queued objects too (Esc)" in html  # the shortcut lives in Clear's tooltip
     # a finished shape never gets a made-up class: the page asks instead
     assert 'id="label-modal"' in html and 'id="label-input"' in html
     assert '|| "object"' not in html
@@ -239,3 +243,23 @@ def test_loop_page_offers_training_without_short_classes(client):
     html = client.get("/loop").get_data(as_text=True)
     assert 'id="btn-train-without"' in html and "ignore_short_classes" in html
     assert "ready_without_short" in html
+
+
+def test_annotator_tools_card_follows_the_mockup(client):
+    """2026-09-25 sidebar: three big tool buttons, Output as a segmented radio
+    control beside the model picker, icon action row, and a class box that
+    drops down the project's classes while still taking a typed new name."""
+    html = client.get("/annotate").get_data(as_text=True)
+    card = html[html.index('<div class="card tools-card">'):html.index('id="review-card"')]
+    assert card.count('class="tool-btn') == 3
+    for name in ("sam", "select", "ai-text"):
+        assert f'data-tool="{name}"' in card, name
+    # the radios keep their names (the JS reads them) inside .seg labels
+    assert card.count('<label class="opt"') == 4
+    assert 'name="sam-output" value="polygon" checked' in card
+    assert 'name="sam-output" value="bbox"' in card
+    assert 'id="sam-model" class="model-pick"' in card
+    assert '<div class="action-row">' in card and 'id="sam-accept-label"' in card
+    assert 'id="sam-convert-all"' in card and "Boxes to polygons" in card
+    assert 'id="class-input" list="class-datalist"' in card and 'id="class-datalist"' in card
+    assert '$("sam-accept-label").textContent' in html and '$("class-datalist").innerHTML' in html

@@ -105,6 +105,33 @@ horos ui ./demo_project
 - 類別對話框開著時不能操作畫布；Ctrl+V 貼上沿用被複製形狀的類別，不會問
 
 
+## 2026-09-25 右側面板照 mockup 重排、全站玻璃質感
+
+右欄工具卡的版面照使用者提供的 mockup：三顆大工具鍵 → Output 分段開關＋模型下拉 →
+Points ≤ 步進器 → Accept／Part／Clear 三鍵 → Boxes to polygons → 分隔線 → Class 下拉＋類別 chips。
+整站改成同一套深色玻璃主題（`static/theme.css`，接在每頁自己的 `<style>` 之後載入）。
+
+1. 開任一張照片：右欄第一張卡的標題是「✦ TOOLS」（字距拉開、灰字），下面三顆等寬的大工具鍵
+   （✦ Draw、虛線橢圓 Edit、襯線 T Prompt）；作用中的那顆是藍色漸層底、藍框、外圈微光；
+   滑過其他兩顆底色變亮。1／2／3 仍切換工具，tooltip 說明不變
+2. Draw 工具：「Output」是一顆藥丸形分段開關，「Polygon」「Box」各帶一個圓形 radio 指示，
+   選中那格藍底藍字、圓圈實心；右邊是 SAM 模型下拉（自訂箭頭，短名稱不撐版）。
+   切成 Box 後預覽變成外接矩形（行為同 SAM-T4 §9）
+3. 「Points ≤」一列：共用的步進器（數字框＋上下箭頭，圓角、半透明底），右側仍顯示「n points」
+4. 三顆動作鍵一列：「✓ Accept」藍色主按鈕（有 mask 才啟用，數量顯示成「Accept 3」／
+   「Accept · 3 parts」，Enter 提示改在 tooltip）、「＋ Part」、「🗑 Clear」（tooltip 註明 Esc）；
+   其下整寬的「⬡ Boxes to polygons」；狀態列與一行操作提示（Enter accepts as <目前類別>）在最下面
+5. Prompt 工具：輸入框 → Output 分段開關（Box／Polygon）→ Confidence 滑桿＋步進器 → 整寬「✓ Apply」
+6. 分隔線下方「🏷 CLASS」：輸入框右端有下拉箭頭，點進去（或按 ↓）列出專案全部類別可直接選；
+   仍可打新名稱建立類別。下面的類別 chips 是藥丸形、左邊彩色圓點帶同色微光，選中的 chip 藍框藍底
+7. 「Tools」標題仍可點擊收合工具設定（行為同 2026-09-17 那節）；標題右端箭頭轉向、備註文字照舊
+8. 全站外觀：頁首與每張卡片是半透明深色玻璃（模糊背景、細白邊、內側高光），頁面背景是深藍底
+   加左上藍、右上琥珀、下方青綠三團柔光（固定不隨捲動）；主按鈕藍色漸層帶光暈，一般按鈕半透明
+   圓角；下拉選單有自訂箭頭；滑桿拇指白心藍邊；分段開關（Loop、Evaluate 的 .seg）同一套藥丸樣式；
+   導覽列作用中的頁面藍框微光；modal 背後模糊。逐頁開 Dataset／Annotate／Loop／Training／
+   Evaluate／Experiments／Lab 確認沒有跑版：兩欄頁面各自捲動、表格與圖表照舊
+9. `[hidden]` 與 Shapes 清單的高度規則不受影響：收合 Tools 後 Shapes 清單變高，工具卡最多 52 %
+
 ## 2026-09-17 工具區可收合、側欄比例
 
 1. 編輯器右側欄最上方的「Tools」標題本身是按鈕，左邊有 ▼ 箭頭：點一下把工具的設定區

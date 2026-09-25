@@ -116,7 +116,7 @@
 
   /* ---- editor view ---- */
   #editor-view { display: none; }
-  .editor-body { display: grid; grid-template-columns: 1fr 280px; gap: 12px;
+  .editor-body { display: grid; grid-template-columns: 1fr 340px; gap: 12px;
                  padding: 0 16px 16px;
                  /* viewport minus the site header (~55px) and the editor topbar */
                  height: calc(100vh - 112px); }
@@ -126,25 +126,62 @@
   #anno-canvas { display: block; }
   .sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0;
              overflow-y: auto; }
-  .tools { display: flex; gap: 6px; }
-  .tool-btn { width: 40px; height: 36px; font-size: 16px; background: var(--bg);
-              color: var(--dim); border: 1px solid var(--line); border-radius: 6px;
-              cursor: pointer; }
-  .tool-btn:hover { border-color: var(--accent); }
-  .tool-btn.active { color: var(--accent); border-color: var(--accent); }
-  .tool-btn.ai { color: var(--ok); }
-  .tool-btn.ai.active { color: var(--ok); border-color: var(--ok); }
+  /* ---- tools card (layout decided from the user's mockup, 2026-09-25) ---- */
+  .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .tool-btn { height: 52px; padding: 0; border-radius: 14px; background: var(--bg);
+              color: #c9d6e4; border: 1px solid var(--line); cursor: pointer;
+              display: flex; align-items: center; justify-content: center;
+              transition: background .12s, border-color .12s, box-shadow .12s, color .12s; }
+  .tool-btn svg { width: 26px; height: 26px; }
+  .tool-btn .glyph-t { font: 600 27px/1 Georgia, "Times New Roman", serif; }
+  .tool-btn:hover:not(:disabled) { background: var(--inset-hover); border-color: var(--line-strong); }
+  .tool-btn.active, .tool-btn.active:hover:not(:disabled) {
+    color: #8ec5ff; border-color: rgba(90, 170, 255, .75);
+    background: linear-gradient(180deg, rgba(47, 140, 255, .38), rgba(10, 108, 240, .22));
+    box-shadow: 0 0 0 1px rgba(47, 140, 255, .25), 0 0 20px rgba(47, 140, 255, .40),
+                inset 0 1px 0 rgba(255, 255, 255, .18); }
+  .tool-panel { margin-top: 8px; }
+  .opt-row { display: flex; align-items: center; gap: 10px; margin-top: 10px;
+             font-size: 12.5px; color: var(--dim); min-width: 0; }
+  .opt-row .opt-k { flex: none; }
+  .opt-row .seg { flex: none; }
+  .opt-row .model-pick { flex: 1 1 0; min-width: 0; max-width: 132px; margin-left: auto;
+                         font-size: 12px; padding: 6px 22px 6px 9px;
+                         background-position: right 7px center; }
+  .opt-row .opt-note { margin-left: auto; font-size: 11px; }
+  .opt-row .stepper input[type=number] { width: 66px; }
+  .action-row { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .action-row .btn, .btn.wide { display: inline-flex; align-items: center; justify-content: center;
+                                gap: 6px; padding: 9px 6px; white-space: nowrap; overflow: hidden; }
+  .action-row .btn svg, .btn.wide svg { width: 16px; height: 16px; flex: none; }
+  .btn.wide { width: 100%; margin-top: 8px; }
+  .status-line { font-size: 11px; color: var(--dim); margin-top: 6px; min-height: 14px;
+                 overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-line.warn { color: var(--warn); min-height: 0; }
+  .divider { border-top: 1px solid var(--line); margin: 12px 0; }
+  h4.sec { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  h4.sec svg { width: 15px; height: 15px; margin: 0; color: #b9c8d8; }
+  /* the class box: free text (a new name creates the class) that also drops
+     down the project's classes, so it reads as a picker */
+  .combo { position: relative; }
+  .combo input { width: 100%; padding: 9px 34px 9px 12px; font-size: 14px; }
+  .combo svg { position: absolute; right: 12px; top: 50%; width: 13px; height: 13px;
+               transform: translateY(-50%); color: #b8c7d8; pointer-events: none; }
+  .combo input::-webkit-calendar-picker-indicator { display: none !important; }
   .prompt-row { display: flex; gap: 6px; margin-bottom: 6px; }
   .prompt-row input:first-child { width: 110px; }
   .prompt-row input:last-child { flex: 1; }
-  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
-  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px;
+  .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 9px;
           border: 1px solid var(--line); border-radius: 20px; cursor: pointer;
-          font-size: 11px; color: var(--dim); background: var(--bg); }
-  .chip:hover { border-color: var(--accent); color: var(--text); }
-  .chip.on { border-color: var(--accent); color: var(--accent); }
-  .chip .dot { width: 8px; height: 8px; border-radius: 50%; }
-  .zoom-hint { color: var(--dim); font-size: 11px; margin-top: 10px; }
+          font-size: 12.5px; color: var(--text); background: var(--inset);
+          transition: background .12s, border-color .12s, box-shadow .12s; }
+  .chip:hover { background: var(--inset-hover); border-color: var(--line-strong); }
+  .chip.on { border-color: rgba(90, 170, 255, .7); background: var(--accent-soft);
+             box-shadow: 0 0 12px rgba(47, 140, 255, .25); }
+  .chip .dot { width: 12px; height: 12px; border-radius: 50%; flex: none;
+               box-shadow: 0 0 8px currentColor; }
+  .zoom-hint { color: var(--dim); font-size: 11px; margin-top: 12px; }
   /* The tools card grows with the active tool's options and the class list;
      left alone it pushes the shapes list down to nothing. It keeps at most
      half the sidebar and scrolls inside, so the shapes list always has room. */
@@ -154,25 +191,28 @@
                  min-height: 190px; }
   #shapes-list { flex: 1; overflow-y: auto; margin-bottom: 10px; }
   /* a section heading that folds what follows it */
-  .fold { display: flex; align-items: center; gap: 6px; width: 100%;
-          background: none; border: none; padding: 0; margin: 0 0 10px;
-          cursor: pointer; color: var(--dim); font-size: 11px;
-          text-transform: uppercase; letter-spacing: .08em; }
-  .fold:hover { color: var(--text); }
-  .fold .caret { transition: transform .15s; font-size: 9px; line-height: 1; }
+  .fold { display: flex; align-items: center; gap: 8px; width: 100%;
+          background: none; border: none; border-radius: 0; box-shadow: none;
+          padding: 0; margin: 0 0 12px; cursor: pointer; color: var(--dim);
+          font-size: 11.5px; font-weight: 600; text-transform: uppercase;
+          letter-spacing: .18em; }
+  .fold:hover:not(:disabled) { background: none; border: none; color: var(--text); }
+  .fold .ico { width: 15px; height: 15px; color: #8ec5ff; }
+  .fold .caret { transition: transform .15s; font-size: 9px; line-height: 1; opacity: .7; }
   .fold[aria-expanded="false"] .caret { transform: rotate(-90deg); }
   .fold .note { margin-left: auto; text-transform: none; letter-spacing: 0;
-                font-size: 10px; color: var(--dim); }
+                font-weight: 400; font-size: 10.5px; color: var(--dim); }
   .shape-item { display: flex; align-items: center; justify-content: space-between;
                 padding: 4px 7px; margin-bottom: 2px; border-radius: 5px;
                 cursor: pointer; font-size: 12px; }
   .shape-item:hover { background: var(--bg); }
-  .shape-item.on { background: rgba(77, 171, 247, .14); color: var(--accent); }
+  .shape-item.on { background: var(--accent-soft); color: #bfe0ff; }
   .shape-item .dot { display: inline-block; width: 10px; height: 10px;
                      border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   .shape-item small { color: var(--dim); }
   .shape-item .del { background: none; border: none; color: var(--err);
                      cursor: pointer; font-size: 13px; padding: 0 4px; }
+  .shape-item .del:hover:not(:disabled) { background: rgba(255, 107, 107, .15); color: #ff9a9a; }
   .switch-row { display: flex; align-items: center; justify-content: space-between;
                 margin-bottom: 8px; }
   .switch-row label { font-size: 11px; color: var(--dim); display: flex;
@@ -210,6 +250,7 @@
   #help-modal td { padding: 3px 14px 3px 0; color: var(--dim); border: none; }
   #help-modal td:first-child { color: var(--text); font-family: ui-monospace, monospace; }
 </style>
+<link rel="stylesheet" href="/static/theme.css?v=1">
 </head>
 <body>
 
@@ -331,70 +372,84 @@
       <div class="card tools-card">
         <button class="fold" id="fold-tools" aria-expanded="true"
                 aria-controls="tool-body" title="Fold the tool's options away">
-          <span class="caret">▼</span>Tools<span class="note" id="fold-tools-note"></span>
+          <svg class="ico" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 2.5 14.3 9.7 21.5 12l-7.2 2.3L12 21.5l-2.3-7.2L2.5 12l7.2-2.3z"/></svg>
+          Tools<span class="note" id="fold-tools-note"></span><span class="caret">▼</span>
         </button>
         <div class="tools">
-          <button class="tool-btn ai active" data-tool="sam"
-            title="Draw — click the object; right-click (or Shift+click) what is not it, or drag a rough box. Enter or Space accepts. (1)">✦</button>
-          <button class="tool-btn" data-tool="select"
-            title="Edit — click a shape to select, drag to move, drag a point to reshape, click an edge to add a point, drop a point onto another to merge them. (2)">✎</button>
-          <button class="tool-btn ai" data-tool="ai-text"
-            title="Prompt — type object names, OWLv2 pseudo-labels them on this image. (3)">T</button>
+          <button class="tool-btn active" data-tool="sam" aria-label="Draw"
+            title="Draw — click the object; right-click (or Shift+click) what is not it, or drag a rough box. Enter or Space accepts. (1)">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+              <path d="M10.5 3.5 12.6 9.9 19 12l-6.4 2.1-2.1 6.4-2.1-6.4L2 12l6.4-2.1z"/>
+              <path d="M18.5 2.5 19.3 4.7 21.5 5.5l-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></button>
+          <button class="tool-btn" data-tool="select" aria-label="Edit"
+            title="Edit — click a shape to select, drag to move, drag a point to reshape, click an edge to add a point, drop a point onto another to merge them. (2)">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+                 stroke-linecap="round" stroke-dasharray="3 2.6" aria-hidden="true">
+              <ellipse cx="12" cy="12" rx="9" ry="5.2" transform="rotate(-30 12 12)"/></svg></button>
+          <button class="tool-btn" data-tool="ai-text" aria-label="Prompt"
+            title="Prompt — type object names, OWLv2 pseudo-labels them on this image. (3)">
+            <span class="glyph-t" aria-hidden="true">T</span></button>
         </div>
         <div id="tool-body">
-        <div id="sam-panel" style="display:none;margin-top:10px">
-          <div style="font-size:11px;color:var(--dim);line-height:1.5">
-            Click the object, right-click what is not. <b>Enter</b> or <b>Space</b>
-            accept as <span id="sam-class-echo" style="color:var(--text)">object</span>,
-            <b>+</b> keep this mask as a part and click the next piece of the same object,
-            <b>Esc</b> clear.</div>
-          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
-            <span>Output</span>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-              <input type="radio" name="sam-output" value="polygon" checked> Polygon
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"
-                   title="The mask's bounding box, for detection-only projects">
-              <input type="radio" name="sam-output" value="bbox"> Box
-            </label>
-            <select id="sam-model" style="margin-left:auto;font-size:11px;min-width:0;max-width:150px"
-                    title="Which segmenter runs (all Apache 2.0)"></select>
+        <div id="sam-panel" class="tool-panel" style="display:none">
+          <div class="opt-row">
+            <span class="opt-k">Output</span>
+            <div class="seg">
+              <label class="opt"><input type="radio" name="sam-output" value="polygon" checked>
+                <span class="ring"></span>Polygon</label>
+              <label class="opt" title="The mask's bounding box, for detection-only projects">
+                <input type="radio" name="sam-output" value="bbox"><span class="ring"></span>Box</label>
+            </div>
+            <select id="sam-model" class="model-pick" title="Which segmenter runs (all Apache 2.0)"></select>
           </div>
-          <div id="sam-detail-row" style="display:flex;align-items:center;gap:8px;margin-top:6px;font-size:11px;color:var(--dim)">
-            <span title="At most this many control points per polygon — the outline is simplified to fit. Empty = the mask's full outline. Changing it redraws the live mask.">Points ≤</span>
+          <div id="sam-detail-row" class="opt-row">
+            <span class="opt-k" title="At most this many control points per polygon — the outline is simplified to fit. Empty = the mask's full outline. Changing it redraws the live mask.">Points ≤</span>
             <span class="stepper narrow"><input type="number" id="sam-max-points" min="3" step="8" placeholder="all"
                    title="at most this many control points; empty = full outline">
               <span class="step-btns"><button type="button" data-step="1" title="+8"></button>
                 <button type="button" data-step="-1" title="−8"></button></span></span>
-            <span id="sam-points-now" style="margin-left:auto"></span>
+            <span id="sam-points-now" class="opt-note"></span>
           </div>
-          <div style="display:flex;gap:6px;margin-top:8px">
-            <button class="btn primary" id="sam-accept" style="flex:1" disabled>Accept</button>
+          <div class="action-row">
+            <button class="btn primary" id="sam-accept" disabled
+                    title="Accept the mask as a label — Enter or Space">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>
+              <span id="sam-accept-label">Accept</span></button>
             <button class="btn" id="sam-part" disabled
-                    title="Keep this mask as one part of the object (an occluded object in several pieces) and click its next part; Enter / Space finishes the whole object as one label (+)">+ Part</button>
+                    title="Keep this mask as one part of the object (an occluded object in several pieces) and click its next part; Enter / Space finishes the whole object as one label (+)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                   stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg> Part</button>
             <button class="btn" id="sam-clear" disabled
-                    title="Drop the prompts of this object; press again to drop queued objects too (Esc)">Clear (Esc)</button>
+                    title="Drop the prompts of this object; press again to drop queued objects too (Esc)">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg> Clear</button>
           </div>
-          <button class="btn" id="sam-convert-all" style="width:100%;margin-top:6px" disabled
+          <button class="btn wide" id="sam-convert-all" disabled
                   title="Every box on this image becomes the prompt for its own SAM mask and is rewritten as a polygon (keeps class, status and score); a box SAM cannot segment stays a box. One box: the ⬠ button in the Shapes list, or P with it selected.">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 3 20 7.5v9L12 21l-8-4.5v-9z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/></svg>
             Boxes to polygons</button>
-          <div id="sam-status" style="font-size:11px;color:var(--dim);margin-top:4px;min-height:14px"></div>
+          <div id="sam-status" class="status-line"></div>
+          <span id="sam-class-echo" hidden>object</span>
         </div>
-        <div id="assist-panel" style="display:none;margin-top:10px">
+        <div id="assist-panel" class="tool-panel" style="display:none">
           <input type="text" id="assist-input" placeholder="e.g. helmet, vest, person"
                  style="width:100%" title="Comma-separated object names — each becomes a class">
-          <div style="display:flex;align-items:center;gap:12px;margin-top:8px;font-size:11px;color:var(--dim)">
-            <span>Output</span>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-              <input type="radio" name="assist-output" value="bbox" checked> Box
-            </label>
-            <label style="display:flex;align-items:center;gap:4px;cursor:pointer"
-                   title="Runs each box through SAM for an editable polygon">
-              <input type="radio" name="assist-output" value="polygon"> Polygon
-            </label>
+          <div class="opt-row">
+            <span class="opt-k">Output</span>
+            <div class="seg">
+              <label class="opt"><input type="radio" name="assist-output" value="bbox" checked>
+                <span class="ring"></span>Box</label>
+              <label class="opt" title="Runs each box through SAM for an editable polygon">
+                <input type="radio" name="assist-output" value="polygon"><span class="ring"></span>Polygon</label>
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;margin-top:8px;font-size:11px;color:var(--dim)">
-            <span>Confidence</span>
+          <div class="opt-row">
+            <span class="opt-k">Confidence</span>
             <div class="conf-control">
               <input type="range" id="assist-conf-slider" min="0.01" max="1" step="0.01" value="0.10">
               <span class="stepper narrow"><input type="number" id="assist-conf" min="0.01" max="1" step="0.05" value="0.10">
@@ -402,12 +457,26 @@
                   <button type="button" data-step="-1" title="−0.05"></button></span></span>
             </div>
           </div>
-          <button class="btn primary" id="assist-run" style="width:100%;margin-top:8px">Apply</button>
-          <div id="assist-status" style="font-size:11px;color:var(--warn);margin-top:4px"></div>
+          <button class="btn primary wide" id="assist-run">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5 10 17.5 19 7"/></svg>
+            Apply</button>
+          <div id="assist-status" class="status-line warn"></div>
         </div>
         </div>
-        <h4 style="margin-top:14px">Class</h4>
-        <input type="text" id="class-input" placeholder="e.g. car, person" style="width:100%">
+        <div class="divider"></div>
+        <h4 class="sec">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/>
+            <circle cx="7.5" cy="7.5" r="1.3" fill="currentColor" stroke="none"/></svg>Class</h4>
+        <div class="combo">
+          <input type="text" id="class-input" list="class-datalist" placeholder="e.g. car, person"
+                 autocomplete="off" title="The class new shapes take; type a new name to create it">
+          <datalist id="class-datalist"></datalist>
+          <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none"
+               stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </div>
         <div class="chips" id="class-chips"></div>
         <div class="zoom-hint">Wheel to zoom · right-drag to pan</div>
       </div>
@@ -1671,6 +1740,7 @@ const Page = {
   },
   renderChips() {
     const current = $("class-input").value.trim();
+    $("class-datalist").innerHTML = this.categories.map((c) => `<option value="${c.name}">`).join("");
     $("class-chips").innerHTML = this._visibleCategories().map((c) => `
       <span class="chip ${c.name === current ? "on" : ""}" data-name="${c.name}">
         <span class="dot" style="background:${c.color}"></span>${c.name}</span>`).join("");
@@ -2205,6 +2275,7 @@ const Page = {
   },
   _samSetStatus(text, warn = false) {
     $("sam-status").textContent = text;
+    $("sam-status").title = text;  // the line is clipped to one row in the panel
     $("sam-status").style.color = warn ? "var(--warn)" : "var(--dim)";
   },
   _samSyncButtons() {
@@ -2213,8 +2284,8 @@ const Page = {
     const parts = this.sam.parts.length;
     const total = this.sam.queued.length + (live || parts ? 1 : 0);
     $("sam-accept").disabled = !total;
-    $("sam-accept").textContent = parts ? `Accept · ${parts + (live ? 1 : 0)} parts (Enter)`
-      : total > 1 ? `Accept ${total} (Enter)` : "Accept (Enter)";
+    $("sam-accept-label").textContent = parts ? `Accept · ${parts + (live ? 1 : 0)} parts`
+      : total > 1 ? `Accept ${total}` : "Accept";
     $("sam-part").disabled = !live;
     $("sam-clear").disabled = !(has || this.sam.queued.length || parts);
     $("sam-class-echo").textContent = $("class-input").value.trim() || "the class you will be asked for";
@@ -2467,7 +2538,7 @@ const Page = {
       let saved = null;
       try { saved = localStorage.getItem("horos_sam_model"); } catch (e) {}
       const options = models.map((m) =>
-        `<option value="${m.key}" title="${m.latency_hint} · ${m.license}">${m.display_name.replace(/ \(.*\)$/, "")}</option>`).join("");
+        `<option value="${m.key}" title="${m.display_name} · ${m.latency_hint} · ${m.license}">${m.display_name.replace(/ \(.*\)$/, "").replace("Hiera-", "")}</option>`).join("");
       $("sam-model").innerHTML = options;
       $("b2p-model").innerHTML = options;
       const wanted = saved && models.some((m) => m.key === saved) ? saved
