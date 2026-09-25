@@ -266,3 +266,20 @@ def test_annotator_tools_card_follows_the_mockup(client):
     assert 'aria-label="Edit"' in card
     assert "M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" in card  # the pencil
     assert '"ready"' not in html and "`ready (" not in html
+
+
+def test_annotator_switches_tools_by_hover(client):
+    """User request 2026-09-25: resting on a control point while drawing hands
+    over to Edit; resting on empty space while editing brings Draw back. Only
+    while nothing is in progress, and switchable off (remembered per browser)."""
+    html = client.get("/annotate").get_data(as_text=True)
+    assert 'id="auto-tool"' in html and "Switch tools by hover" in html
+    assert "horos_auto_tool" in html
+    assert "AUTO_TOOL_MS: { edit: 500, draw: 900, drawSelected: 1800 }" in html
+    # the Draw tool arms the rest on a control point only while SAM is idle
+    assert 'this._armAutoTool("edit"' in html and "_samIdle()" in html
+    # the Edit tool arms it on empty space, longer while a shape is selected
+    assert 'this._armAutoTool(this.selectedShapeIdx === -1 ? "draw" : "drawSelected"' in html
+    # a press, leaving the canvas or an explicit tool change cancels a pending rest
+    assert html.count("this._disarmAutoTool();") >= 4
+    assert "<td>rest the mouse</td>" in html  # documented in the shortcut sheet

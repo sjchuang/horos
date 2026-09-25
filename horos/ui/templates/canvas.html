@@ -140,6 +140,8 @@
   .tool-btn.ai { color: var(--ok); }
   .tool-btn.ai.active { color: var(--ok); border-color: var(--ok);
                         background: rgba(81, 207, 102, .10); }
+  .auto-row { display: flex; align-items: center; gap: 6px; margin-top: 8px;
+              font-size: 11px; color: var(--dim); cursor: pointer; user-select: none; }
   .tool-panel { margin-top: 8px; }
   .opt-row { display: flex; align-items: center; gap: 10px; margin-top: 8px;
              font-size: 11px; color: var(--dim); min-width: 0; }
@@ -400,6 +402,9 @@
             title="Prompt — type object names, OWLv2 pseudo-labels them on this image. (3)">
             <span class="glyph-t" aria-hidden="true">T</span></button>
         </div>
+        <label class="auto-row"
+               title="Rest the mouse on a control point while drawing and the Edit tool takes over with that shape selected; rest it on empty space while editing and Draw comes back. Nothing switches while a mask, a drag or a queued object is in progress.">
+          <input type="checkbox" id="auto-tool" checked> Switch tools by hover</label>
         <div id="tool-body">
         <div id="sam-panel" class="tool-panel" style="display:none">
           <div class="opt-row">
@@ -672,6 +677,7 @@
     <h4>Keyboard shortcuts</h4>
     <table>
       <tr><td>1 / 2 / 3</td><td>Draw ✦ (click the object) / Edit ✎ / Prompt T</td></tr>
+      <tr><td>rest the mouse</td><td>on a control point while drawing → Edit with that shape selected; on empty space while editing → Draw (“Switch tools by hover”, off to keep the tool you picked)</td></tr>
       <tr><td>Edit: click an edge</td><td>add a control point there</td></tr>
       <tr><td>Edit: drop a point on another</td><td>merge them (points in between go too)</td></tr>
       <tr><td>Enter / Space</td><td>Draw ✦: accept the mask — the class menu opens with the current class; Enter again keeps it (tick “Keep this class” to skip the menu)</td></tr>
@@ -767,6 +773,7 @@ const Page = {
   panDragging: false, panDragStart: null, panOrigin: null,
   history: [], clipboardShape: null,
   autoSave: true, isDirty: false, _saveTimer: null, _claimTimer: null,
+  autoTool: true, _autoTimer: null,
   classCounts: {}, sessionNames: new Set(),
   reviewThreshold: 0.5, _jobTimer: null,
   openRound: null,  // the labeling round offered as the to-do queue (plain page)
@@ -849,6 +856,7 @@ const Page = {
     $("skip-modal").onclick = (e) => { if (e.target === $("skip-modal")) this.closeSkip(); };
     $("btn-save").onclick = () => this.saveAnnotations();
     $("auto-save").onchange = (e) => this.toggleAutoSave(e.target.checked);
+    $("auto-tool").onchange = (e) => this.toggleAutoTool(e.target.checked);
     document.querySelectorAll(".tool-btn").forEach((b) => {
       // blur after click, or the browser focus ring stays on the last
       // mouse-clicked button when tools are later switched via number keys
@@ -916,6 +924,8 @@ const Page = {
     $("help-modal").onclick = () => { $("help-modal").style.display = "none"; };
     const saved = (() => { try { return localStorage.getItem("horos_autosave"); } catch (e) { return null; } })();
     if (saved !== null) { this.autoSave = saved === "true"; $("auto-save").checked = this.autoSave; }
+    const autoTool = (() => { try { return localStorage.getItem("horos_auto_tool"); } catch (e) { return null; } })();
+    if (autoTool !== null) { this.autoTool = autoTool !== "0"; $("auto-tool").checked = this.autoTool; }
     this._updateSaveButtonState();
     this._initCanvasEvents();
     this._bindClassInput();
@@ -1392,6 +1402,33 @@ const Page = {
     this._updateSaveButtonState();
     if (checked && this.isDirty) this.saveAnnotations();
   },
+  // ---- automatic tool switching (user request 2026-09-25). Resting the
+  // mouse on a control point while drawing means "I want to edit this one";
+  // resting it on empty space while editing means "I want to draw the next
+  // one". A switch only happens when nothing is in progress: no drag, no
+  // shape waiting for its class, and SAM idle (switching tools drops its
+  // prompts, mask, parts and queue). The rest with a shape still selected is
+  // longer — the user may be reaching for Delete or a class chip.
+  AUTO_TOOL_MS: { edit: 500, draw: 900, drawSelected: 1800 },
+  toggleAutoTool(checked) {
+    this.autoTool = checked;
+    try { localStorage.setItem("horos_auto_tool", checked ? "1" : "0"); } catch (e) {}
+    if (!checked) this._disarmAutoTool();
+  },
+  // (re)start the rest timer: every mouse move restarts it, so the mouse has
+  // to be still for the whole delay
+  _armAutoTool(kind, fn) {
+    this._disarmAutoTool();
+    if (!this.autoTool) return;
+    this._autoTimer = setTimeout(() => { this._autoTimer = null; fn(); }, this.AUTO_TOOL_MS[kind]);
+  },
+  _disarmAutoTool() {
+    if (this._autoTimer) { clearTimeout(this._autoTimer); this._autoTimer = null; }
+  },
+  _samIdle() {
+    const s = this.sam;
+    return !s.points.length && !s.box && !s.candidate && !s.parts.length && !s.queued.length && !s.down;
+  },
   _updateSaveButtonState() {
     $("btn-save").disabled = !!this.autoSave;
     $("btn-save").title = this.autoSave ? "Auto Save is on" : "";
@@ -1663,6 +1700,8 @@ const Page = {
   // ---------------------------------------------------------------- tools
   setTool(tool, focusAssist = false) {
     this.activeTool = tool;
+    this._disarmAutoTool();
+    this.hoverShapeIdx = -1; this.hoverVertexIdx = -1; this.hoverVertexShapeIdx = -1;
     document.querySelectorAll(".tool-btn").forEach((b) =>
       b.classList.toggle("active", b.dataset.tool === tool));
     $("assist-panel").style.display = tool === "ai-text" ? "block" : "none";
@@ -1683,6 +1722,7 @@ const Page = {
   _updateCursor() {
     const canvas = $("anno-canvas");
     if (this.panDragging) canvas.style.cursor = "grabbing";
+    else if (this.activeTool === "sam" && this.hoverVertexIdx !== -1) canvas.style.cursor = "pointer";
     else if (this.activeTool !== "select") canvas.style.cursor = "crosshair";
     else if (this.hoverVertexIdx !== -1) canvas.style.cursor = "pointer";
     else if (this.hoverEdge) canvas.style.cursor = "copy";
@@ -2091,6 +2131,7 @@ const Page = {
     wrap.addEventListener("wheel", zoomWheel, { passive: false });
 
     canvas.onmousedown = (e) => {
+      this._disarmAutoTool();
       if (!this.editorImage) return;
       if (e.button === 2) {
         e.preventDefault();
@@ -2188,6 +2229,12 @@ const Page = {
           this._drawCanvas();
         }
         this._updateCursor();
+        // resting on empty space: back to Draw (see AUTO_TOOL_MS)
+        if (anyVtx || this.hoverEdge || hoverShape !== -1 || this.pendingShape) this._disarmAutoTool();
+        else this._armAutoTool(this.selectedShapeIdx === -1 ? "draw" : "drawSelected", () => {
+          if (this.activeTool !== "select" || this.dragMode || this.pendingShape) return;
+          this.setTool("sam");
+        });
       } else if (this.activeTool === "sam" && this.sam.down) {
         const [dx, dy] = this.sam.down;
         const cur = this._clampPoint([x, y]);
@@ -2196,6 +2243,24 @@ const Page = {
           this.sam.dragBox = [this.sam.down, cur];
           this._drawCanvas();
         }
+      } else if (this.activeTool === "sam") {
+        // Draw tool over a control point of an existing shape: the handle
+        // lights up, and after a short rest Edit takes over with that shape
+        // selected and the point under the cursor ready to drag
+        const hit = this._hitTestAnyVertex(x, y);
+        const [vs, vi] = hit || [-1, -1];
+        if (vs !== this.hoverVertexShapeIdx || vi !== this.hoverVertexIdx) {
+          this.hoverVertexShapeIdx = vs; this.hoverVertexIdx = vi;
+          this._updateCursor(); this._drawCanvas();
+        }
+        if (hit && this._samIdle() && !this.pendingShape) {
+          this._armAutoTool("edit", () => {
+            if (this.activeTool !== "sam" || !this._samIdle() || this.pendingShape) return;
+            this.selectShape(vs);  // selectShape switches to the Edit tool
+            this.hoverVertexShapeIdx = vs; this.hoverVertexIdx = vi;
+            this._updateCursor(); this._drawCanvas();
+          });
+        } else this._disarmAutoTool();
       }
     };
 
@@ -2255,6 +2320,7 @@ const Page = {
     };
 
     canvas.onmouseleave = () => {
+      this._disarmAutoTool();
       if (this.panDragging) {
         this.panDragging = false; this.panDragStart = null; this.panOrigin = null;
         this._updateCursor();
