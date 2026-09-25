@@ -1409,7 +1409,7 @@ const Page = {
   // shape waiting for its class, and SAM idle (switching tools drops its
   // prompts, mask, parts and queue). The rest with a shape still selected is
   // longer — the user may be reaching for Delete or a class chip.
-  AUTO_TOOL_MS: { edit: 500, draw: 900, drawSelected: 1800 },
+  AUTO_TOOL_MS: { edit: 500, draw: 700, drawSelected: 1800 },
   toggleAutoTool(checked) {
     this.autoTool = checked;
     try { localStorage.setItem("horos_auto_tool", checked ? "1" : "0"); } catch (e) {}

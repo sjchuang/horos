@@ -275,7 +275,7 @@ def test_annotator_switches_tools_by_hover(client):
     html = client.get("/annotate").get_data(as_text=True)
     assert 'id="auto-tool"' in html and "Switch tools by hover" in html
     assert "horos_auto_tool" in html
-    assert "AUTO_TOOL_MS: { edit: 500, draw: 900, drawSelected: 1800 }" in html
+    assert "AUTO_TOOL_MS: { edit: 500, draw: 700, drawSelected: 1800 }" in html
     # the Draw tool arms the rest on a control point only while SAM is idle
     assert 'this._armAutoTool("edit"' in html and "_samIdle()" in html
     # the Edit tool arms it on empty space, longer while a shape is selected
