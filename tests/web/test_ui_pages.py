@@ -114,12 +114,11 @@ def test_every_page_uses_the_shared_controls(client):
         html = client.get(path).get_data(as_text=True)
         assert '/static/controls.css' in html and '/static/controls.js' in html, path
         assert "one checkbox look" not in html, f"{path} restyles checkboxes locally"
-        # 2026-09-25: one dark-glass look from static/theme.css, linked after
-        # the page's own <style> so it outranks the page's base rules
-        assert html.index("/static/theme.css") > html.index("</style>"), path
+        # a site-wide glass theme was tried and reverted on 2026-09-25: the
+        # pages keep their own flat style block and no shared theme sheet
+        assert "theme.css" not in html, path
     assert client.get("/static/controls.css").status_code == 200
     assert client.get("/static/controls.js").status_code == 200
-    assert client.get("/static/theme.css").status_code == 200
     # every native number box sits inside a stepper (dynamic ones are built
     # by stepperHTML / horosControls.stepper, which emit the same markup)
     for path in ("/", "/lab", "/train", "/annotate"):
@@ -246,9 +245,10 @@ def test_loop_page_offers_training_without_short_classes(client):
 
 
 def test_annotator_tools_card_follows_the_mockup(client):
-    """2026-09-25 sidebar: three big tool buttons, Output as a segmented radio
-    control beside the model picker, icon action row, and a class box that
-    drops down the project's classes while still taking a typed new name."""
+    """2026-09-25 sidebar: three big tool buttons (Edit is a pencil), Output as
+    a segmented radio control beside the model picker, icon action row, no
+    "ready" line, and a class box that drops down the project's classes while
+    still taking a typed new name."""
     html = client.get("/annotate").get_data(as_text=True)
     card = html[html.index('<div class="card tools-card">'):html.index('id="review-card"')]
     assert card.count('class="tool-btn') == 3
@@ -263,3 +263,6 @@ def test_annotator_tools_card_follows_the_mockup(client):
     assert 'id="sam-convert-all"' in card and "Boxes to polygons" in card
     assert 'id="class-input" list="class-datalist"' in card and 'id="class-datalist"' in card
     assert '$("sam-accept-label").textContent' in html and '$("class-datalist").innerHTML' in html
+    assert 'aria-label="Edit"' in card
+    assert "M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" in card  # the pencil
+    assert '"ready"' not in html and "`ready (" not in html

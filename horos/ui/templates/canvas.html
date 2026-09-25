@@ -126,61 +126,72 @@
   #anno-canvas { display: block; }
   .sidebar { display: flex; flex-direction: column; gap: 12px; min-height: 0;
              overflow-y: auto; }
-  /* ---- tools card (layout decided from the user's mockup, 2026-09-25) ---- */
+  /* ---- tools card: the mockup's layout (2026-09-25) in the page's own flat
+     look — the glass theme tried the same day was reverted on request ---- */
   .tools { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .tool-btn { height: 52px; padding: 0; border-radius: 14px; background: var(--bg);
-              color: #c9d6e4; border: 1px solid var(--line); cursor: pointer;
-              display: flex; align-items: center; justify-content: center;
-              transition: background .12s, border-color .12s, box-shadow .12s, color .12s; }
-  .tool-btn svg { width: 26px; height: 26px; }
-  .tool-btn .glyph-t { font: 600 27px/1 Georgia, "Times New Roman", serif; }
-  .tool-btn:hover:not(:disabled) { background: var(--inset-hover); border-color: var(--line-strong); }
-  .tool-btn.active, .tool-btn.active:hover:not(:disabled) {
-    color: #8ec5ff; border-color: rgba(90, 170, 255, .75);
-    background: linear-gradient(180deg, rgba(47, 140, 255, .38), rgba(10, 108, 240, .22));
-    box-shadow: 0 0 0 1px rgba(47, 140, 255, .25), 0 0 20px rgba(47, 140, 255, .40),
-                inset 0 1px 0 rgba(255, 255, 255, .18); }
+  .tool-btn { height: 46px; padding: 0; border-radius: 8px; background: var(--bg);
+              color: var(--dim); border: 1px solid var(--line); cursor: pointer;
+              display: flex; align-items: center; justify-content: center; }
+  .tool-btn svg { width: 22px; height: 22px; }
+  .tool-btn .glyph-t { font: 600 22px/1 Georgia, "Times New Roman", serif; }
+  .tool-btn:hover { border-color: var(--accent); }
+  .tool-btn.active { color: var(--accent); border-color: var(--accent);
+                     background: rgba(10, 132, 255, .12); }
+  .tool-btn.ai { color: var(--ok); }
+  .tool-btn.ai.active { color: var(--ok); border-color: var(--ok);
+                        background: rgba(81, 207, 102, .10); }
   .tool-panel { margin-top: 8px; }
-  .opt-row { display: flex; align-items: center; gap: 10px; margin-top: 10px;
-             font-size: 12.5px; color: var(--dim); min-width: 0; }
+  .opt-row { display: flex; align-items: center; gap: 10px; margin-top: 8px;
+             font-size: 11px; color: var(--dim); min-width: 0; }
   .opt-row .opt-k { flex: none; }
   .opt-row .seg { flex: none; }
   .opt-row .model-pick { flex: 1 1 0; min-width: 0; max-width: 132px; margin-left: auto;
-                         font-size: 12px; padding: 6px 22px 6px 9px;
-                         background-position: right 7px center; }
-  .opt-row .opt-note { margin-left: auto; font-size: 11px; }
+                         font-size: 11px; padding: 5px 6px; }
+  .opt-row .opt-note { margin-left: auto; }
   .opt-row .stepper input[type=number] { width: 66px; }
-  .action-row { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+  /* segmented radio: <label class="opt"><input type=radio><span class="ring"></span>Text</label> */
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px;
+         overflow: hidden; background: var(--bg); }
+  .seg label.opt { position: relative; display: inline-flex; align-items: center; gap: 6px;
+                   padding: 5px 10px; color: var(--dim); cursor: pointer; font-size: 11px;
+                   user-select: none; }
+  .seg label.opt + label.opt { border-left: 1px solid var(--line); }
+  .seg label.opt:hover { color: var(--text); }
+  .seg label.opt input[type=radio] { position: absolute; opacity: 0; width: 0; height: 0; margin: 0; }
+  .seg label.opt .ring { width: 12px; height: 12px; border-radius: 50%; flex: none;
+                         border: 1.5px solid var(--dim); box-sizing: border-box; }
+  .seg label.opt:has(input:checked) { background: rgba(10, 132, 255, .15); color: var(--accent); }
+  .seg label.opt:has(input:checked) .ring { border: 3.5px solid var(--accent); background: #fff; }
+  .seg label.opt:has(input:focus-visible) { outline: 2px solid rgba(77, 171, 247, .4);
+                                            outline-offset: -2px; }
+  .action-row { display: grid; grid-template-columns: 1.35fr 1fr 1fr; gap: 6px; margin-top: 10px; }
   .action-row .btn, .btn.wide { display: inline-flex; align-items: center; justify-content: center;
-                                gap: 6px; padding: 9px 6px; white-space: nowrap; overflow: hidden; }
-  .action-row .btn svg, .btn.wide svg { width: 16px; height: 16px; flex: none; }
-  .btn.wide { width: 100%; margin-top: 8px; }
-  .status-line { font-size: 11px; color: var(--dim); margin-top: 6px; min-height: 14px;
+                                gap: 5px; padding: 7px 6px; white-space: nowrap; overflow: hidden; }
+  .action-row .btn svg, .btn.wide svg { width: 14px; height: 14px; flex: none; }
+  .btn.wide { width: 100%; margin-top: 6px; }
+  .status-line { font-size: 11px; color: var(--dim); margin-top: 4px; min-height: 14px;
                  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .status-line.warn { color: var(--warn); min-height: 0; }
   .divider { border-top: 1px solid var(--line); margin: 12px 0; }
-  h4.sec { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-  h4.sec svg { width: 15px; height: 15px; margin: 0; color: #b9c8d8; }
+  h4.sec { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; }
+  h4.sec svg { width: 13px; height: 13px; }
   /* the class box: free text (a new name creates the class) that also drops
      down the project's classes, so it reads as a picker */
   .combo { position: relative; }
-  .combo input { width: 100%; padding: 9px 34px 9px 12px; font-size: 14px; }
-  .combo svg { position: absolute; right: 12px; top: 50%; width: 13px; height: 13px;
-               transform: translateY(-50%); color: #b8c7d8; pointer-events: none; }
+  .combo input { width: 100%; padding: 6px 28px 6px 8px; }
+  .combo svg { position: absolute; right: 9px; top: 50%; width: 12px; height: 12px;
+               transform: translateY(-50%); color: var(--dim); pointer-events: none; }
   .combo input::-webkit-calendar-picker-indicator { display: none !important; }
   .prompt-row { display: flex; gap: 6px; margin-bottom: 6px; }
   .prompt-row input:first-child { width: 110px; }
   .prompt-row input:last-child { flex: 1; }
-  .chips { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
-  .chip { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px 6px 9px;
+  .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px 3px 7px;
           border: 1px solid var(--line); border-radius: 20px; cursor: pointer;
-          font-size: 12.5px; color: var(--text); background: var(--inset);
-          transition: background .12s, border-color .12s, box-shadow .12s; }
-  .chip:hover { background: var(--inset-hover); border-color: var(--line-strong); }
-  .chip.on { border-color: rgba(90, 170, 255, .7); background: var(--accent-soft);
-             box-shadow: 0 0 12px rgba(47, 140, 255, .25); }
-  .chip .dot { width: 12px; height: 12px; border-radius: 50%; flex: none;
-               box-shadow: 0 0 8px currentColor; }
+          font-size: 11px; color: var(--dim); background: var(--bg); }
+  .chip:hover { border-color: var(--accent); color: var(--text); }
+  .chip.on { border-color: var(--accent); color: var(--accent); }
+  .chip .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
   .zoom-hint { color: var(--dim); font-size: 11px; margin-top: 12px; }
   /* The tools card grows with the active tool's options and the class list;
      left alone it pushes the shapes list down to nothing. It keeps at most
@@ -191,28 +202,26 @@
                  min-height: 190px; }
   #shapes-list { flex: 1; overflow-y: auto; margin-bottom: 10px; }
   /* a section heading that folds what follows it */
-  .fold { display: flex; align-items: center; gap: 8px; width: 100%;
-          background: none; border: none; border-radius: 0; box-shadow: none;
-          padding: 0; margin: 0 0 12px; cursor: pointer; color: var(--dim);
-          font-size: 11.5px; font-weight: 600; text-transform: uppercase;
-          letter-spacing: .18em; }
-  .fold:hover:not(:disabled) { background: none; border: none; color: var(--text); }
-  .fold .ico { width: 15px; height: 15px; color: #8ec5ff; }
-  .fold .caret { transition: transform .15s; font-size: 9px; line-height: 1; opacity: .7; }
+  .fold { display: flex; align-items: center; gap: 6px; width: 100%;
+          background: none; border: none; padding: 0; margin: 0 0 10px;
+          cursor: pointer; color: var(--dim); font-size: 11px;
+          text-transform: uppercase; letter-spacing: .08em; }
+  .fold:hover { color: var(--text); }
+  .fold .ico { width: 13px; height: 13px; }
+  .fold .caret { transition: transform .15s; font-size: 9px; line-height: 1; }
   .fold[aria-expanded="false"] .caret { transform: rotate(-90deg); }
   .fold .note { margin-left: auto; text-transform: none; letter-spacing: 0;
-                font-weight: 400; font-size: 10.5px; color: var(--dim); }
+                font-size: 10px; color: var(--dim); }
   .shape-item { display: flex; align-items: center; justify-content: space-between;
                 padding: 4px 7px; margin-bottom: 2px; border-radius: 5px;
                 cursor: pointer; font-size: 12px; }
   .shape-item:hover { background: var(--bg); }
-  .shape-item.on { background: var(--accent-soft); color: #bfe0ff; }
+  .shape-item.on { background: rgba(77, 171, 247, .14); color: var(--accent); }
   .shape-item .dot { display: inline-block; width: 10px; height: 10px;
                      border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
   .shape-item small { color: var(--dim); }
   .shape-item .del { background: none; border: none; color: var(--err);
                      cursor: pointer; font-size: 13px; padding: 0 4px; }
-  .shape-item .del:hover:not(:disabled) { background: rgba(255, 107, 107, .15); color: #ff9a9a; }
   .switch-row { display: flex; align-items: center; justify-content: space-between;
                 margin-bottom: 8px; }
   .switch-row label { font-size: 11px; color: var(--dim); display: flex;
@@ -250,7 +259,6 @@
   #help-modal td { padding: 3px 14px 3px 0; color: var(--dim); border: none; }
   #help-modal td:first-child { color: var(--text); font-family: ui-monospace, monospace; }
 </style>
-<link rel="stylesheet" href="/static/theme.css?v=1">
 </head>
 <body>
 
@@ -377,17 +385,18 @@
           Tools<span class="note" id="fold-tools-note"></span><span class="caret">▼</span>
         </button>
         <div class="tools">
-          <button class="tool-btn active" data-tool="sam" aria-label="Draw"
+          <button class="tool-btn ai active" data-tool="sam" aria-label="Draw"
             title="Draw — click the object; right-click (or Shift+click) what is not it, or drag a rough box. Enter or Space accepts. (1)">
             <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <path d="M10.5 3.5 12.6 9.9 19 12l-6.4 2.1-2.1 6.4-2.1-6.4L2 12l6.4-2.1z"/>
               <path d="M18.5 2.5 19.3 4.7 21.5 5.5l-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></button>
           <button class="tool-btn" data-tool="select" aria-label="Edit"
             title="Edit — click a shape to select, drag to move, drag a point to reshape, click an edge to add a point, drop a point onto another to merge them. (2)">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
-                 stroke-linecap="round" stroke-dasharray="3 2.6" aria-hidden="true">
-              <ellipse cx="12" cy="12" rx="9" ry="5.2" transform="rotate(-30 12 12)"/></svg></button>
-          <button class="tool-btn" data-tool="ai-text" aria-label="Prompt"
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+              <path d="M18.5 2.5a2.12 2.12 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button>
+          <button class="tool-btn ai" data-tool="ai-text" aria-label="Prompt"
             title="Prompt — type object names, OWLv2 pseudo-labels them on this image. (3)">
             <span class="glyph-t" aria-hidden="true">T</span></button>
         </div>
@@ -2350,7 +2359,7 @@ const Page = {
     try {
       const r = await api(`/images/${image.id}/segment/prefetch`, json("POST", { model: this._samModel() }));
       if (this.queue[this.currentIdx] && this.queue[this.currentIdx].image.id === image.id) {
-        this._samSetStatus(r.embedding_cached ? "ready" : `ready (${Math.round(r.elapsed_ms)} ms)`);
+        this._samSetStatus("");
       }
     } catch (e) { this._samSetStatus(e.message, true); }
   },
